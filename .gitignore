@@ -22,3 +22,6 @@ frontend/.vite/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only, not for GitHub
+CLAUDE.md
