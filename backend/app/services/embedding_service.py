@@ -44,7 +44,10 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
     start = time.perf_counter()
 
     try:
-        vectors = model.encode([chunk.text for chunk in chunks])
+        vectors = model.encode(
+            [chunk.text for chunk in chunks],
+            normalize_embeddings=True,
+        )
     except Exception as exc:
         raise EmbeddingGenerationError(
             f"Failed to generate embeddings for document {document_id}: {exc}"
