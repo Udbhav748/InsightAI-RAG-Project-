@@ -5,6 +5,7 @@ from functools import lru_cache
 
 from fastapi import APIRouter
 
+from app.core.exceptions import VectorStoreNotFoundError
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.gemini_client import GeminiClient
@@ -18,9 +19,21 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_vector_store() -> VectorStore:
-    """Load the persisted FAISS index once and reuse it on every request."""
+    """Load the persisted FAISS index once and reuse it on every request.
+
+    Shared with the upload route (see documents.py) so both hit the same
+    in-memory index — a document processed via /upload is immediately
+    visible to /chat without a reload. If no index has been persisted yet,
+    this returns an empty, uninitialized store rather than raising:
+    DocumentProcessingService creates it on the first embedding batch, and
+    VectorStore.search() already raises VectorStoreNotFoundError on an
+    uninitialized store, so /chat still 404s correctly until then.
+    """
     store = FAISSVectorStore()
-    store.load()
+    try:
+        store.load()
+    except VectorStoreNotFoundError:
+        pass
     return store
 
 

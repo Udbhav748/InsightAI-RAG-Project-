@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     retrieval_min_score: float = 0.3
 
     # Gemini model used for text generation.
-    gemini_model_name: str = "gemini-2.5-flash"
+    gemini_model_name: str = "gemini-3.5-flash"
 
     # Timeout, in seconds, for Gemini API calls.
     gemini_timeout_seconds: int = 30
