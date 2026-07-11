@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # MIME types accepted by the upload endpoint.
     allowed_upload_mime_types: list[str] = ["application/pdf"]
 
+    # Target size of each document chunk, in characters.
+    chunk_size: int = 1000
+
+    # Character overlap between consecutive chunks.
+    chunk_overlap: int = 200
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
