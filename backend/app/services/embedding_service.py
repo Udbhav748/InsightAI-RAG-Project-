@@ -34,6 +34,19 @@ def get_embedding_model() -> SentenceTransformer:
         ) from exc
 
 
+def embed_query(query: str) -> list[float]:
+    """Embed a single query string, using the same model and normalization
+    as generate_embeddings, so query and chunk vectors share one space."""
+    model = get_embedding_model()
+
+    try:
+        vector = model.encode(query, normalize_embeddings=True)
+    except Exception as exc:
+        raise EmbeddingGenerationError(f"Failed to generate embedding for query: {exc}") from exc
+
+    return vector.tolist()
+
+
 def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
     """Generate one embedding per chunk, preserving chunk_id, document_id, and metadata."""
     if not chunks:
@@ -58,7 +71,10 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
             chunk_id=chunk.chunk_id,
             document_id=chunk.document_id,
             embedding=vector.tolist(),
-            metadata=chunk.metadata,
+            # Chunk text rides along in metadata so the vector store can
+            # persist and later return it, without adding a field to
+            # EmbeddedChunk itself.
+            metadata={**chunk.metadata, "text": chunk.text},
         )
         for chunk, vector in zip(chunks, vectors)
     ]

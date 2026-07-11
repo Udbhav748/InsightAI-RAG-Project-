@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # Filename for the persisted chunk metadata (JSON), inside vector_store_dir_name.
     vector_metadata_filename: str = "metadata.json"
 
+    # Default number of chunks to return from retrieval.
+    retrieval_top_k: int = 5
+
+    # Default minimum similarity score a chunk must meet to be returned.
+    retrieval_min_score: float = 0.3
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

@@ -7,7 +7,7 @@ specific backing implementation (e.g. FAISS), so the store can be swapped
 
 from abc import ABC, abstractmethod
 
-from app.models.document import EmbeddedChunk
+from app.models.document import EmbeddedChunk, RetrievedChunk
 
 
 class VectorStore(ABC):
@@ -18,6 +18,14 @@ class VectorStore(ABC):
     @abstractmethod
     def add_embeddings(self, embedded_chunks: list[EmbeddedChunk]) -> None:
         """Add embeddings to the index, keeping metadata in sync with vector positions."""
+
+    @abstractmethod
+    def search(self, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
+        """Return up to top_k chunks most similar to query_vector, ranked by score.
+
+        Similarity thresholding is not applied here; callers filter results
+        by score themselves.
+        """
 
     @abstractmethod
     def save(self) -> None:

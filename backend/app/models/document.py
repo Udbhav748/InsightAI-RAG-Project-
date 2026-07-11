@@ -46,3 +46,14 @@ class EmbeddedChunk(BaseModel):
         default_factory=dict,
         description="Metadata carried over unchanged from the source DocumentChunk.",
     )
+
+
+class RetrievedChunk(BaseModel):
+    chunk_id: str = Field(..., description="Identifier of the retrieved chunk.")
+    document_id: str = Field(..., description="Identifier of the document this chunk was derived from.")
+    text: str = Field(..., description="Text content of the retrieved chunk.")
+    score: float = Field(..., description="Similarity score between the query and this chunk.")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata associated with the chunk (e.g. chunk_index, total_chunks, source).",
+    )

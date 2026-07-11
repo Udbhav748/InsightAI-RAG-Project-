@@ -22,7 +22,7 @@ from app.core.exceptions import (
     MetadataSyncError,
     VectorStoreNotFoundError,
 )
-from app.models.document import EmbeddedChunk
+from app.models.document import EmbeddedChunk, RetrievedChunk
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,48 @@ class FAISSVectorStore(VectorStore):
                 }
             },
         )
+
+    def search(self, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
+        if self._index is None:
+            raise VectorStoreNotFoundError(
+                "No index to search. Call create_index() or load() first."
+            )
+
+        dimension = self._index.d
+        if len(query_vector) != dimension:
+            raise EmbeddingDimensionMismatchError(
+                f"Query vector has dimension {len(query_vector)}, but the index "
+                f"expects {dimension}."
+            )
+
+        if self._index.ntotal == 0 or top_k <= 0:
+            return []
+
+        query = np.array([query_vector], dtype="float32")
+        k = min(top_k, self._index.ntotal)
+        scores, positions = self._index.search(query, k)
+
+        results = []
+        for score, position in zip(scores[0], positions[0]):
+            if position == -1:
+                continue
+
+            record = self._metadata[position]
+            record_metadata = record["metadata"]
+            text = record_metadata.get("text", "")
+            metadata = {key: value for key, value in record_metadata.items() if key != "text"}
+
+            results.append(
+                RetrievedChunk(
+                    chunk_id=record["chunk_id"],
+                    document_id=record["document_id"],
+                    text=text,
+                    score=float(score),
+                    metadata=metadata,
+                )
+            )
+
+        return results
 
     def save(self) -> None:
         if self._index is None:
