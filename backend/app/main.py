@@ -1,2 +1,19 @@
-# Entry point for the FastAPI application.
-# Initializes the app, registers routers, and configures middleware.
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import settings
+from app.api.v1.routes import health
+
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health.router)

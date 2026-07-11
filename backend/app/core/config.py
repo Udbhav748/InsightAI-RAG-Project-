@@ -1,2 +1,12 @@
-# Application configuration loaded from environment variables.
-# Uses pydantic-settings for type-safe config management.
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = "InsightAI-RAG"
+    app_version: str = "0.1.0"
+    debug: bool = False
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+settings = Settings()
