@@ -55,3 +55,19 @@ class EmbeddingDimensionMismatchError(AppError):
 
 class MetadataSyncError(AppError):
     status_code = 500
+
+
+class LLMConfigurationError(AppError):
+    status_code = 500
+
+
+class LLMAPIError(AppError):
+    status_code = 502
+
+
+class LLMTimeoutError(AppError):
+    status_code = 504
+
+
+class LLMEmptyResponseError(AppError):
+    status_code = 502

@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # Default minimum similarity score a chunk must meet to be returned.
     retrieval_min_score: float = 0.3
 
+    # Gemini model used for text generation.
+    gemini_model_name: str = "gemini-2.5-flash"
+
+    # Timeout, in seconds, for Gemini API calls.
+    gemini_timeout_seconds: int = 30
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
