@@ -20,7 +20,20 @@ class Settings(BaseSettings):
     # Enables debug behavior (e.g. verbose errors).
     debug: bool = False
 
+    # Directory (relative to backend/) where uploaded files are stored.
+    upload_dir_name: str = "uploads"
+
+    # Maximum accepted upload size, in megabytes.
+    max_upload_size_mb: int = 20
+
+    # MIME types accepted by the upload endpoint.
+    allowed_upload_mime_types: list[str] = ["application/pdf"]
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        return self.max_upload_size_mb * 1024 * 1024
 
 
 settings = Settings()

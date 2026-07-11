@@ -1,12 +1,17 @@
 """Handles saving uploaded files to disk using UUID-based filenames."""
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import UploadFile
 
-UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
+from app.core.config import settings
+
+UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.upload_dir_name
+
+logger = logging.getLogger(__name__)
 
 
 async def save_uploaded_file(file: UploadFile) -> dict:
@@ -23,6 +28,17 @@ async def save_uploaded_file(file: UploadFile) -> dict:
 
     contents = await file.read()
     destination.write_bytes(contents)
+
+    logger.debug(
+        "file_written",
+        extra={
+            "extra_fields": {
+                "stored_filename": stored_filename,
+                "path": str(destination),
+                "file_size": len(contents),
+            }
+        },
+    )
 
     return {
         "document_id": document_id,

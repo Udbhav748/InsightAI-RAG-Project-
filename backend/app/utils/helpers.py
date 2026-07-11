@@ -1,12 +1,11 @@
 """Shared utility functions (e.g., file validation, text cleaning)."""
 
-PDF_CONTENT_TYPE = "application/pdf"
+# Intrinsic to the PDF file format, not a deployment-configurable value.
 PDF_MAGIC_BYTES = b"%PDF-"
-MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
-def is_pdf_mime_type(content_type: str | None) -> bool:
-    return content_type == PDF_CONTENT_TYPE
+def is_pdf_mime_type(content_type: str | None, allowed_mime_types: list[str]) -> bool:
+    return content_type in allowed_mime_types
 
 
 def has_pdf_magic_bytes(contents: bytes) -> bool:
@@ -17,5 +16,5 @@ def is_empty(contents: bytes) -> bool:
     return len(contents) == 0
 
 
-def exceeds_size_limit(contents: bytes, max_size: int = MAX_UPLOAD_SIZE_BYTES) -> bool:
-    return len(contents) > max_size
+def exceeds_size_limit(contents: bytes, max_size_bytes: int) -> bool:
+    return len(contents) > max_size_bytes
