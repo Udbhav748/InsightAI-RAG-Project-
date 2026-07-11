@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # Sentence Transformers model used to generate chunk embeddings.
     embedding_model_name: str = "all-MiniLM-L6-v2"
 
+    # Directory (relative to backend/) where the vector store is persisted.
+    vector_store_dir_name: str = "vector_store"
+
+    # Filename for the persisted FAISS index, inside vector_store_dir_name.
+    vector_index_filename: str = "index.faiss"
+
+    # Filename for the persisted chunk metadata (JSON), inside vector_store_dir_name.
+    vector_metadata_filename: str = "metadata.json"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

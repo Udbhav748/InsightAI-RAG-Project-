@@ -1,0 +1,32 @@
+"""Abstract interface for a vector store.
+
+The rest of the application should depend on this interface, not on any
+specific backing implementation (e.g. FAISS), so the store can be swapped
+(e.g. for Chroma) without touching calling code.
+"""
+
+from abc import ABC, abstractmethod
+
+from app.models.document import EmbeddedChunk
+
+
+class VectorStore(ABC):
+    @abstractmethod
+    def create_index(self, dimension: int) -> None:
+        """Create a new, empty index for vectors of the given dimension."""
+
+    @abstractmethod
+    def add_embeddings(self, embedded_chunks: list[EmbeddedChunk]) -> None:
+        """Add embeddings to the index, keeping metadata in sync with vector positions."""
+
+    @abstractmethod
+    def save(self) -> None:
+        """Persist the index and its metadata to storage."""
+
+    @abstractmethod
+    def load(self) -> None:
+        """Load a previously persisted index and its metadata from storage."""
+
+    @abstractmethod
+    def total_vectors(self) -> int:
+        """Return the number of vectors currently in the index."""

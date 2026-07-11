@@ -39,3 +39,19 @@ class EmbeddingModelLoadError(AppError):
 
 class EmbeddingGenerationError(AppError):
     status_code = 500
+
+
+class VectorStoreNotFoundError(AppError):
+    status_code = 404
+
+
+class CorruptedVectorStoreError(AppError):
+    status_code = 422
+
+
+class EmbeddingDimensionMismatchError(AppError):
+    status_code = 400
+
+
+class MetadataSyncError(AppError):
+    status_code = 500
