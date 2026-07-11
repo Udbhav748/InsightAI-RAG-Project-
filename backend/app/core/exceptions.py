@@ -71,3 +71,11 @@ class LLMTimeoutError(AppError):
 
 class LLMEmptyResponseError(AppError):
     status_code = 502
+
+
+class PromptGenerationError(AppError):
+    status_code = 400
+
+
+class ChatServiceError(AppError):
+    status_code = 500
