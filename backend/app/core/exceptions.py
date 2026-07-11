@@ -19,3 +19,15 @@ class EmptyFileError(AppError):
 
 class FileTooLargeError(AppError):
     status_code = 413
+
+
+class DocumentNotFoundError(AppError):
+    status_code = 404
+
+
+class CorruptedPDFError(AppError):
+    status_code = 422
+
+
+class TextExtractionError(AppError):
+    status_code = 500
