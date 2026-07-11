@@ -34,3 +34,13 @@ class ChatResponse(BaseModel):
     retrieved_chunks: list[RetrievedChunk]
     sources: list[str]
     processing_time: float
+
+
+class DocumentProcessingResponse(BaseModel):
+    document_id: str
+    original_filename: str
+    total_pages: int
+    total_chunks: int
+    total_embeddings: int
+    processing_time: float
+    status: str
