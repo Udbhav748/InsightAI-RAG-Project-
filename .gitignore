@@ -13,6 +13,7 @@ build/
 
 # FAISS index / uploaded files
 backend/data/
+backend/uploads/
 
 # Node
 node_modules/
