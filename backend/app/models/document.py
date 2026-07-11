@@ -36,3 +36,13 @@ class DocumentChunk(BaseModel):
         default_factory=dict,
         description="Arbitrary key-value metadata about the chunk (e.g. page number, section).",
     )
+
+
+class EmbeddedChunk(BaseModel):
+    chunk_id: str = Field(..., description="Identifier of the chunk this embedding was generated from.")
+    document_id: str = Field(..., description="Identifier of the document this chunk was derived from.")
+    embedding: list[float] = Field(..., description="Embedding vector generated from the chunk's text.")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadata carried over unchanged from the source DocumentChunk.",
+    )

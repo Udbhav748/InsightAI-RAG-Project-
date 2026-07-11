@@ -31,3 +31,11 @@ class CorruptedPDFError(AppError):
 
 class TextExtractionError(AppError):
     status_code = 500
+
+
+class EmbeddingModelLoadError(AppError):
+    status_code = 500
+
+
+class EmbeddingGenerationError(AppError):
+    status_code = 500

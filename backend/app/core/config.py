@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Character overlap between consecutive chunks.
     chunk_overlap: int = 200
 
+    # Sentence Transformers model used to generate chunk embeddings.
+    embedding_model_name: str = "all-MiniLM-L6-v2"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
