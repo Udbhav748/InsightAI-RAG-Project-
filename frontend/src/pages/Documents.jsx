@@ -1,0 +1,174 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { ArrowUpDown, FileText, Trash2, UploadCloud } from 'lucide-react'
+import SearchInput from '../components/ui/SearchInput'
+import StatusBadge from '../components/ui/StatusBadge'
+import EmptyState from '../components/ui/EmptyState'
+import Button from '../components/ui/Button'
+import Modal from '../components/ui/Modal'
+import { getUploadHistory, removeFromUploadHistory } from '../services/documentService'
+
+function formatBytes(bytes) {
+  if (!bytes) return '—'
+  const kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(0)} KB`
+  return `${(kb / 1024).toFixed(1)} MB`
+}
+
+function formatDate(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  } catch {
+    return iso
+  }
+}
+
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'name', label: 'Name (A-Z)' },
+]
+
+export default function Documents() {
+  const [documents, setDocuments] = useState([])
+  const [query, setQuery] = useState('')
+  const [sortBy, setSortBy] = useState('newest')
+  const [pendingDelete, setPendingDelete] = useState(null)
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    setDocuments(getUploadHistory())
+  }, [])
+
+  const filtered = useMemo(() => {
+    const list = documents.filter((doc) =>
+      doc.original_filename.toLowerCase().includes(query.toLowerCase())
+    )
+    const sorted = [...list].sort((a, b) => {
+      if (sortBy === 'name') return a.original_filename.localeCompare(b.original_filename)
+      const dateA = new Date(a.upload_timestamp).getTime()
+      const dateB = new Date(b.upload_timestamp).getTime()
+      return sortBy === 'oldest' ? dateA - dateB : dateB - dateA
+    })
+    return sorted
+  }, [documents, query, sortBy])
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return
+    setDocuments(removeFromUploadHistory(pendingDelete.document_id))
+    setPendingDelete(null)
+  }
+
+  return (
+    <div className="space-y-5 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-display text-xl font-bold">Documents</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {documents.length} document{documents.length === 1 ? '' : 's'} in this browser's history
+          </p>
+        </div>
+        <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
+          Upload
+        </Button>
+      </div>
+
+      {documents.length > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <SearchInput value={query} onChange={setQuery} placeholder="Search documents..." className="sm:w-72" />
+          <div className="relative sm:ml-auto">
+            <ArrowUpDown size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <select
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value)}
+              className="input w-full appearance-none py-2 pl-8 pr-8 sm:w-44"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {documents.length === 0 ? (
+        <EmptyState
+          icon={FileText}
+          title="No documents yet"
+          description="Upload your first PDF to start building your knowledge base."
+          action={
+            <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
+              Upload a document
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={FileText} title="No matches" description="Try a different search term." />
+      ) : (
+        <div className="glass-panel divide-y divide-border-light overflow-hidden rounded-3xl dark:divide-border">
+          {filtered.map((doc, index) => (
+            <motion.div
+              key={doc.document_id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.25, delay: index * 0.03 }}
+              className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-slate-900/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 text-accent-500 dark:text-accent-400">
+                  <FileText size={18} strokeWidth={1.75} />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                    {doc.original_filename}
+                  </p>
+                  <p className="text-xs text-slate-400">{formatDate(doc.upload_timestamp)}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 pl-[3.25rem] sm:pl-0">
+                <span className="w-16 shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                  {formatBytes(doc.file_size)}
+                </span>
+                <StatusBadge status={doc.status ?? 'uploaded'} />
+                <button
+                  type="button"
+                  onClick={() => setPendingDelete(doc)}
+                  aria-label={`Delete ${doc.original_filename}`}
+                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-500 sm:ml-0"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title="Remove document"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete}>
+              Remove
+            </Button>
+          </>
+        }
+      >
+        Remove <span className="font-medium text-slate-800 dark:text-slate-100">{pendingDelete?.original_filename}</span> from
+        this browser's document history? This only clears your local history — it doesn't delete anything on the server.
+      </Modal>
+    </div>
+  )
+}

@@ -1,0 +1,99 @@
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import { ArrowRight, FileText } from 'lucide-react'
+import UploadZone from '../components/upload/UploadZone'
+import PDFCard from '../components/upload/PDFCard'
+import Button from '../components/ui/Button'
+import GlassCard from '../components/ui/GlassCard'
+import { getUploadHistory } from '../services/documentService'
+import useUpload from '../hooks/useUpload'
+
+export default function Upload() {
+  const { file, progress, status, errorMessage, selectFile, reset, startUpload } = useUpload()
+  const [recent, setRecent] = useState([])
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    setRecent(getUploadHistory().slice(0, 3))
+  }, [status])
+
+  const handleSelect = (selected) => {
+    selectFile(selected)
+  }
+
+  useEffect(() => {
+    if (file && status === 'idle') {
+      startUpload()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file])
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 py-4">
+      <div className="text-center">
+        <h2 className="font-display text-2xl font-bold">Upload a document</h2>
+        <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+          Add a PDF to your knowledge base — it'll be chunked, embedded, and ready to chat with in moments.
+        </p>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {!file ? (
+          <motion.div key="dropzone" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <UploadZone onFileSelected={handleSelect} />
+          </motion.div>
+        ) : (
+          <motion.div key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-4">
+            <PDFCard file={file} progress={progress} status={status} errorMessage={errorMessage} onRemove={reset} />
+
+            {status === 'success' && (
+              <div className="flex justify-center gap-3">
+                <Button variant="secondary" onClick={reset}>
+                  Upload another
+                </Button>
+                <Button variant="primary" icon={ArrowRight} iconPosition="right" onClick={() => navigate('/chat')}>
+                  Start chatting
+                </Button>
+              </div>
+            )}
+
+            {status === 'error' && (
+              <div className="flex justify-center">
+                <Button variant="secondary" onClick={startUpload}>
+                  Try again
+                </Button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {recent.length > 0 && (
+        <GlassCard padding="md">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Recent uploads</h3>
+            <button
+              type="button"
+              onClick={() => navigate('/documents')}
+              className="text-xs font-medium text-accent-600 hover:underline dark:text-accent-400"
+            >
+              View all
+            </button>
+          </div>
+          <ul className="space-y-2">
+            {recent.map((doc) => (
+              <li
+                key={doc.document_id}
+                className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm text-slate-600 dark:text-slate-300"
+              >
+                <FileText size={15} className="shrink-0 text-slate-400" />
+                <span className="truncate">{doc.original_filename}</span>
+              </li>
+            ))}
+          </ul>
+        </GlassCard>
+      )}
+    </div>
+  )
+}
