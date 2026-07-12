@@ -21,17 +21,29 @@ export default function UploadZone({ onFileSelected, disabled }) {
     handleFiles(event.dataTransfer.files)
   }
 
+  const openBrowser = () => !disabled && inputRef.current?.click()
+
   return (
     <motion.div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label="Upload a PDF: drag and drop, or press Enter to browse files"
       onDragOver={(event) => {
         event.preventDefault()
         if (!disabled) setIsDragging(true)
       }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
-      onClick={() => !disabled && inputRef.current?.click()}
+      onClick={openBrowser}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          openBrowser()
+        }
+      }}
       whileHover={disabled ? {} : { scale: 1.005 }}
-      className={`glass-panel flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 text-center transition-colors duration-200 ${
+      className={`glass-panel flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 text-center transition-colors duration-200
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-dark ${
         isDragging
           ? 'border-accent-400 bg-accent-500/5'
           : 'border-border-light dark:border-border'

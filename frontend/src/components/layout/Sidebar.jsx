@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FileText, MessageSquarePlus, Settings, Sparkles, UploadCloud, X } from 'lucide-react'
@@ -67,6 +68,15 @@ function SidebarContent({ onNavigate }) {
 }
 
 export default function Sidebar({ isOpen, onClose }) {
+  useEffect(() => {
+    if (!isOpen) return undefined
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose?.()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
   return (
     <>
       {/* Desktop: static column */}

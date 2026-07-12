@@ -72,7 +72,7 @@ export default function Home() {
       >
         <span
           className={`h-1.5 w-1.5 rounded-full ${
-            status === 'online' ? 'bg-emerald-400' : status === 'offline' ? 'bg-rose-400' : 'bg-amber-400 animate-pulse-glow'
+            status === 'online' ? 'bg-success' : status === 'offline' ? 'bg-danger' : 'bg-warning animate-pulse-glow'
           }`}
         />
         {status === 'checking' && 'Checking backend...'}

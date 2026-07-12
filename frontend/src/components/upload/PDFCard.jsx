@@ -16,7 +16,7 @@ export default function PDFCard({ file, progress = 0, status = 'idle', errorMess
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.97 }}
-      className="glass-panel flex items-center gap-4 rounded-2xl p-4"
+      className="glass-panel flex items-center gap-4 p-4"
     >
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 text-accent-500 dark:text-accent-400">
         <FileText size={20} strokeWidth={1.75} />
@@ -31,7 +31,7 @@ export default function PDFCard({ file, progress = 0, status = 'idle', errorMess
                 key="success"
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="text-emerald-500"
+                className="text-success"
               >
                 <CheckCircle2 size={18} />
               </motion.span>
@@ -41,7 +41,7 @@ export default function PDFCard({ file, progress = 0, status = 'idle', errorMess
                 key="error"
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="text-rose-500"
+                className="text-danger"
               >
                 <XCircle size={18} />
               </motion.span>

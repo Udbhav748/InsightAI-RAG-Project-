@@ -48,3 +48,15 @@ export function removeFromUploadHistory(documentId) {
   window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
   return history
 }
+
+/**
+ * The /chat API's retrieved_chunks only carry document_id, not a filename
+ * (the backend never threads original_filename through chunking/embedding).
+ * Resolve a friendly name from this browser's own upload history when the
+ * document was uploaded here; otherwise return null so callers can fall
+ * back to showing the id rather than a fabricated name.
+ */
+export function getDocumentName(documentId) {
+  const match = getUploadHistory().find((doc) => doc.document_id === documentId)
+  return match?.original_filename ?? null
+}

@@ -8,7 +8,7 @@ const PADDING = {
 export default function Card({ padding = 'md', hover = false, className = '', children, ...props }) {
   return (
     <div
-      className={`rounded-2xl border border-border-light bg-white/80 dark:border-white/5 dark:bg-white/[0.03]
+      className={`rounded-3xl border border-border-light bg-white/80 dark:border-white/5 dark:bg-white/[0.03]
         ${PADDING[padding]}
         ${hover ? 'transition-colors duration-200 hover:bg-white dark:hover:bg-white/[0.06]' : ''}
         ${className}`}

@@ -32,7 +32,9 @@ export default function useUpload() {
     try {
       const result = await uploadDocument(file, setProgress)
       setStatus('success')
-      addToUploadHistory(result)
+      // DocumentProcessingResponse carries no timestamp — stamp one
+      // locally so Documents can sort/display by upload time.
+      addToUploadHistory({ ...result, uploaded_at: new Date().toISOString() })
       showToast(`${result.original_filename} uploaded successfully.`, 'success')
     } catch (error) {
       const message = getErrorMessage(error, 'Upload failed. Please try again.')

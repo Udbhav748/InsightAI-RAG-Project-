@@ -31,7 +31,10 @@ export default function ChatInput({ onSend, disabled }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="glass-panel flex items-end gap-2 rounded-3xl p-2.5 shadow-soft-lg">
+    <form
+      onSubmit={handleSubmit}
+      className="glass-panel flex items-end gap-2 rounded-3xl p-2.5 shadow-soft-lg transition-shadow duration-200 focus-within:ring-2 focus-within:ring-accent-400/50"
+    >
       <textarea
         ref={textareaRef}
         value={value}

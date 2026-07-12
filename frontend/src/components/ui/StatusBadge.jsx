@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
 
 const STATUS_MAP = {
   uploaded: { label: 'Uploaded', icon: Clock, className: 'bg-slate-500/10 text-slate-500 dark:text-slate-400' },
@@ -11,9 +11,14 @@ const STATUS_MAP = {
   processed: {
     label: 'Processed',
     icon: CheckCircle2,
-    className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    className: 'bg-success/10 text-success',
   },
-  failed: { label: 'Failed', icon: XCircle, className: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+  warning: {
+    label: 'No text found',
+    icon: AlertTriangle,
+    className: 'bg-warning/10 text-warning',
+  },
+  failed: { label: 'Failed', icon: XCircle, className: 'bg-danger/10 text-danger' },
 }
 
 export default function StatusBadge({ status = 'uploaded', className = '' }) {

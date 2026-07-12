@@ -1,21 +1,57 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X } from 'lucide-react'
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 export default function Modal({ open, onClose, title, children, footer }) {
+  const dialogRef = useRef(null)
+  const previouslyFocusedRef = useRef(null)
+
   useEffect(() => {
     if (!open) return undefined
 
+    previouslyFocusedRef.current = document.activeElement
+
+    const focusables = () => Array.from(dialogRef.current?.querySelectorAll(FOCUSABLE_SELECTOR) ?? [])
+    // Focus the first focusable element (falls back to the dialog itself)
+    // once it's mounted.
+    const raf = requestAnimationFrame(() => {
+      const [first] = focusables()
+      ;(first ?? dialogRef.current)?.focus()
+    })
+
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose?.()
+      if (event.key === 'Escape') {
+        onClose?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const items = focusables()
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
+
     document.addEventListener('keydown', handleKeyDown)
     document.body.style.overflow = 'hidden'
 
     return () => {
+      cancelAnimationFrame(raf)
       document.removeEventListener('keydown', handleKeyDown)
       document.body.style.overflow = ''
+      previouslyFocusedRef.current?.focus?.()
     }
   }, [open, onClose])
 
@@ -32,6 +68,8 @@ export default function Modal({ open, onClose, title, children, footer }) {
             onClick={onClose}
           />
           <motion.div
+            ref={dialogRef}
+            tabIndex={-1}
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 8, transition: { duration: 0.15 } }}
@@ -39,7 +77,7 @@ export default function Modal({ open, onClose, title, children, footer }) {
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            className="glass-panel relative z-10 w-full max-w-md p-6 shadow-soft-lg"
+            className="glass-panel relative z-10 w-full max-w-md p-6 shadow-soft-lg focus:outline-none"
           >
             <div className="mb-4 flex items-center justify-between">
               {title && <h3 className="text-lg font-semibold">{title}</h3>}

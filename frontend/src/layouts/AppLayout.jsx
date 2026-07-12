@@ -7,7 +7,7 @@ export default function AppLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   return (
-    <div className="min-h-screen bg-surface-light bg-grid-glow bg-fixed dark:bg-surface-dark">
+    <div className="min-h-screen bg-surface-light bg-fixed dark:bg-grid-glow">
       <div className="mx-auto flex max-w-[1400px] gap-4 p-4">
         <Sidebar isOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
 

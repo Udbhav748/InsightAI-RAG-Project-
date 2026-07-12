@@ -14,12 +14,12 @@
   body {
     @apply font-sans antialiased selection:bg-accent-500/30 selection:text-inherit;
     @apply bg-surface-light text-slate-700;
-    @apply dark:bg-surface-dark dark:text-slate-200;
+    @apply dark:bg-surface-dark dark:text-slate-400;
     transition: background-color 0.25s ease, color 0.25s ease;
   }
 
   h1, h2, h3, h4 {
-    @apply font-display font-semibold tracking-tight text-slate-900 dark:text-white;
+    @apply font-display font-semibold tracking-tight text-slate-900 dark:text-slate-50;
   }
 
   a {

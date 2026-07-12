@@ -9,22 +9,16 @@ import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import { getUploadHistory, removeFromUploadHistory } from '../services/documentService'
 
-function formatBytes(bytes) {
-  if (!bytes) return '—'
-  const kb = bytes / 1024
-  if (kb < 1024) return `${kb.toFixed(0)} KB`
-  return `${(kb / 1024).toFixed(1)} MB`
+function formatDate(iso) {
+  if (!iso) return 'Unknown date'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return 'Unknown date'
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-function formatDate(iso) {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    })
-  } catch {
-    return iso
-  }
+function effectiveStatus(doc) {
+  if (doc.status === 'processed' && doc.total_chunks === 0) return 'warning'
+  return doc.status ?? 'uploaded'
 }
 
 const SORT_OPTIONS = [
@@ -50,8 +44,8 @@ export default function Documents() {
     )
     const sorted = [...list].sort((a, b) => {
       if (sortBy === 'name') return a.original_filename.localeCompare(b.original_filename)
-      const dateA = new Date(a.upload_timestamp).getTime()
-      const dateB = new Date(b.upload_timestamp).getTime()
+      const dateA = new Date(a.uploaded_at).getTime() || 0
+      const dateB = new Date(b.uploaded_at).getTime() || 0
       return sortBy === 'oldest' ? dateA - dateB : dateB - dateA
     })
     return sorted
@@ -128,20 +122,20 @@ export default function Documents() {
                   <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
                     {doc.original_filename}
                   </p>
-                  <p className="text-xs text-slate-400">{formatDate(doc.upload_timestamp)}</p>
+                  <p className="text-xs text-slate-400">{formatDate(doc.uploaded_at)}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-4 pl-[3.25rem] sm:pl-0">
-                <span className="w-16 shrink-0 text-xs text-slate-500 dark:text-slate-400">
-                  {formatBytes(doc.file_size)}
+                <span className="w-28 shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                  {doc.total_pages != null ? `${doc.total_pages} pg · ${doc.total_chunks} chunks` : '—'}
                 </span>
-                <StatusBadge status={doc.status ?? 'uploaded'} />
+                <StatusBadge status={effectiveStatus(doc)} />
                 <button
                   type="button"
                   onClick={() => setPendingDelete(doc)}
                   aria-label={`Delete ${doc.original_filename}`}
-                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-500 sm:ml-0"
+                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-danger/10 hover:text-danger sm:ml-0"
                 >
                   <Trash2 size={15} />
                 </button>

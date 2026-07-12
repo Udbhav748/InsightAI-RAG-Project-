@@ -8,8 +8,8 @@ const ICONS = {
 }
 
 const ACCENTS = {
-  success: 'text-emerald-400 bg-emerald-400/10',
-  error: 'text-rose-400 bg-rose-400/10',
+  success: 'text-success bg-success/10',
+  error: 'text-danger bg-danger/10',
   info: 'text-accent-400 bg-accent-400/10',
 }
 
