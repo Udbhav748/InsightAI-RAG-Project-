@@ -44,3 +44,9 @@ class DocumentProcessingResponse(BaseModel):
     total_embeddings: int
     processing_time: float
     status: str
+
+
+class DocumentDeleteResponse(BaseModel):
+    document_id: str
+    chunks_removed: int
+    status: str

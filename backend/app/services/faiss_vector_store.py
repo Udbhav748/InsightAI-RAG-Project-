@@ -134,6 +134,54 @@ class FAISSVectorStore(VectorStore):
 
         return results
 
+    def delete_document(self, document_id: str) -> int:
+        if self._index is None:
+            raise VectorStoreNotFoundError(
+                "No index to delete from. Call create_index() or load() first."
+            )
+
+        keep_positions = [
+            i for i, record in enumerate(self._metadata) if record["document_id"] != document_id
+        ]
+        removed_count = len(self._metadata) - len(keep_positions)
+        if removed_count == 0:
+            return 0
+
+        start = time.perf_counter()
+        dimension = self._index.d
+
+        # IndexFlatIP has no native remove-by-id, but it stores raw vectors,
+        # so rebuilding from the vectors we want to keep is exact (not an
+        # approximation) and cheap at this project's scale.
+        if keep_positions:
+            all_vectors = self._index.reconstruct_n(0, self._index.ntotal)
+            kept_vectors = all_vectors[keep_positions]
+        else:
+            kept_vectors = np.empty((0, dimension), dtype="float32")
+
+        new_index = faiss.IndexFlatIP(dimension)
+        if len(kept_vectors) > 0:
+            new_index.add(kept_vectors)
+
+        self._index = new_index
+        self._metadata = [self._metadata[i] for i in keep_positions]
+
+        processing_duration = time.perf_counter() - start
+
+        logger.info(
+            "document_deleted",
+            extra={
+                "extra_fields": {
+                    "document_id": document_id,
+                    "vectors_removed": removed_count,
+                    "total_vectors": self._index.ntotal,
+                    "processing_duration": round(processing_duration, 4),
+                }
+            },
+        )
+
+        return removed_count
+
     def save(self) -> None:
         if self._index is None:
             raise VectorStoreNotFoundError(

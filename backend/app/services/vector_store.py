@@ -28,6 +28,14 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def delete_document(self, document_id: str) -> int:
+        """Remove every vector belonging to document_id. Returns the count removed.
+
+        Returns 0 (rather than raising) if the document isn't present —
+        callers decide whether that's an error.
+        """
+
+    @abstractmethod
     def save(self) -> None:
         """Persist the index and its metadata to storage."""
 

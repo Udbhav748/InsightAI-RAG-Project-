@@ -23,10 +23,20 @@ export async function uploadDocument(file, onProgress) {
 }
 
 /**
- * The backend doesn't yet expose a document list/delete API (that lives
- * entirely server-side against the vector store), so upload history is
- * tracked client-side from real, successful uploads. This is real data
- * about what this browser has uploaded, not mock data.
+ * Delete a document from the server: removes its vectors from the FAISS
+ * index and its uploaded file from disk.
+ * @param {string} documentId
+ * @returns {Promise<{document_id: string, chunks_removed: number, status: string}>}
+ */
+export async function deleteDocument(documentId) {
+  const { data } = await api.delete(`/documents/${encodeURIComponent(documentId)}`)
+  return data
+}
+
+/**
+ * The backend has no document list endpoint (only delete-by-id), so
+ * upload history is tracked client-side from real, successful uploads.
+ * This is real data about what this browser has uploaded, not mock data.
  */
 export function getUploadHistory() {
   try {

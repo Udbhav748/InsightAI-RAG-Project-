@@ -7,7 +7,9 @@ import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
-import { getUploadHistory, removeFromUploadHistory } from '../services/documentService'
+import { deleteDocument, getUploadHistory, removeFromUploadHistory } from '../services/documentService'
+import useToast from '../hooks/useToast'
+import getErrorMessage from '../utils/errorMessage'
 
 function formatDate(iso) {
   if (!iso) return 'Unknown date'
@@ -32,7 +34,9 @@ export default function Documents() {
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState('newest')
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const navigate = useNavigate()
+  const { showToast } = useToast()
 
   useEffect(() => {
     setDocuments(getUploadHistory())
@@ -51,10 +55,19 @@ export default function Documents() {
     return sorted
   }, [documents, query, sortBy])
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!pendingDelete) return
-    setDocuments(removeFromUploadHistory(pendingDelete.document_id))
-    setPendingDelete(null)
+    setIsDeleting(true)
+    try {
+      await deleteDocument(pendingDelete.document_id)
+      setDocuments(removeFromUploadHistory(pendingDelete.document_id))
+      showToast(`${pendingDelete.original_filename} deleted.`, 'success')
+      setPendingDelete(null)
+    } catch (error) {
+      showToast(getErrorMessage(error, 'Failed to delete document. Please try again.'), 'error')
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   return (
@@ -151,17 +164,17 @@ export default function Documents() {
         title="Remove document"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setPendingDelete(null)}>
+            <Button variant="secondary" onClick={() => setPendingDelete(null)} disabled={isDeleting}>
               Cancel
             </Button>
-            <Button variant="danger" onClick={confirmDelete}>
-              Remove
+            <Button variant="danger" onClick={confirmDelete} loading={isDeleting}>
+              Delete
             </Button>
           </>
         }
       >
-        Remove <span className="font-medium text-slate-800 dark:text-ink-primary">{pendingDelete?.original_filename}</span> from
-        this browser's document history? This only clears your local history — it doesn't delete anything on the server.
+        Delete <span className="font-medium text-slate-800 dark:text-ink-primary">{pendingDelete?.original_filename}</span>?
+        This permanently removes it from the server — its content will no longer be searchable in chat. This can't be undone.
       </Modal>
     </div>
   )
