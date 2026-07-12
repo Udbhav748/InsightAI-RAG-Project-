@@ -42,26 +42,26 @@ export default function UploadZone({ onFileSelected, disabled }) {
         }
       }}
       whileHover={disabled ? {} : { scale: 1.005 }}
-      className={`glass-panel flex cursor-pointer flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed px-6 py-16 text-center transition-colors duration-200
-        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-dark ${
+      className={`panel flex cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed px-6 py-16 text-center transition-colors duration-200
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-dark ${
         isDragging
-          ? 'border-accent-400 bg-accent-500/5'
+          ? 'border-accent-500/60 bg-accent-500/5'
           : 'border-border-light dark:border-border'
       } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
     >
       <motion.span
-        animate={{ y: isDragging ? -6 : [0, -6, 0] }}
-        transition={isDragging ? { duration: 0.2 } : { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
-        className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-500/15 to-accent-glow/10 text-accent-500 dark:text-accent-400"
+        animate={{ y: isDragging ? -4 : 0 }}
+        transition={{ duration: 0.2 }}
+        className="flex h-14 w-14 items-center justify-center rounded-xl border border-border-light bg-slate-900/5 text-slate-500 dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary"
       >
-        <UploadCloud size={30} strokeWidth={1.75} />
+        <UploadCloud size={26} strokeWidth={1.5} />
       </motion.span>
 
       <div>
-        <p className="font-display text-base font-semibold text-slate-800 dark:text-slate-100">
+        <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
           {isDragging ? 'Drop your PDF here' : 'Drag & drop a PDF, or click to browse'}
         </p>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">PDF only, up to 20MB</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">PDF only, up to 20MB</p>
       </div>
 
       <input

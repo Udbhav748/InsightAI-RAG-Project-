@@ -62,7 +62,7 @@ export default function Documents() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-display text-xl font-bold">Documents</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-slate-500 dark:text-ink-muted">
             {documents.length} document{documents.length === 1 ? '' : 's'} in this browser's history
           </p>
         </div>
@@ -75,7 +75,7 @@ export default function Documents() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <SearchInput value={query} onChange={setQuery} placeholder="Search documents..." className="sm:w-72" />
           <div className="relative sm:ml-auto">
-            <ArrowUpDown size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <ArrowUpDown size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-ink-muted" />
             <select
               value={sortBy}
               onChange={(event) => setSortBy(event.target.value)}
@@ -105,7 +105,7 @@ export default function Documents() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={FileText} title="No matches" description="Try a different search term." />
       ) : (
-        <div className="glass-panel divide-y divide-border-light overflow-hidden rounded-3xl dark:divide-border">
+        <div className="panel divide-y divide-border-light overflow-hidden dark:divide-border">
           {filtered.map((doc, index) => (
             <motion.div
               key={doc.document_id}
@@ -115,19 +115,19 @@ export default function Documents() {
               className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-slate-900/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center"
             >
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-500/10 text-accent-500 dark:text-accent-400">
-                  <FileText size={18} strokeWidth={1.75} />
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border-light bg-slate-900/5 text-slate-500 dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary">
+                  <FileText size={18} strokeWidth={1.5} />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                  <p className="truncate text-sm font-medium text-slate-800 dark:text-ink-primary">
                     {doc.original_filename}
                   </p>
-                  <p className="text-xs text-slate-400">{formatDate(doc.uploaded_at)}</p>
+                  <p className="text-xs text-slate-400 dark:text-ink-muted">{formatDate(doc.uploaded_at)}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-4 pl-[3.25rem] sm:pl-0">
-                <span className="w-28 shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                <span className="w-28 shrink-0 text-xs text-slate-500 dark:text-ink-muted">
                   {doc.total_pages != null ? `${doc.total_pages} pg · ${doc.total_chunks} chunks` : '—'}
                 </span>
                 <StatusBadge status={effectiveStatus(doc)} />
@@ -135,7 +135,7 @@ export default function Documents() {
                   type="button"
                   onClick={() => setPendingDelete(doc)}
                   aria-label={`Delete ${doc.original_filename}`}
-                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-danger/10 hover:text-danger sm:ml-0"
+                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-danger/10 hover:text-danger dark:text-ink-muted sm:ml-0"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -160,7 +160,7 @@ export default function Documents() {
           </>
         }
       >
-        Remove <span className="font-medium text-slate-800 dark:text-slate-100">{pendingDelete?.original_filename}</span> from
+        Remove <span className="font-medium text-slate-800 dark:text-ink-primary">{pendingDelete?.original_filename}</span> from
         this browser's document history? This only clears your local history — it doesn't delete anything on the server.
       </Modal>
     </div>

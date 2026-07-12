@@ -5,7 +5,7 @@ import { ArrowRight, FileText } from 'lucide-react'
 import UploadZone from '../components/upload/UploadZone'
 import PDFCard from '../components/upload/PDFCard'
 import Button from '../components/ui/Button'
-import GlassCard from '../components/ui/GlassCard'
+import Card from '../components/ui/Card'
 import { getUploadHistory } from '../services/documentService'
 import useUpload from '../hooks/useUpload'
 
@@ -33,7 +33,7 @@ export default function Upload() {
     <div className="mx-auto max-w-2xl space-y-6 py-4">
       <div className="text-center">
         <h2 className="font-display text-2xl font-bold">Upload a document</h2>
-        <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+        <p className="mt-1.5 text-sm text-slate-500 dark:text-ink-muted">
           Add a PDF to your knowledge base — it'll be chunked, embedded, and ready to chat with in moments.
         </p>
       </div>
@@ -70,13 +70,13 @@ export default function Upload() {
       </AnimatePresence>
 
       {recent.length > 0 && (
-        <GlassCard padding="md">
+        <Card padding="md">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Recent uploads</h3>
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-ink-secondary">Recent uploads</h3>
             <button
               type="button"
               onClick={() => navigate('/documents')}
-              className="text-xs font-medium text-accent-600 hover:underline dark:text-accent-400"
+              className="text-xs font-medium text-accent-600 hover:underline dark:text-accent-500"
             >
               View all
             </button>
@@ -85,14 +85,14 @@ export default function Upload() {
             {recent.map((doc) => (
               <li
                 key={doc.document_id}
-                className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm text-slate-600 dark:text-slate-300"
+                className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm text-slate-600 dark:text-ink-secondary"
               >
-                <FileText size={15} className="shrink-0 text-slate-400" />
+                <FileText size={15} className="shrink-0 text-slate-400 dark:text-ink-muted" />
                 <span className="truncate">{doc.original_filename}</span>
               </li>
             ))}
           </ul>
-        </GlassCard>
+        </Card>
       )}
     </div>
   )

@@ -6,7 +6,7 @@ const VARIANTS = {
   primary: 'btn-primary',
   secondary: 'btn-secondary',
   ghost: 'btn-ghost',
-  danger: 'btn bg-danger/90 text-white shadow-glow-sm hover:bg-danger hover:shadow-none',
+  danger: 'btn bg-danger/90 text-white shadow-soft hover:bg-danger',
 }
 
 const SIZES = {

@@ -9,14 +9,14 @@ export default function TypingIndicator() {
       exit={{ opacity: 0 }}
       className="flex items-start gap-3"
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-500 to-accent-glow text-white shadow-glow-sm">
-        <Sparkles size={15} />
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light bg-slate-100 text-slate-500 dark:border-border dark:bg-white/[0.04] dark:text-ink-secondary">
+        <Sparkles size={15} strokeWidth={1.75} />
       </span>
-      <div className="glass-panel flex items-center gap-1.5 rounded-2xl px-4 py-3.5">
+      <div className="panel flex items-center gap-1.5 rounded-2xl rounded-tl-md px-4 py-3.5">
         {[0, 1, 2].map((i) => (
           <motion.span
             key={i}
-            className="h-1.5 w-1.5 rounded-full bg-slate-400 dark:bg-slate-500"
+            className="h-1.5 w-1.5 rounded-full bg-slate-400 dark:bg-ink-muted"
             animate={{ opacity: [0.3, 1, 0.3], y: [0, -3, 0] }}
             transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.15, ease: 'easeInOut' }}
           />

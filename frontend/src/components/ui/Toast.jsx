@@ -28,11 +28,11 @@ export default function Toast({ message, type = 'info', onDismiss }) {
       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${ACCENTS[type] ?? ACCENTS.info}`}>
         <Icon size={16} strokeWidth={2.25} />
       </span>
-      <p className="mt-1 flex-1 text-sm leading-snug text-slate-700 dark:text-slate-200">{message}</p>
+      <p className="mt-1 flex-1 text-sm leading-snug text-slate-700 dark:text-ink-secondary">{message}</p>
       <button
         type="button"
         onClick={onDismiss}
-        className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
+        className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-primary"
         aria-label="Dismiss notification"
       >
         <X size={14} />

@@ -12,14 +12,14 @@
   }
 
   body {
-    @apply font-sans antialiased selection:bg-accent-500/30 selection:text-inherit;
+    @apply font-sans antialiased selection:bg-accent-500/25 selection:text-inherit;
     @apply bg-surface-light text-slate-700;
-    @apply dark:bg-surface-dark dark:text-slate-400;
-    transition: background-color 0.25s ease, color 0.25s ease;
+    @apply dark:bg-surface-dark dark:text-ink-secondary;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 
   h1, h2, h3, h4 {
-    @apply font-display font-semibold tracking-tight text-slate-900 dark:text-slate-50;
+    @apply font-display font-semibold tracking-tight text-slate-900 dark:text-ink-primary;
   }
 
   a {
@@ -49,51 +49,57 @@
 }
 
 @layer components {
-  /* Core glass surface used by GlassCard and other frosted panels */
-  .glass-panel {
-    @apply relative rounded-3xl border border-border-light bg-glass-light backdrop-blur-xl
-           shadow-soft-light
-           dark:border-border dark:bg-glass dark:shadow-soft;
+  /* Default surface for most cards: soft elevation, no blur. */
+  .panel {
+    @apply relative rounded-panel border border-border-light bg-card-light shadow-soft-light
+           dark:border-border dark:bg-card dark:shadow-soft;
   }
 
-  .glass-panel-hover {
-    @apply transition-all duration-300 ease-out;
-    @apply hover:bg-glass-light-hover hover:shadow-soft-light hover:-translate-y-0.5;
-    @apply dark:hover:bg-glass-hover dark:hover:shadow-soft-lg;
+  .panel-hover {
+    @apply transition-all duration-200 ease-out;
+    @apply hover:bg-card-light-hover;
+    @apply dark:hover:bg-card-hover;
+  }
+
+  /* Reserved for floating chrome (Sidebar, Navbar, Modal) — the only
+     places blur genuinely earns its cost. */
+  .glass-panel {
+    @apply relative rounded-panel border border-border-light bg-card-light backdrop-blur-xl
+           shadow-soft-light
+           dark:border-border dark:bg-card dark:shadow-soft;
   }
 
   .btn {
     @apply inline-flex items-center justify-center gap-2 rounded-xl text-sm font-medium
            transition-all duration-200 ease-out
-           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 focus-visible:ring-offset-2
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50 focus-visible:ring-offset-2
            dark:focus-visible:ring-offset-surface-dark
            disabled:opacity-50 disabled:pointer-events-none;
   }
 
   .btn-primary {
-    @apply btn bg-gradient-to-br from-accent-500 to-accent-glow text-white shadow-glow-sm
-           hover:shadow-glow hover:brightness-110 active:brightness-95;
+    @apply btn border border-accent-600/30 bg-white text-slate-900 shadow-soft-light
+           hover:bg-slate-50 hover:border-accent-600/50 hover:-translate-y-px
+           active:translate-y-0
+           dark:border-accent-500/40 dark:bg-white/[0.04] dark:text-ink-primary dark:shadow-none
+           dark:hover:bg-white/[0.07] dark:hover:border-accent-500/60;
   }
 
   .btn-secondary {
-    @apply btn border border-border-light bg-white/60 text-slate-700 backdrop-blur
+    @apply btn border border-border-light bg-white/60 text-slate-700
            hover:bg-white/90
-           dark:border-border dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10;
+           dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary dark:hover:bg-white/[0.06];
   }
 
   .btn-ghost {
     @apply btn text-slate-500 hover:bg-slate-900/5 hover:text-slate-900
-           dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-white;
+           dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-primary;
   }
 
   .input {
     @apply w-full rounded-xl border border-border-light bg-white/70 px-3.5 py-2.5 text-sm text-slate-800
-           placeholder-slate-400 backdrop-blur transition-all duration-200
-           focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-transparent
-           dark:border-border dark:bg-white/5 dark:text-slate-100 dark:placeholder-slate-500;
-  }
-
-  .text-gradient {
-    @apply bg-gradient-to-r from-accent-400 via-accent-500 to-accent-glow bg-clip-text text-transparent;
+           placeholder-slate-400 transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-transparent
+           dark:border-border dark:bg-white/[0.03] dark:text-ink-primary dark:placeholder-ink-muted;
   }
 }

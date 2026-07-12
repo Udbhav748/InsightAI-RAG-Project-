@@ -24,7 +24,7 @@ export default function Chat() {
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
 
   return (
-    <div className="flex h-[calc(100vh-7.5rem)] flex-col">
+    <div className="mx-auto flex h-[calc(100vh-7.5rem)] max-w-3xl flex-col">
       <div className="flex-1 space-y-5 overflow-y-auto px-1 py-4 sm:px-3">
         {messages.length === 0 ? (
           <EmptyState
@@ -38,7 +38,7 @@ export default function Chat() {
                     key={suggestion}
                     type="button"
                     onClick={() => ask(suggestion)}
-                    className="rounded-full border border-border-light bg-white/60 px-3.5 py-1.5 text-xs text-slate-600 transition-colors hover:bg-white dark:border-border dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10"
+                    className="rounded-full border border-border-light bg-white/60 px-3.5 py-1.5 text-xs text-slate-600 transition-colors hover:bg-white dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary dark:hover:bg-white/[0.06]"
                   >
                     {suggestion}
                   </button>
@@ -64,7 +64,7 @@ export default function Chat() {
 
       <div className="sticky bottom-0 pt-2">
         <ChatInput onSend={ask} disabled={isSending} />
-        <p className="mt-2 text-center text-[11px] text-slate-400 dark:text-slate-600">
+        <p className="mt-2 text-center text-[11px] text-slate-400 dark:text-ink-muted">
           InsightAI can make mistakes. Verify important information.
         </p>
       </div>

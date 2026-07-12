@@ -80,17 +80,17 @@ export default function Modal({ open, onClose, title, children, footer }) {
             className="glass-panel relative z-10 w-full max-w-md p-6 shadow-soft-lg focus:outline-none"
           >
             <div className="mb-4 flex items-center justify-between">
-              {title && <h3 className="text-lg font-semibold">{title}</h3>}
+              {title && <h3 className="text-lg font-semibold text-slate-900 dark:text-ink-primary">{title}</h3>}
               <button
                 type="button"
                 onClick={onClose}
-                className="ml-auto rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                className="ml-auto rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-primary"
                 aria-label="Close"
               >
                 <X size={16} />
               </button>
             </div>
-            <div className="text-sm text-slate-600 dark:text-slate-300">{children}</div>
+            <div className="text-sm text-slate-600 dark:text-ink-secondary">{children}</div>
             {footer && <div className="mt-6 flex justify-end gap-2">{footer}</div>}
           </motion.div>
         </div>

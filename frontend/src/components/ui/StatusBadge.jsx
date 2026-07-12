@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
 
 const STATUS_MAP = {
-  uploaded: { label: 'Uploaded', icon: Clock, className: 'bg-slate-500/10 text-slate-500 dark:text-slate-400' },
+  uploaded: { label: 'Uploaded', icon: Clock, className: 'bg-slate-500/10 text-slate-500 dark:text-ink-muted' },
   processing: {
     label: 'Processing',
     icon: Loader2,

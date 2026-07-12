@@ -17,7 +17,7 @@ export default function ProgressBar({ value = 0, indeterminate = false, classNam
         />
       ) : (
         <motion.div
-          className="h-full rounded-full bg-gradient-to-r from-accent-500 to-accent-glow shadow-glow-sm"
+          className="h-full rounded-full bg-accent-500"
           initial={{ width: 0 }}
           animate={{ width: `${clamped}%` }}
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
