@@ -14,7 +14,7 @@ import time
 from app.core.exceptions import AppError, ChatServiceError
 from app.models.schemas import ChatResponse
 from app.services.llm_client import LLMClient
-from app.services.prompt_builder import build_prompt
+from app.services.prompt_builder import build_prompt, strip_sources_section
 from app.services.retrieval_service import retrieve
 from app.services.vector_store import VectorStore
 
@@ -40,7 +40,7 @@ class ChatService:
                 query, self._vector_store, top_k=top_k, min_score=min_score
             )
             prompt = build_prompt(query, retrieved_chunks)
-            answer = self._llm_client.generate(prompt)
+            answer = strip_sources_section(self._llm_client.generate(prompt))
         except AppError:
             # Already a well-formed domain exception from retrieval, prompt
             # building, or the LLM client — propagate it unchanged.
