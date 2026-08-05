@@ -27,6 +27,12 @@ class ChatRequest(BaseModel):
         le=1.0,
         description="Minimum similarity score to keep a chunk. Defaults to Settings.retrieval_min_score.",
     )
+    history: list[dict] | None = Field(
+        None,
+        description="Prior conversation turns, oldest first, each shaped like "
+        "{'role': 'user'|'assistant', 'content': str}. Only the most recent "
+        "6 are used.",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -34,6 +40,8 @@ class ChatResponse(BaseModel):
     retrieved_chunks: list[RetrievedChunk]
     sources: list[str]
     processing_time: float
+    tool_used: str
+    steps_taken: int
 
 
 class DocumentProcessingResponse(BaseModel):

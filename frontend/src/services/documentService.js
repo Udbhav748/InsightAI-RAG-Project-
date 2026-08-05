@@ -24,12 +24,17 @@ export async function uploadDocument(file, onProgress) {
 
 /**
  * Delete a document from the server: removes its vectors from the FAISS
- * index and its uploaded file from disk.
+ * index and its uploaded file from disk. The backend requires explicit
+ * confirmation (?confirm=true) or it rejects the request — callers must
+ * only invoke this after the user has confirmed the deletion themselves
+ * (see the confirm dialog in pages/Documents.jsx).
  * @param {string} documentId
  * @returns {Promise<{document_id: string, chunks_removed: number, status: string}>}
  */
 export async function deleteDocument(documentId) {
-  const { data } = await api.delete(`/documents/${encodeURIComponent(documentId)}`)
+  const { data } = await api.delete(`/documents/${encodeURIComponent(documentId)}`, {
+    params: { confirm: true },
+  })
   return data
 }
 

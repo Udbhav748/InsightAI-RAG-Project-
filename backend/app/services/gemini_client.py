@@ -11,6 +11,7 @@ import httpx
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -22,6 +23,18 @@ from app.core.exceptions import (
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
+
+
+def _log_retry(retry_state) -> None:
+    logger.warning(
+        "llm_generation_retrying",
+        extra={
+            "extra_fields": {
+                "attempt": retry_state.attempt_number,
+                "exception": str(retry_state.outcome.exception()),
+            }
+        },
+    )
 
 
 class GeminiClient(LLMClient):
@@ -39,6 +52,16 @@ class GeminiClient(LLMClient):
         except Exception as exc:
             raise LLMConfigurationError(f"Failed to configure Gemini client: {exc}") from exc
 
+    # Only retries on LLMTimeoutError/LLMAPIError (transient failure modes)
+    # — not on LLMEmptyResponseError, which usually means the prompt or
+    # safety filters produced no content and a retry won't help.
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+        reraise=True,
+        before_sleep=_log_retry,
+    )
     def generate(self, prompt: str) -> str:
         start = time.perf_counter()
 

@@ -182,6 +182,32 @@ class FAISSVectorStore(VectorStore):
 
         return removed_count
 
+    def get_chunks_by_document(self, document_id: str) -> list[RetrievedChunk]:
+        if self._index is None:
+            return []
+
+        matches = []
+        for record in self._metadata:
+            if record["document_id"] != document_id:
+                continue
+            record_metadata = record["metadata"]
+            text = record_metadata.get("text", "")
+            metadata = {key: value for key, value in record_metadata.items() if key != "text"}
+            matches.append(
+                RetrievedChunk(
+                    chunk_id=record["chunk_id"],
+                    document_id=record["document_id"],
+                    text=text,
+                    # Not a similarity score — there's no query here, this
+                    # is a full-document fetch. 1.0 just signals "included".
+                    score=1.0,
+                    metadata=metadata,
+                )
+            )
+
+        matches.sort(key=lambda chunk: chunk.metadata.get("chunk_index", 0))
+        return matches
+
     def save(self) -> None:
         if self._index is None:
             raise VectorStoreNotFoundError(

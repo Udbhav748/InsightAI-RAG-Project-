@@ -3,8 +3,9 @@
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.auth import require_api_key
 from app.core.exceptions import VectorStoreNotFoundError
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services.faiss_vector_store import FAISSVectorStore
@@ -13,7 +14,7 @@ from app.services.llm_client import LLMClient
 from app.services.rag_service import ChatService
 from app.services.vector_store import VectorStore
 
-router = APIRouter(tags=["Chat"])
+router = APIRouter(tags=["Chat"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +68,10 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
 
     response = chat_service.handle_query(
-        request.query, top_k=request.top_k, min_score=request.min_score
+        request.query,
+        top_k=request.top_k,
+        min_score=request.min_score,
+        history=request.history,
     )
 
     logger.info(

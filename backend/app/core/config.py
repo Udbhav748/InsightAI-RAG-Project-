@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     # Required. Google Gemini API key (used by the future RAG/generation pipeline).
     gemini_api_key: str
 
+    # Required. Shared secret clients must send in the X-API-Key header to
+    # reach the documents/query routers. See core/auth.py.
+    api_key: str
+
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"
 

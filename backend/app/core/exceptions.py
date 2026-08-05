@@ -9,6 +9,10 @@ class AppError(Exception):
         super().__init__(detail)
 
 
+class UnauthorizedError(AppError):
+    status_code = 401
+
+
 class UnsupportedFileTypeError(AppError):
     status_code = 415
 
@@ -23,6 +27,10 @@ class FileTooLargeError(AppError):
 
 class DocumentNotFoundError(AppError):
     status_code = 404
+
+
+class ConfirmationRequiredError(AppError):
+    status_code = 400
 
 
 class CorruptedPDFError(AppError):

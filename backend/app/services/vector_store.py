@@ -36,6 +36,15 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
+    def get_chunks_by_document(self, document_id: str) -> list[RetrievedChunk]:
+        """Return every stored chunk for document_id, ordered by chunk_index.
+
+        Not a similarity search — score is meaningless here and callers
+        (e.g. summarization_service) should ignore it. Returns an empty
+        list (rather than raising) if the document isn't present.
+        """
+
+    @abstractmethod
     def save(self) -> None:
         """Persist the index and its metadata to storage."""
 

@@ -18,6 +18,7 @@ from app.models.schemas import DocumentProcessingResponse
 from app.services.chunking_service import chunk_document
 from app.services.document_service import extract_text_from_pdf
 from app.services.embedding_service import generate_embeddings
+from app.services.pii_service import detect_pii
 from app.services.upload_service import UPLOAD_DIR, save_uploaded_file
 from app.services.vector_store import VectorStore
 
@@ -40,6 +41,21 @@ class DocumentProcessingService:
         self._log_stage("extraction", document_id, total_pages=extracted["total_pages"])
 
         extracted_document = ExtractedDocument(document_id=document_id, **extracted)
+
+        # Policy: flag and continue. PII does not block ingestion — it's
+        # only logged (as counts, never raw values) for later review.
+        pii_counts = detect_pii(extracted_document.extracted_text)
+        if pii_counts:
+            logger.warning(
+                "pii_detected",
+                extra={
+                    "extra_fields": {
+                        "document_id": document_id,
+                        "pii_counts": pii_counts,
+                    }
+                },
+            )
+
         chunks = chunk_document(extracted_document)
         self._log_stage("chunking", document_id, total_chunks=len(chunks))
 

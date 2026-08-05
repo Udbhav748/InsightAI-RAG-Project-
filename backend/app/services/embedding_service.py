@@ -9,12 +9,30 @@ import time
 from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.core.exceptions import EmbeddingGenerationError, EmbeddingModelLoadError
+from app.core.exceptions import (
+    EmbeddingGenerationError,
+    EmbeddingModelLoadError,
+    LLMAPIError,
+    LLMTimeoutError,
+)
 from app.models.document import DocumentChunk, EmbeddedChunk
 
 logger = logging.getLogger(__name__)
+
+
+def _log_retry(retry_state) -> None:
+    logger.warning(
+        "embed_query_retrying",
+        extra={
+            "extra_fields": {
+                "attempt": retry_state.attempt_number,
+                "exception": str(retry_state.outcome.exception()),
+            }
+        },
+    )
 
 
 @lru_cache(maxsize=1)
@@ -34,6 +52,18 @@ def get_embedding_model() -> SentenceTransformer:
         ) from exc
 
 
+
+# Scoped to LLMTimeoutError/LLMAPIError per spec, matching GeminiClient.generate.
+# In practice this function's own failures raise EmbeddingGenerationError /
+# EmbeddingModelLoadError instead, so today this decorator only retries if a
+# future implementation surfaces one of those two LLM-specific error types.
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+    reraise=True,
+    before_sleep=_log_retry,
+)
 def embed_query(query: str) -> list[float]:
     """Embed a single query string, using the same model and normalization
     as generate_embeddings, so query and chunk vectors share one space."""
