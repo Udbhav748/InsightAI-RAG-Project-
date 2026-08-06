@@ -6,6 +6,7 @@ should import the google-genai SDK directly.
 
 import logging
 import time
+from collections.abc import Iterator
 
 import httpx
 from google import genai
@@ -113,3 +114,71 @@ class GeminiClient(LLMClient):
         )
 
         return text
+
+    # Deliberately NOT wrapped in @retry like generate() is: tenacity retries
+    # by re-calling the decorated function, but this is a generator — calling
+    # it doesn't execute any code until iterated, so a mid-stream failure
+    # happens outside the retry-wrapped call and @retry couldn't see it
+    # anyway. More importantly, once tokens have started reaching a live SSE
+    # client, silently restarting the whole generation would mean replaying
+    # content the client already rendered — that's a caller/UX decision, not
+    # something to do transparently at this layer. A failure here propagates
+    # once, the same exception types generate() raises.
+    def generate_stream(self, prompt: str) -> Iterator[str]:
+        start = time.perf_counter()
+        text_parts: list[str] = []
+        last_chunk = None
+
+        try:
+            stream = self._client.models.generate_content_stream(
+                model=settings.gemini_model_name,
+                contents=prompt,
+            )
+            for chunk in stream:
+                last_chunk = chunk
+                piece = chunk.text or ""
+                if piece:
+                    text_parts.append(piece)
+                    yield piece
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(
+                f"Gemini request timed out after {settings.gemini_timeout_seconds}s: {exc}"
+            ) from exc
+        except genai_errors.APIError as exc:
+            raise LLMAPIError(f"Gemini API request failed: {exc}") from exc
+        except Exception as exc:
+            raise LLMAPIError(f"Unexpected error calling Gemini: {exc}") from exc
+
+        text = "".join(text_parts).strip()
+        if not text:
+            raise LLMEmptyResponseError("Gemini returned an empty streamed response.")
+
+        processing_duration = time.perf_counter() - start
+
+        # Streaming responses may only carry usage_metadata on the final
+        # chunk (or not at all, depending on SDK/model) — same defensive
+        # "default to 0" as the non-streaming path above, not an assumption
+        # it's populated.
+        usage = getattr(last_chunk, "usage_metadata", None)
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or 0
+        completion_tokens = getattr(usage, "candidates_token_count", None) or 0
+        total_tokens = prompt_tokens + completion_tokens
+        estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
+
+        logger.info(
+            "llm_generation_completed",
+            extra={
+                "extra_fields": {
+                    "provider": "gemini",
+                    "model_name": settings.gemini_model_name,
+                    "prompt_length": len(prompt),
+                    "response_length": len(text),
+                    "processing_duration": round(processing_duration, 4),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "estimated_cost_usd": estimated_cost_usd,
+                    "streamed": True,
+                }
+            },
+        )

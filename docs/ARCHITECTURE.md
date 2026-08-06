@@ -206,6 +206,25 @@ calls per request — checked before each additional call, logging
 the loop can only reach its one reflection retry, exactly reproducing the
 old single-shot reflection behavior.
 
+**Streaming** (`POST /chat/stream`, `ChatService.stream_query`). The same
+planner and pipeline as `handle_query` above, mirrored into a generator
+that yields SSE events — a `trace` event per pipeline stage (including a
+`reflecting` one when the corrective loop above fires), `answer_chunk`
+pieces from `LLMClient.generate_stream()` as the model produces them, and
+one final `done` carrying the same `ChatResponse` shape `POST /chat`
+returns. `handle_query`/`_correct` and `stream_query`/`_correct_streamed`
+are two parallel implementations of the same control flow, not one
+sharing the other's code — they're required to be kept in sync by
+convention (and by `test_rag_service_stream.py` asserting identical
+`steps_taken` for equivalent runs), not by construction. `GeminiClient`
+and `GroqClient` both implement real token streaming
+(`generate_content_stream` / `stream=True`); `LLMClient`'s default
+`generate_stream()` just yields `generate()`'s full result once, which is
+what `FallbackLLMClient` uses — real streaming is lost specifically when
+a fallback is active, a deliberate trade-off over silently re-streaming
+from a second provider mid-response to a client that's already rendered
+partial output from the first.
+
 **Prompt construction** (`app/services/prompt_builder.py`). Every
 retrieved chunk is wrapped in `---BEGIN UNTRUSTED DOCUMENT EXCERPT---` /
 `---END EXCERPT---` markers; web results (when present) get their own

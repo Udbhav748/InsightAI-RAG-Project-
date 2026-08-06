@@ -56,3 +56,33 @@ class TestFallbackLLMClient:
 
         with pytest.raises(LLMTimeoutError):
             client.generate("q")
+
+
+class TestFallbackLLMClientGenerateStream:
+    """FallbackLLMClient doesn't override generate_stream — it inherits
+    LLMClient's default, which yields self.generate(prompt) once. Since
+    self.generate() IS FallbackLLMClient's own override, fallback behavior
+    is preserved automatically; what's lost is real token-by-token
+    streaming when this client is active (see LLMClient.generate_stream's
+    docstring for why that trade-off is deliberate)."""
+
+    def test_yields_primary_result_once_when_primary_succeeds(self):
+        primary = _StubClient(result="primary answer")
+        fallback = _StubClient(result="fallback answer")
+        client = FallbackLLMClient(primary, "gemini", fallback, "groq")
+
+        pieces = list(client.generate_stream("q"))
+
+        assert pieces == ["primary answer"]
+        assert fallback.calls == 0
+
+    def test_falls_over_to_secondary_provider_on_transient_failure(self):
+        primary = _StubClient(raises=LLMTimeoutError("primary down"))
+        fallback = _StubClient(result="fallback answer")
+        client = FallbackLLMClient(primary, "gemini", fallback, "groq")
+
+        pieces = list(client.generate_stream("q"))
+
+        assert pieces == ["fallback answer"]
+        assert primary.calls == 1
+        assert fallback.calls == 1

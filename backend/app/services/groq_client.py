@@ -12,6 +12,7 @@ should import the groq SDK directly.
 
 import logging
 import time
+from collections.abc import Iterator
 
 import groq
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -114,3 +115,56 @@ class GroqClient(LLMClient):
         )
 
         return text
+
+    # Not wrapped in @retry — same reasoning as GeminiClient.generate_stream:
+    # a generator's body doesn't run until iterated, so @retry re-calling
+    # this function wouldn't see a failure that happens mid-iteration, and
+    # silently restarting a generation that's already partially reached a
+    # live client isn't something to do transparently at this layer.
+    def generate_stream(self, prompt: str) -> Iterator[str]:
+        start = time.perf_counter()
+        text_parts: list[str] = []
+
+        try:
+            stream = self._client.chat.completions.create(
+                model=settings.groq_model_name,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    text_parts.append(delta)
+                    yield delta
+        except groq.APITimeoutError as exc:
+            raise LLMTimeoutError(
+                f"Groq request timed out after {settings.groq_timeout_seconds}s: {exc}"
+            ) from exc
+        except groq.APIError as exc:
+            raise LLMAPIError(f"Groq API request failed: {exc}") from exc
+        except Exception as exc:
+            raise LLMAPIError(f"Unexpected error calling Groq: {exc}") from exc
+
+        text = "".join(text_parts).strip()
+        if not text:
+            raise LLMEmptyResponseError("Groq returned an empty streamed response.")
+
+        processing_duration = time.perf_counter() - start
+
+        # Groq's streamed chunks don't carry usage/token counts the way the
+        # non-streaming response does — token/cost logging is skipped here
+        # rather than guessed at (see the non-streaming generate() above for
+        # where that accounting does happen).
+        logger.info(
+            "llm_generation_completed",
+            extra={
+                "extra_fields": {
+                    "provider": "groq",
+                    "model_name": settings.groq_model_name,
+                    "prompt_length": len(prompt),
+                    "response_length": len(text),
+                    "processing_duration": round(processing_duration, 4),
+                    "streamed": True,
+                }
+            },
+        )

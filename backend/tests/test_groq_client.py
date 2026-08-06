@@ -102,3 +102,68 @@ class TestGroqClientGenerate:
         monkeypatch.setattr(client._client.chat.completions, "create", _raise_value_error)
         with pytest.raises(LLMAPIError):
             client.generate("some prompt")
+
+
+class _FakeDelta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeStreamChoice:
+    def __init__(self, content):
+        self.delta = _FakeDelta(content)
+
+
+class _FakeStreamChunk:
+    def __init__(self, content):
+        self.choices = [_FakeStreamChoice(content)]
+
+
+class TestGroqClientGenerateStream:
+    def test_happy_path_yields_pieces_in_order(self, monkeypatch):
+        client = _client(monkeypatch)
+        chunks = [_FakeStreamChunk("Hello "), _FakeStreamChunk("grounded "), _FakeStreamChunk("world.")]
+        monkeypatch.setattr(client._client.chat.completions, "create", lambda **kwargs: iter(chunks))
+
+        pieces = list(client.generate_stream("some prompt"))
+
+        assert pieces == ["Hello ", "grounded ", "world."]
+
+    def test_empty_stream_raises_llm_empty_response_error(self, monkeypatch):
+        client = _client(monkeypatch)
+        monkeypatch.setattr(
+            client._client.chat.completions, "create", lambda **kwargs: iter([_FakeStreamChunk(None)])
+        )
+
+        with pytest.raises(LLMEmptyResponseError):
+            list(client.generate_stream("some prompt"))
+
+    def test_timeout_during_iteration_raises_llm_timeout_error(self, monkeypatch):
+        client = _client(monkeypatch)
+
+        def _raising_stream(**kwargs):
+            def _gen():
+                yield _FakeStreamChunk("partial ")
+                raise groq.APITimeoutError(request=None)
+
+            return _gen()
+
+        monkeypatch.setattr(client._client.chat.completions, "create", _raising_stream)
+
+        with pytest.raises(LLMTimeoutError):
+            list(client.generate_stream("some prompt"))
+
+    def test_api_error_during_iteration_raises_llm_api_error(self, monkeypatch):
+        client = _client(monkeypatch)
+
+        def _raising_stream(**kwargs):
+            def _gen():
+                yield _FakeStreamChunk("partial ")
+                raise groq.APIConnectionError(request=None)
+
+            return _gen()
+
+        monkeypatch.setattr(client._client.chat.completions, "create", _raising_stream)
+
+        with pytest.raises(LLMAPIError):
+            list(client.generate_stream("some prompt"))

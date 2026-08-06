@@ -24,6 +24,7 @@ GeminiClient); those are constructed elsewhere and handed in.
 import logging
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from app.core.config import settings
@@ -189,6 +190,57 @@ def _answer_source(chunks: list[RetrievedChunk], web_results: list[WebSearchResu
     return "web" if not chunks else "mixed"
 
 
+# Matches prompt_builder._SOURCES_HEADING's own marker string (not the
+# regex itself — this operates incrementally on a live token stream,
+# where a full-string regex can't run until the heading has fully
+# arrived). See _stream_filtering_sources.
+_SOURCES_MARKER = "sources:"
+_SOURCES_HOLD_BACK = len(_SOURCES_MARKER) + 4  # margin for surrounding newlines
+
+
+def _stream_filtering_sources(chunks: Iterator[str]) -> Iterator[str]:
+    """Forward pieces of a raw LLM token stream, holding back enough
+    trailing text that the model's own "Sources:" heading (see
+    prompt_builder.strip_sources_section — the non-streaming path strips
+    this from the complete answer before it's ever shown) never partially
+    reaches the client before it can be recognized and dropped. Once the
+    heading is found, everything from there on is suppressed — matching
+    strip_sources_section's behavior of removing "Sources:" through the
+    end of the text — but the underlying iterator is still drained so the
+    caller (which accumulates the full raw text separately) sees it all.
+    """
+    pending = ""
+    sources_found = False
+    for chunk in chunks:
+        if sources_found:
+            continue
+        pending += chunk
+        idx = pending.lower().find(_SOURCES_MARKER)
+        if idx != -1:
+            safe_prefix = pending[:idx].rstrip("\n")
+            if safe_prefix:
+                yield safe_prefix
+            sources_found = True
+            pending = ""
+            continue
+        if len(pending) > _SOURCES_HOLD_BACK:
+            flush, pending = pending[:-_SOURCES_HOLD_BACK], pending[-_SOURCES_HOLD_BACK:]
+            yield flush
+    if not sources_found and pending:
+        yield pending
+
+
+def _trace_event(stage: str, detail: dict) -> dict:
+    """Build an SSE trace event dict and log it server-side in the same
+    call — the same pipeline progress already logged via plan_decided/
+    retrieval_completed/retrieval_graded/etc. elsewhere in this file, this
+    just adds one more named line marking exactly what was fanned out to
+    the client, for correlating client-observed timing against the
+    existing structured logs."""
+    logger.info("trace_event_emitted", extra={"extra_fields": {"stage": stage, **detail}})
+    return {"type": "trace", "stage": stage, "detail": detail}
+
+
 def _match_conversational_reply(query: str) -> str | None:
     """Return a canned reply if query is small talk, else None."""
     normalized = _normalize(query)
@@ -260,6 +312,50 @@ class ChatService:
             },
         )
         return strip_sources_section(self._llm_client.generate(prompt))
+
+    def _generate_streamed(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        history: list[dict] | None,
+        extra_instruction: str | None = None,
+        web_results: list[WebSearchResult] | None = None,
+    ) -> Iterator[tuple[bool, str]]:
+        """Streamed counterpart to _generate: same prompt-building and
+        logging, but yields (False, piece) for each safe-to-show chunk of
+        raw model output as it arrives, then exactly one final
+        (True, final_answer) once the stream ends — final_answer is
+        strip_sources_section()-cleaned the same way _generate()'s return
+        value is, computed from the complete raw text so it's identical
+        regardless of how the provider happened to chunk it.
+        """
+        prompt = build_prompt(
+            query, chunks, history=history, extra_instruction=extra_instruction, web_results=web_results
+        )
+        logger.info(
+            "generation_requested",
+            extra={
+                "extra_fields": {
+                    "prompt_version": PROMPT_VERSION,
+                    "chunk_count": len(chunks),
+                    "web_result_count": len(web_results) if web_results else 0,
+                    "is_reflection": extra_instruction is not None,
+                    "streamed": True,
+                }
+            },
+        )
+
+        raw_parts: list[str] = []
+
+        def _raw_stream() -> Iterator[str]:
+            for piece in self._llm_client.generate_stream(prompt):
+                raw_parts.append(piece)
+                yield piece
+
+        for filtered_piece in _stream_filtering_sources(_raw_stream()):
+            yield (False, filtered_piece)
+
+        yield (True, strip_sources_section("".join(raw_parts)))
 
     def _grade_retrieval(self, query: str, chunks: list[RetrievedChunk]) -> str:
         """Cheap heuristic grade of retrieval quality — no LLM call, a
@@ -390,6 +486,92 @@ class ChatService:
 
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
+    def _correct_streamed(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        answer: str,
+        history: list[dict] | None,
+        web_results: list[WebSearchResult],
+        web_search_attempted: bool,
+        llm_calls: int,
+        steps_taken: int,
+    ) -> Iterator[dict]:
+        """Streamed counterpart to _correct — mirrors its exact branches,
+        conditions, and log lines (the two must be kept in sync; a
+        divergence here is a real behavioral difference between /chat and
+        /chat/stream, not just a cosmetic one) but yields a "reflecting"
+        trace event plus streamed answer_chunk pieces for each
+        regeneration instead of blocking on generate(). Ends with `return
+        (answer, llm_calls, steps_taken, web_results, web_search_attempted)`
+        — the value of `yield from self._correct_streamed(...)` in the
+        caller, per normal generator-return semantics.
+
+        A "reflecting" trace event means the answer streamed so far
+        belongs to a discarded attempt: a fresh one is about to start from
+        scratch, not continue it. See README's /chat/stream section for
+        the exact client-side contract.
+        """
+        if not self._is_ungrounded(answer, chunks, web_results):
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        if llm_calls >= _MAX_LLM_CALLS:
+            logger.warning(
+                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}}
+            )
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        logger.info(
+            "reflection_triggered",
+            extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
+        )
+        yield _trace_event("reflecting", {"reason": "ungrounded_answer"})
+        answer = ""
+        for is_final, value in self._generate_streamed(
+            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+        ):
+            if is_final:
+                answer = value
+            else:
+                yield {"type": "answer_chunk", "text": value}
+        llm_calls += 1
+        steps_taken += 1  # regeneration
+
+        if not self._is_ungrounded(answer, chunks, web_results):
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        if web_search_attempted or not settings.web_search_enabled:
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        if llm_calls >= _MAX_LLM_CALLS:
+            logger.warning(
+                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}}
+            )
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        web_results = self._search_web(query)
+        web_search_attempted = True
+        steps_taken += 1  # web search
+        yield _trace_event("web_search", {"result_count": len(web_results)})
+
+        if not web_results:
+            return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
+        logger.info("web_fallback_triggered", extra={"extra_fields": {"query_length": len(query)}})
+        yield _trace_event("reflecting", {"reason": "web_fallback"})
+        answer = ""
+        for is_final, value in self._generate_streamed(
+            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+        ):
+            if is_final:
+                answer = value
+            else:
+                yield {"type": "answer_chunk", "text": value}
+        llm_calls += 1
+        steps_taken += 1  # regeneration with web context
+
+        return answer, llm_calls, steps_taken, web_results, web_search_attempted
+
     def handle_query(
         self,
         query: str,
@@ -484,6 +666,161 @@ class ChatService:
             start=start,
             web_results=web_results,
         )
+
+    def stream_query(
+        self,
+        query: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+        history: list[dict] | None = None,
+    ) -> Iterator[dict]:
+        """Streamed counterpart to handle_query, for POST /chat/stream.
+
+        Same planner and pipeline (conversational / summarize / retrieve
+        with its corrective loop) as handle_query, but yields progress as
+        it happens instead of returning one ChatResponse at the end. Each
+        yielded dict is one of:
+
+        - {"type": "trace", "stage": ..., "detail": {...}} before/after a
+          pipeline step. A "reflecting" stage means any answer_chunk text
+          streamed before it belongs to a discarded attempt — a fresh one
+          is starting over, not continuing it.
+        - {"type": "answer_chunk", "text": "..."} — a piece of generated
+          text, in order, already filtered so a "Sources:" heading never
+          reaches the client (see _stream_filtering_sources).
+        - {"type": "error", "detail": {"error_type", "message",
+          "status_code"}} — emitted in place of "done" if the pipeline
+          fails. SSE responses commit to a 200 status as soon as the
+          stream starts, so a mid-stream AppError can't become an HTTP
+          error status the way it would on POST /chat; this is how it's
+          surfaced instead.
+        - exactly one final {"type": "done", "payload": ChatResponse} (on
+          success) — the same response shape POST /chat returns.
+
+        routes/query.py's /chat/stream serializes these directly as SSE
+        `data:` lines.
+        """
+        start = time.perf_counter()
+        steps_taken = 1  # planning
+
+        plan = self._plan(query, history)
+        logger.info(
+            "plan_decided",
+            extra={"extra_fields": {"action": plan.action, "query_length": len(query)}},
+        )
+        yield _trace_event("planning", {"action": plan.action})
+
+        if plan.action == "conversational":
+            answer = _match_conversational_reply(query)
+            yield {"type": "answer_chunk", "text": answer}
+            response = self._respond(
+                answer=answer,
+                retrieved_chunks=[],
+                query=query,
+                query_type="conversational",
+                tool_used="none",
+                steps_taken=steps_taken,
+                start=start,
+            )
+            yield {"type": "done", "payload": response}
+            return
+
+        recent_history = history[-_MAX_HISTORY_TURNS:] if history else None
+
+        try:
+            if plan.action == "summarize":
+                steps_taken += 1  # fetch document chunks
+                yield _trace_event("retrieval", {"document_id": plan.document_id})
+                summary, chunks = summarize_document(
+                    plan.document_id, self._vector_store, self._llm_client
+                )
+                steps_taken += 1  # generation
+                yield _trace_event("generating", {})
+                # summarize_document() calls the LLM's blocking generate(),
+                # not generate_stream() — summarization isn't part of this
+                # task's streaming scope, so the whole summary is emitted
+                # as one chunk rather than faked as a token stream.
+                yield {"type": "answer_chunk", "text": summary}
+                response = self._respond(
+                    answer=summary,
+                    retrieved_chunks=chunks,
+                    query=query,
+                    query_type="summarize",
+                    tool_used="summarization",
+                    steps_taken=steps_taken,
+                    start=start,
+                )
+                yield {"type": "done", "payload": response}
+                return
+
+            # plan.action == "retrieve" — the corrective RAG loop, streamed.
+            steps_taken += 1  # retrieval
+            chunks = retrieve(query, self._vector_store, top_k=top_k, min_score=min_score)
+            yield _trace_event("retrieval", {"chunk_count": len(chunks)})
+
+            steps_taken += 1  # grading
+            grade = self._grade_retrieval(query, chunks)
+            yield _trace_event("grading", {"grade": grade})
+
+            web_results: list[WebSearchResult] = []
+            web_search_attempted = False
+            if grade != "good" and settings.web_search_enabled:
+                web_results = self._search_web(query)
+                web_search_attempted = True
+                steps_taken += 1  # web search
+                yield _trace_event("web_search", {"result_count": len(web_results)})
+
+            yield _trace_event("generating", {})
+            answer = ""
+            for is_final, value in self._generate_streamed(query, chunks, recent_history, web_results=web_results):
+                if is_final:
+                    answer = value
+                else:
+                    yield {"type": "answer_chunk", "text": value}
+            llm_calls = 1
+            steps_taken += 1  # generation
+
+            answer, llm_calls, steps_taken, web_results, web_search_attempted = yield from self._correct_streamed(
+                query, chunks, answer, recent_history, web_results, web_search_attempted, llm_calls, steps_taken
+            )
+        except AppError as exc:
+            logger.info(
+                "chat_stream_error",
+                extra={"extra_fields": {"error_type": type(exc).__name__, "status_code": exc.status_code}},
+            )
+            yield {
+                "type": "error",
+                "detail": {"error_type": type(exc).__name__, "message": exc.detail, "status_code": exc.status_code},
+            }
+            return
+        except Exception as exc:
+            chat_error = ChatServiceError(f"Unexpected error while handling chat query: {exc}")
+            logger.info(
+                "chat_stream_error",
+                extra={"extra_fields": {"error_type": type(chat_error).__name__, "status_code": chat_error.status_code}},
+            )
+            yield {
+                "type": "error",
+                "detail": {
+                    "error_type": type(chat_error).__name__,
+                    "message": chat_error.detail,
+                    "status_code": chat_error.status_code,
+                },
+            }
+            return
+
+        tool_used = "web_search" if web_results else "retrieval"
+        response = self._respond(
+            answer=answer,
+            retrieved_chunks=chunks,
+            query=query,
+            query_type="document_query",
+            tool_used=tool_used,
+            steps_taken=steps_taken,
+            start=start,
+            web_results=web_results,
+        )
+        yield {"type": "done", "payload": response}
 
     def handle_diagnose(
         self,
