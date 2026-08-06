@@ -189,6 +189,46 @@ set `HYBRID_SEARCH_ENABLED`/`RERANKING_ENABLED` in `backend/.env`,
 restart the backend, and run `python eval/run_eval.py --dataset
 dataset_v2.json --delay 5`.
 
+## Bulk corpus ingestion
+
+`POST /upload` goes through the frontend's 60s axios timeout (and
+whatever patience sits in front of the server beyond that). OCR alone
+runs roughly a second or more per page at `Settings.ocr_dpi`
+(`document_service.py`) — a single 60-page scanned document can exceed
+that timeout on its own, well before a real multi-document corpus would.
+Don't bulk-ingest a corpus through the HTTP endpoint.
+
+`backend/scripts/ingest_corpus.py` drives `DocumentProcessingService`
+directly instead — one file at a time, from a plain Python process, no
+HTTP layer or request timeout involved:
+
+```bash
+cd backend
+python scripts/ingest_corpus.py path/to/corpus_dir
+```
+
+It walks `corpus_dir` recursively for `*.pdf` by default (`--pattern` and
+`--no-recursive` adjust that), runs each file through the exact same
+`validate_pdf_upload` + `DocumentProcessingService.process()` the HTTP
+route uses — no pipeline logic duplicated — and prints per-file progress
+(pages, chunks, pages OCR'd, duration) plus a final summary. One bad file
+(corrupt, oversized, wrong type) is logged and skipped; it doesn't stop
+the rest of the corpus.
+
+By default it writes to the same index the running app uses
+(`backend/vector_store/`). Pass `--index-path`/`--metadata-path` (both
+required together) to build a separate index instead — useful for a dry
+run, a scratch/experimental corpus, or comparing corpora side by side
+without touching the live one. This is also the repeatable way to
+rebuild the index from a known set of source PDFs whenever it's needed
+— e.g. after a chunking/embedding config change, or once documents carry
+shared/private metadata tags.
+
+Each ingested file is still copied into `backend/uploads/` under a UUID
+name, same as a real `/upload` (see `upload_service.py`) — ingesting a
+large corpus roughly doubles its disk footprint, which is expected, not
+a bug.
+
 ## Comparing providers (Gemini vs. Groq)
 
 `app/services/llm_provider.py` picks the LLM implementation from

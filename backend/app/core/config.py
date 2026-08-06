@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # tesseract's usual sweet spot.
     ocr_dpi: int = 200
 
+    # Minimum characters PyMuPDF's own extraction must yield for a page to
+    # be trusted as-is. Below this (including zero), OCR is attempted —
+    # not just on truly blank pages. Real scans routinely carry a thin
+    # native text layer (a header, a page number, a few garbled characters
+    # from a prior bad OCR pass) that would otherwise pass the old
+    # "any text at all" check and ship a near-useless chunk to the index.
+    ocr_min_chars_per_page: int = 100
+
     # Sentence Transformers model used to generate chunk embeddings.
     embedding_model_name: str = "all-MiniLM-L6-v2"
 
