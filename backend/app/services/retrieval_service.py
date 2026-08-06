@@ -59,14 +59,27 @@ def retrieve(
         query_vector = embed_query(query)
         results = vector_store.search(query_vector, fetch_k)
 
+    reranked = False
     if settings.reranking_enabled:
         try:
             results = rerank(query, results, top_k=resolved_top_k)
+            reranked = True
         except RerankingError as exc:
             logger.warning("reranking_failed", extra={"extra_fields": {"error": str(exc)}})
             results = results[:resolved_top_k]
 
-    filtered = [chunk for chunk in results if chunk.score >= resolved_min_score]
+    # min_score is calibrated against raw cosine similarity. rerank() keeps
+    # each chunk's pre-rerank score (see its docstring) since cross-encoder
+    # scores aren't on that same scale either — but that means when hybrid
+    # search is also on, this filter would compare min_score against a
+    # per-query min-max-normalized fused score, not cosine similarity: a
+    # different scale the threshold was never calibrated for. Once
+    # reranking has actually run, its own top_k selection is the intended
+    # relevance gate, so skip re-filtering by that incompatible scale.
+    if reranked:
+        filtered = results
+    else:
+        filtered = [chunk for chunk in results if chunk.score >= resolved_min_score]
 
     processing_duration = time.perf_counter() - start
 
