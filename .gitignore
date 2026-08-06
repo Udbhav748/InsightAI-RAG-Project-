@@ -16,6 +16,9 @@ backend/data/
 backend/uploads/
 backend/vector_store/
 
+# Eval run outputs (timestamped, regenerated per run)
+backend/eval/results/*.json
+
 # Node
 node_modules/
 frontend/dist/
