@@ -35,7 +35,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.exceptions import AppError, VectorStoreNotFoundError  # noqa: E402
 from app.models.document import RetrievedChunk  # noqa: E402
 from app.services.faiss_vector_store import DEFAULT_METADATA_PATH, FAISSVectorStore  # noqa: E402
-from app.services.gemini_client import GeminiClient  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.services.llm_provider import build_llm_client  # noqa: E402
+from app.services.prompt_builder import PROMPT_VERSION  # noqa: E402
 from app.services.rag_service import ChatService  # noqa: E402
 
 ACTIONS = ["conversational", "retrieve", "summarize"]
@@ -158,7 +160,11 @@ def run(dataset_path: Path) -> dict:
         )
 
     document_id = discover_document_id()
-    chat_service = ChatService(vector_store, GeminiClient())
+    # build_llm_client() reads Settings.llm_provider/fallback_llm_provider,
+    # so switching LLM_PROVIDER in .env and re-running this script is the
+    # entire A/B procedure documented in docs/OPERATIONS.md — no code
+    # change needed here to eval a different provider.
+    chat_service = ChatService(vector_store, build_llm_client())
 
     y_true: list[str] = []
     y_pred: list[str] = []
@@ -249,6 +255,9 @@ def run(dataset_path: Path) -> dict:
     report = {
         "dataset": dataset_path.name,
         "run_at": datetime.now(timezone.utc).isoformat(),
+        "llm_provider": settings.llm_provider,
+        "fallback_llm_provider": settings.fallback_llm_provider,
+        "prompt_version": PROMPT_VERSION,
         "document_id_used": document_id,
         "n_entries": len(dataset),
         "case_type_counts": dict(Counter(entry["case_type"] for entry in dataset)),
