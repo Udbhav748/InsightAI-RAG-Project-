@@ -74,6 +74,38 @@ _CONVERSATIONAL_INTENTS = [
         "- Find important information\n"
         "- Help you study or review documents",
     ),
+    # Meta/status remarks — the user is checking whether the bot is
+    # working or venting about it, not asking a document question. Without
+    # this, these fall through to retrieve and (depending on min_score)
+    # can return an odd, technically-grounded-but-irrelevant answer built
+    # from whatever chunk happened to score highest.
+    (
+        {
+            "why not responding",
+            "why are you not responding",
+            "why aren't you responding",
+            "why is this not responding",
+            "why isn't this working",
+            "why is this not working",
+            "this is not working",
+            "this isn't working",
+            "not working",
+            "are you there",
+            "are you working",
+            "is this working",
+            "is this thing working",
+            "hello are you there",
+            "anyone there",
+            "is anyone there",
+            "did you get my message",
+            "what happened",
+            "what happend",
+            "did that work",
+        },
+        "I'm here and working — I just didn't find anything relevant to that in "
+        "your uploaded documents. Try asking a specific question about what's in "
+        "them, like \"what does this document say about...\".",
+    ),
 ]
 
 _PUNCTUATION_RE = re.compile(r"[^\w\s]")

@@ -39,6 +39,11 @@ class TestPlan:
         service = make_service()
         assert service._plan("hi") == PlanDecision(action="conversational")
 
+    def test_meta_status_remark_routes_to_conversational(self):
+        service = make_service()
+        assert service._plan("why not responding") == PlanDecision(action="conversational")
+        assert service._plan("is anyone there") == PlanDecision(action="conversational")
+
     def test_plain_question_routes_to_retrieve(self):
         service = make_service()
         decision = service._plan("What is a project according to the PMP document?")
