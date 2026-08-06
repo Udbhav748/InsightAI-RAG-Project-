@@ -58,8 +58,8 @@ Everything else is deliberately *not* delegated to the LLM:
 This split is deliberate, not an oversight: see
 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)'s "Framework choice" section
 for why a hand-rolled `if/elif` orchestrator was chosen over a
-multi-agent framework — two tools sharing one corpus and one model don't
-need LLM-driven planning to decide between them.
+multi-agent framework — three tools sharing one corpus and one model
+don't need LLM-driven planning to decide between them.
 
 ## 3. What are the five most likely failure modes?
 
@@ -94,9 +94,12 @@ need LLM-driven planning to decide between them.
   attempt is separately logged (`llm_generation_retrying`, see Q5).
   `backend/eval/metrics_report.py`'s error-rate-by-category report
   surfaces the aggregate rate from logs.
-- **Chunks-ignored** — `ChatService._reflect` explicitly checks for this
-  exact condition (non-empty `chunks` but empty/fallback `answer`) and
-  logs `reflection_triggered` when it fires.
+- **Chunks-ignored** — `ChatService._correct` explicitly checks for this
+  exact condition (non-empty `chunks`/`web_results` but empty/fallback
+  `answer`) and logs `reflection_triggered` when it fires. *(Note: this
+  document's Q3-Q5 predate the corrective RAG loop — retrieval grading and
+  the web search fallback added since aren't reflected in the failure-mode
+  list below; see `docs/ARCHITECTURE.md` for the current design.)*
 - **No-relevant-chunks** — not separately flagged from a normal "correct
   decline"; both look identical from the system's point of view (empty
   `retrieved_chunks` above the score threshold vs. genuinely no

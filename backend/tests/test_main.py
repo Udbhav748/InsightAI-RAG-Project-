@@ -158,14 +158,16 @@ class TestChat:
 
         assert payload["answer"] == client.fake_llm.response_text
         assert payload["tool_used"] == "retrieval"
+        assert payload["answer_source"] == "documents"
         assert payload["sources"] == [
             {
                 "document_id": SEEDED_DOCUMENT_ID,
                 "chunk_id": "chunk-1",
                 "excerpt": SEEDED_CHUNK_TEXT,
+                "url": None,
             }
         ]
-        assert payload["steps_taken"] >= 3  # plan + retrieve + generate
+        assert payload["steps_taken"] >= 4  # plan + retrieve + grade + generate
         assert len(client.fake_llm.calls) == 1  # no reflection retry needed
 
 

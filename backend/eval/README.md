@@ -48,6 +48,11 @@ Before running it:
 4. `GEMINI_API_KEY` must be set in `backend/.env` — this harness makes
    real LLM calls (16 entries ≈ 16+ generation calls, more if reflection
    or retries fire), so it consumes real API quota.
+5. `dataset_v2.json` adds two web-findable entries (general-knowledge
+   questions, deliberately outside the PMP document's content) with
+   `expected_source: "web"`. To have any chance of scoring correctly on
+   Source Accuracy, set `WEB_SEARCH_ENABLED=true` in `backend/.env` first
+   — see "Source Accuracy" below for what happens if it's left off.
 
 The two `summarize`-action entries and any `{{document_id}}` placeholders
 in the dataset are filled in automatically at runtime: `run_eval.py`
@@ -141,6 +146,19 @@ This only detects the specific markers each entry defines; it isn't a
 general jailbreak classifier. Add sharper markers as you add new
 adversarial entries.
 
+### Source Accuracy
+
+For entries with an `expected_source` field only (currently just
+`dataset_v2.json`'s two web-findable entries). Checks whether
+`ChatResponse.answer_source` (`"documents"` / `"web"` / `"mixed"`) matches
+`expected_source`. This is only meaningful with
+`WEB_SEARCH_ENABLED=true` in `backend/.env` — with the fallback disabled
+(the default), a web-findable entry's retrieval will be graded
+`"insufficient"` but no web search fires, `answer_source` stays
+`"documents"`, and it correctly scores as a Source Accuracy miss (that's
+expected, not a bug — it's testing whether the fallback works when it's
+on, not asserting it should always be on).
+
 ## Dataset format
 
 Each entry in `dataset_vN.json` is an object:
@@ -152,6 +170,7 @@ Each entry in `dataset_vN.json` is an object:
 | `expected_keywords` | yes (may be `[]`) | Keywords for Task Success Rate. Empty list = excluded from that metric. |
 | `case_type` | yes | One of `"normal"`, `"edge"`, `"failure"`, `"adversarial"`. |
 | `injection_marker` | only for `case_type: "adversarial"` | String that would appear in the answer only if the injection succeeded. |
+| `expected_source` | no | `"documents"`, `"web"`, or `"mixed"` — expected `ChatResponse.answer_source`, checked for Source Accuracy. Omit for entries where the source doesn't matter. |
 
 ## Versioning datasets
 
@@ -171,3 +190,9 @@ runs made against v1. Instead:
    dataset version, but each result JSON records `"dataset"` — check that
    field before comparing two runs.
 4. Leave `dataset_v1.json` in place as a fixed reference point.
+
+`dataset_v2.json` already exists, still targeting the same PMP document —
+it's v1 plus two new entries (`expected_source: "web"`) exercising the
+corrective RAG loop's web search fallback, not a retarget to different
+content. It's the template to follow for adding more entries of any kind
+going forward.

@@ -40,6 +40,10 @@ class SourceReference(BaseModel):
     document_id: str
     chunk_id: str
     excerpt: str = Field(..., description="First ~200 characters of the cited chunk's text.")
+    url: str | None = Field(
+        None,
+        description="Source URL, present only for web-sourced citations (document_id='web').",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -49,6 +53,11 @@ class ChatResponse(BaseModel):
     processing_time: float
     tool_used: str
     steps_taken: int
+    answer_source: Literal["documents", "web", "mixed"] = Field(
+        "documents",
+        description="Whether the answer drew on retrieved document chunks, web search "
+        "results, or both. Always 'documents' for non-retrieval actions.",
+    )
 
 
 class FeedbackRequest(BaseModel):

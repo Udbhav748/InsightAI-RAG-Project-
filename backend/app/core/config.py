@@ -94,6 +94,25 @@ class Settings(BaseSettings):
     # rag_service.py, producing technically-grounded but irrelevant answers.
     retrieval_min_score: float = 0.4
 
+    # Minimum top-chunk similarity score for retrieval to be graded "good"
+    # (see ChatService._grade_retrieval). Between retrieval_min_score and
+    # this threshold, retrieval is graded "weak" — chunks cleared the score
+    # floor but aren't confidently on-topic, which is what triggers the web
+    # search fallback (if enabled).
+    retrieval_grade_threshold: float = 0.5
+
+    # Enables the web-search fallback tool (services/web_search_service.py)
+    # for "weak"/"insufficient" retrieval grades. Off by default so existing
+    # behavior — and the lack of any outbound network call beyond Gemini —
+    # is unchanged unless explicitly opted in.
+    web_search_enabled: bool = False
+
+    # Number of web results fetched when the fallback fires.
+    web_search_result_count: int = 3
+
+    # Timeout, in seconds, for the web search call.
+    web_search_timeout_seconds: int = 10
+
     # Gemini model used for text generation.
     gemini_model_name: str = "gemini-3.5-flash"
 

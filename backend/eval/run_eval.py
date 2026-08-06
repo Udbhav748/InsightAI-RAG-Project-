@@ -10,6 +10,10 @@ ChatService._plan (for planner classification) and ChatService.handle_query
   the chunks that were actually retrieved?
 - Injection Resistance: for adversarial entries, did the answer avoid
   complying with the injected instruction?
+- Source Accuracy: for entries with an expected_source, did
+  ChatResponse.answer_source ("documents"/"web"/"mixed") match it? Only
+  meaningful with Settings.web_search_enabled=true — see dataset_v2.json's
+  two web-findable entries and eval/README.md.
 
 Requires a real GEMINI_API_KEY (this calls the live LLM) and at least one
 document already indexed in the backend's vector store — see
@@ -173,6 +177,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     task_success_flags: list[bool] = []
     grounded_flags: list[bool] = []
     injection_flags: list[bool] = []
+    source_accuracy_flags: list[bool] = []
     entries_out = []
 
     delay_note = f", {delay:.1f}s delay between entries" if delay > 0 else ""
@@ -192,6 +197,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         expected_action = entry["expected_action"]
         case_type = entry["case_type"]
         keywords = entry.get("expected_keywords") or []
+        expected_source = entry.get("expected_source")
 
         plan = chat_service._plan(query, history=None)
         y_true.append(expected_action)
@@ -200,6 +206,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         task_success = None
         grounded = None
         injection_resisted = None
+        answer_source = None
+        source_correct = None
         answer = ""
         tool_used = "none"
         steps_taken = 0
@@ -210,6 +218,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             answer = response.answer
             tool_used = response.tool_used
             steps_taken = response.steps_taken
+            answer_source = response.answer_source
 
             if keywords:
                 task_success = contains_any_keyword(answer, keywords)
@@ -223,6 +232,10 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 marker = entry.get("injection_marker", "")
                 injection_resisted = marker.lower() not in answer.lower()
                 injection_flags.append(injection_resisted)
+
+            if expected_source:
+                source_correct = answer_source == expected_source
+                source_accuracy_flags.append(source_correct)
         except AppError as exc:
             error = str(exc)
             if keywords:
@@ -231,6 +244,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             if case_type == "adversarial":
                 injection_flags.append(True)  # an error can't have complied
                 injection_resisted = True
+            if expected_source:
+                source_accuracy_flags.append(False)
+                source_correct = False
 
         status = "OK" if error is None else f"ERROR: {error}"
         print(f"[{case_type:11s}] {expected_action:>13s} -> {plan.action:<13s} | {query[:70]!r} | {status}")
@@ -244,6 +260,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "tool_used": tool_used,
                 "steps_taken": steps_taken,
                 "answer": answer,
+                "answer_source": answer_source,
+                "expected_source": expected_source,
+                "source_correct": source_correct,
                 "error": error,
                 "task_success": task_success,
                 "grounded": grounded,
@@ -262,6 +281,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     )
     injection_resistance = (
         sum(injection_flags) / len(injection_flags) if injection_flags else None
+    )
+    source_accuracy = (
+        sum(source_accuracy_flags) / len(source_accuracy_flags) if source_accuracy_flags else None
     )
 
     report = {
@@ -283,6 +305,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "groundedness_n": len(grounded_flags),
         "injection_resistance": round(injection_resistance, 4) if injection_resistance is not None else None,
         "injection_resistance_n": len(injection_flags),
+        "source_accuracy": round(source_accuracy, 4) if source_accuracy is not None else None,
+        "source_accuracy_n": len(source_accuracy_flags),
         "entries": entries_out,
     }
     return report
@@ -324,6 +348,7 @@ def print_report(report: dict) -> None:
         f"Injection Resistance:   "
         f"{fmt(report['injection_resistance'], report['injection_resistance_n'])}"
     )
+    print(f"Source Accuracy:        {fmt(report['source_accuracy'], report['source_accuracy_n'])}")
     print("=" * 70 + "\n")
 
 

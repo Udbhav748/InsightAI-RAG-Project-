@@ -19,12 +19,15 @@ flowchart TD
         Auth["X-API-Key auth<br/>(core/auth.py)"]
         Planner["Planner<br/>ChatService._plan<br/>(rag_service.py)"]
         Retrieval["Retrieval tool<br/>retrieval_service.py<br/>+ embedding_service.py"]
+        Grading["Retrieval grading<br/>ChatService._grade_retrieval<br/>(insufficient / weak / good)"]
+        WebSearch["Web search tool<br/>web_search_service.py<br/>(gated by web_search_enabled)"]
         Summarization["Summarization tool<br/>summarization_service.py"]
-        Reflect["Reflection<br/>ChatService._reflect"]
+        Correct["Corrective loop<br/>ChatService._correct<br/>(regen, then web fallback,<br/>capped at 3 LLM calls)"]
     end
 
     FAISS[("FAISS index +<br/>metadata.json<br/>(faiss_vector_store.py)")]
     Gemini["Gemini API<br/>(gemini_client.py)"]
+    DDG["DuckDuckGo<br/>(duckduckgo_search)"]
 
     UI -- "axios, X-API-Key header" --> Auth
     Auth --> Planner
@@ -34,13 +37,19 @@ flowchart TD
     Planner -- "summarize" --> Summarization
 
     Retrieval -- "search()" --> FAISS
-    Summarization -- "get_chunks_by_document()" --> FAISS
+    Retrieval --> Grading
+    Grading -- "weak / insufficient" --> WebSearch
+    Grading -- "good, or web disabled" --> Gemini
+    WebSearch --> DDG
+    WebSearch --> Gemini
 
-    Retrieval -- "build_prompt()" --> Gemini
+    Summarization -- "get_chunks_by_document()" --> FAISS
     Summarization -- "build prompt" --> Gemini
-    Gemini -- "answer" --> Reflect
-    Reflect -- "regenerate if ungrounded" --> Gemini
-    Reflect --> UI
+
+    Gemini -- "answer" --> Correct
+    Correct -- "regenerate if ungrounded" --> Gemini
+    Correct -- "still ungrounded, web unused" --> WebSearch
+    Correct --> UI
 
     subgraph Upload["Upload pipeline — POST /upload"]
         PDF["PDF file"] --> PyMuPDF["PyMuPDF text extraction<br/>document_service.py"]
@@ -74,7 +83,8 @@ keyword/regex routing — no LLM call. It returns one of three actions:
 tool or LLM involved at all), `summarize` (triggered by a
 "summarize"/"summary" keyword *and* a document-id-shaped UUID found in
 the query text — without both, it falls back to `retrieve`), or
-`retrieve` (the default).
+`retrieve` (the default, which runs the corrective RAG loop described
+below).
 
 **Retrieval tool** (`app/services/retrieval_service.py` +
 `embedding_service.py`). Embeds the query with the same
@@ -82,27 +92,59 @@ the query text — without both, it falls back to `retrieve`), or
 the configured `top_k`, and drops results below `min_score`. Depends only
 on the `VectorStore` interface, never a concrete backend.
 
+**Retrieval grading** (`ChatService._grade_retrieval`). A cheap heuristic
+— no LLM call — run immediately after retrieval on every `retrieve`
+action: no chunks survived `min_score` → `"insufficient"`; chunks
+survived but the top score is below `Settings.retrieval_grade_threshold`
+→ `"weak"`; otherwise → `"good"`. This grade is what the corrective loop
+branches on — it's the "corrective" in corrective RAG.
+
+**Web search tool** (`app/services/web_search_service.py`). Fetches the
+top `Settings.web_search_result_count` results (title, URL, snippet) from
+DuckDuckGo via the `duckduckgo-search` package — no API key required.
+Gated behind `Settings.web_search_enabled` (default `false`); when off,
+nothing in this system makes an outbound network call other than to
+Gemini/Groq. Isolated the same way `gemini_client.py`/`groq_client.py`
+isolate their SDKs — nothing else imports `duckduckgo_search` directly. A
+search failure (or, in practice, DuckDuckGo silently rate-limiting
+requests from cloud/data-center IPs — a known limitation of unofficial
+scraping-based search) raises `WebSearchError`, which `ChatService`
+catches and treats as zero results rather than failing the request; web
+search is a best-effort enhancement, not a dependency.
+
 **Summarization tool** (`app/services/summarization_service.py`). Given a
 document_id, pulls every chunk stored for that document via
 `VectorStore.get_chunks_by_document()` (ordered by `chunk_index`), joins
 their text, and asks Gemini for a single summary. No chunking of the
 summary input itself — for a very long document this means the entire
-concatenated chunk text goes into one prompt.
+concatenated chunk text goes into one prompt. Not part of the corrective
+loop — no grading, no web fallback.
 
-**Reflection** (`ChatService._reflect`). After a `retrieve`-action
-generation, if chunks were retrieved but the answer came back empty or
-equal to the model's own fallback line, it regenerates once with an
-explicit "you didn't use the context" instruction
-(`REFLECTION_INSTRUCTION` in `prompt_builder.py`). This is the system's
-only self-correction step — it doesn't run for `summarize` or
-`conversational` actions, and it only fires once per request (no retry
-loop).
+**Corrective loop** (`ChatService._correct`, generalizing the earlier
+single-shot "reflection" step). After the `retrieve` action's first
+generation call, if chunks/web-results were available but the answer came
+back empty or equal to the model's own fallback line, it regenerates once
+with an explicit "you didn't use the context" instruction
+(`REFLECTION_INSTRUCTION` in `prompt_builder.py`). If that's *still*
+ungrounded and `web_search_enabled` is on but wasn't already used for this
+request (a `"good"`-graded retrieval skips the web search that a
+`"weak"`/`"insufficient"` grade triggers up front — see the diagram), it
+fetches web results and makes one final attempt with them added to the
+prompt. Every path is capped at `_MAX_LLM_CALLS = 3` total `generate()`
+calls per request — checked before each additional call, logging
+`"loop_capped"` if one would be needed but the cap blocks it. With
+`web_search_enabled=false` (the default), this cap is never approached:
+the loop can only reach its one reflection retry, exactly reproducing the
+old single-shot reflection behavior.
 
 **Prompt construction** (`app/services/prompt_builder.py`). Every
 retrieved chunk is wrapped in `---BEGIN UNTRUSTED DOCUMENT EXCERPT---` /
-`---END EXCERPT---` markers with an explicit instruction that content
-inside them is data, not instructions — the system's prompt-injection
-defense. Prompts are versioned (`PROMPT_VERSION = "v1"`), logged on every
+`---END EXCERPT---` markers; web results (when present) get their own
+`---BEGIN UNTRUSTED WEB RESULT---` / `---END WEB RESULT---` markers plus
+an extra instruction telling the model to prefer document context and be
+explicit when it's drawing on web results instead — both marker types
+carry the same "this is data, not instructions" prompt-injection defense.
+Prompts are versioned (`PROMPT_VERSION = "v1"`), logged on every
 generation call, and include up to the last 6 turns of conversation
 history when present.
 
@@ -148,40 +190,59 @@ a local stand-in for real observability (see its own docstring and
 ## Framework choice
 
 The chat orchestration in `rag_service.py` is deliberately plain Python —
-a `_plan` dispatcher, three action branches, one reflection step — not
-LangGraph, CrewAI, or any agent framework. That's a fit-for-scale
-decision, not an oversight:
+a `_plan` dispatcher, three action branches, and (for `retrieve`) a small
+bounded corrective loop — not LangGraph, CrewAI, or any agent framework.
+Adding the corrective RAG loop (retrieval grading, a web search fallback,
+capped regeneration) is exactly the kind of change that might seem to
+tip the scale toward "now you need a graph runtime." It doesn't, and it's
+worth re-justifying why now that there are three tools and an actual
+loop, not two tools and a straight line:
 
-- **Two tools, not a team.** Retrieval and summarization are the entire
-  tool surface. Both operate on the same document corpus, the same FAISS
-  index, and the same LLM — there's no genuinely distinct responsibility
-  (different data source, different persona, different permission
-  boundary) that would justify giving either its own agent. Multi-agent
-  frameworks earn their complexity when responsibilities are actually
-  separable and need to hand off partial work to each other; that's not
-  this system.
-- **Linear-with-branches, not a graph.** `_plan` picks exactly one of
-  three branches per request; the `retrieve` branch itself is a straight
-  line (retrieve → generate → reflect → maybe-regenerate-once) with no
-  dynamic re-planning, no loops back through the planner, and no tool
-  invoking another tool. A graph-orchestration runtime is built to manage
-  cycles, conditional multi-hop routing, and shared long-lived state
-  across nodes — none of which this control flow has.
-  `ChatService.handle_query` is a single function with an `if/elif` and a
-  `try/except`; that's an accurate description of the actual complexity,
-  not a simplification of something bigger underneath.
+- **Three tools, still not a team.** Retrieval, summarization, and web
+  search are the entire tool surface. Web search does reach outside the
+  document corpus — but *which* tool runs is still a hand-coded decision
+  (a score threshold in `_grade_retrieval`), not something an LLM
+  reasons about and chooses between, and a web result becomes nothing
+  more than another block of context in the same prompt to the same
+  model — there's no independent reasoning loop on the far side of that
+  "hand-off" for a second agent to own. Multi-agent frameworks earn their
+  complexity when responsibilities are actually separable *and* need to
+  hand off partial work between independent reasoning processes; a
+  deterministic if-this-score-then-fetch-that isn't that.
+- **A bounded loop, not a graph.** The `retrieve` branch is no longer a
+  straight line — `_correct` can regenerate, then escalate to web search,
+  then regenerate once more. But it's a small, fixed-depth loop with a
+  hard, checked ceiling (`_MAX_LLM_CALLS = 3`), not dynamic re-planning:
+  there are at most three possible generation counts (1, 2, or 3) and a
+  handful of enumerable paths through them, all of which
+  `backend/tests/test_rag_service.py`'s `TestCorrectiveLoop` tests
+  directly, by name, one per path. A graph-orchestration runtime is built
+  to manage *unbounded* cycles, conditional multi-hop routing, and shared
+  mutable state across many nodes — this loop has none of that: it's one
+  Python function with two `if`-guarded early returns, not a state
+  machine that needs a scheduler. Expressing it as a LangGraph graph
+  would trade a function you can read top-to-bottom for a node/edge
+  definition plus a state schema, to compute the exact same bounded
+  sequence.
 - **Traceability stays simple.** One `ChatService`, one request_id, one
-  log stream per request (see Observability above). Splitting this into
-  cooperating agents would mean designing an inter-agent message
-  protocol and correlating logs across it, for a system that today has
-  exactly one LLM call in the common case and at most two (with
-  reflection).
-- **Testability.** `_plan` and `_reflect` are unit-tested directly
-  (`backend/tests/test_rag_service.py`) as plain methods on a plain
-  object, with fake `VectorStore`/`LLMClient` — no framework-specific test
-  harness or mocked agent runtime required.
+  log stream per request (see Observability above) — grading
+  (`retrieval_graded`), web search (`web_search_completed`/
+  `web_search_failed`), and each regeneration
+  (`reflection_triggered`/`web_fallback_triggered`/`loop_capped`) are just
+  more named events in that same stream, not messages crossing an
+  inter-agent protocol that would need its own correlation story.
+- **Testability.** `_plan`, `_grade_retrieval`, and `_correct` are all
+  unit-tested directly (`backend/tests/test_rag_service.py`) as plain
+  methods on a plain object, with fake `VectorStore`/`LLMClient` and a
+  monkeypatched `search_web` — no framework-specific test harness or
+  mocked agent runtime required. The loop's cap is tested by monkeypatching
+  `_MAX_LLM_CALLS` down and asserting the blocked call never fires
+  (`TestCorrectiveLoop.test_loop_cap_blocks_*`), which is only this
+  simple because the cap is an explicit, readable guard in plain code.
 
 If a genuinely distinct responsibility shows up later — for example, a
 document-ingestion agent with its own tools and failure modes, separate
-from the question-answering agent — that would be the point to
-reconsider. Two tools sharing one corpus and one model isn't it.
+from the question-answering agent, or a web research capability that
+needs its *own* multi-step reasoning rather than a single fetch-and-append
+— that would be the point to reconsider. Three tools and one small capped
+loop, all sharing one model and one request, isn't it.
