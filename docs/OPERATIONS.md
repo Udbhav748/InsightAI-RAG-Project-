@@ -39,21 +39,58 @@ offline, sequentially, using the eval harness:
    `entries` array in each file has the raw per-query answers if you need
    to see *what* changed, not just the aggregate score.
 
-**Known gap**: `run_eval.py`'s output JSON does not itself record which
-`GEMINI_MODEL_NAME` or `PROMPT_VERSION` produced it — that's implicit in
-whatever you changed in step 2. To recover it after the fact, cross-reference
-the run's timestamp against the backend's own logs for that window
-(`generation_requested` and `llm_generation_completed` lines both carry
-`prompt_version`; nothing in the current logs carries the Gemini model
-name directly, though `llm_generation_completed` does log `model_name`).
-Recording the variant identifier directly in the results JSON would be a
-reasonable improvement to `run_eval.py`.
+Each results JSON now records `llm_provider`, `fallback_llm_provider`, and
+`prompt_version` at the top level, so which variant produced a given run is
+no longer something you have to reconstruct from logs — it's in the file
+itself. (It still doesn't record `GEMINI_MODEL_NAME`/`GROQ_MODEL_NAME`
+specifically if you change the model within a provider rather than the
+provider itself; for that, cross-reference the run's timestamp against
+`llm_generation_completed` log lines, which do carry `model_name`.)
 
 Because this eval calls the real Gemini API and needs a real indexed
 document (`eval/README.md`'s preconditions), it isn't run in CI
 (`.github/workflows/ci.yml` has a TODO noting exactly this) — A/B
 comparisons are a manual, deliberate step, not something that runs on
 every push.
+
+## Comparing providers (Gemini vs. Groq)
+
+`app/services/llm_provider.py` picks the LLM implementation from
+`Settings.llm_provider` ("gemini" or "groq"); both `GeminiClient` and
+`GroqClient` implement the same `LLMClient` interface, log the same event
+shape (`llm_generation_completed`, now including a `"provider"` field on
+both), and share the same tenacity retry policy — so they're a valid,
+apples-to-apples A/B pair using the exact procedure above:
+
+1. Run the baseline with `LLM_PROVIDER=gemini` in `backend/.env`,
+   `python eval/run_eval.py`.
+2. Set `LLM_PROVIDER=groq` and `GROQ_API_KEY` in `backend/.env`, restart
+   the backend, re-run `python eval/run_eval.py`.
+3. Compare the two results files: `task_success_rate` and
+   `groundedness_proxy` for quality, `processing_duration` (from the
+   backend logs, keyed by `provider`) for latency, and
+   `estimated_cost_usd` (also per-`provider` in the logs) for cost —
+   Groq's LPU inference and per-token pricing are expected to win on
+   latency and cost; Gemini is the current default because it was the
+   original, validated integration.
+
+As above, the results JSON's `llm_provider` field records which one
+produced a given run, so the two files from steps 1-2 are
+self-identifying — no need to track it separately.
+
+## Automatic provider fallback
+
+Setting `FALLBACK_LLM_PROVIDER` to the *other* provider (e.g.
+`LLM_PROVIDER=gemini`, `FALLBACK_LLM_PROVIDER=groq`) wraps the primary
+client in `FallbackLLMClient` (`app/services/fallback_llm_client.py`):
+if the primary provider's own retries are exhausted
+(`LLMTimeoutError`/`LLMAPIError`), one attempt is made against the
+fallback provider before the request fails — logged as
+`llm_fallback_triggered` with both provider names. This is single-hop
+only (see the README's Known Limitations): if both providers are down,
+the request still fails, and there's no automatic recovery back to the
+primary once it's healthy again — a request-by-request decision, not a
+sticky failover state.
 
 ## Rollback plan
 

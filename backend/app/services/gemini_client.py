@@ -30,6 +30,7 @@ def _log_retry(retry_state) -> None:
         "llm_generation_retrying",
         extra={
             "extra_fields": {
+                "provider": "gemini",
                 "attempt": retry_state.attempt_number,
                 "exception": str(retry_state.outcome.exception()),
             }
@@ -98,6 +99,7 @@ class GeminiClient(LLMClient):
             "llm_generation_completed",
             extra={
                 "extra_fields": {
+                    "provider": "gemini",
                     "model_name": settings.gemini_model_name,
                     "prompt_length": len(prompt),
                     "response_length": len(text),

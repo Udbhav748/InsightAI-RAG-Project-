@@ -1,0 +1,116 @@
+"""Groq implementation of the LLMClient interface.
+
+Mirrors GeminiClient's shape deliberately: same retry policy, same log
+schema (with an added "provider" field), same error mapping — so the two
+providers are directly comparable in eval/run_eval.py and in production
+logs, and either can be the primary or the fallback (see
+fallback_llm_client.py) without special-casing.
+
+Isolated from the rest of the application: nothing outside this module
+should import the groq SDK directly.
+"""
+
+import logging
+import time
+
+import groq
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from app.core.config import settings
+from app.core.exceptions import (
+    LLMAPIError,
+    LLMConfigurationError,
+    LLMEmptyResponseError,
+    LLMTimeoutError,
+)
+from app.services.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
+
+
+def _log_retry(retry_state) -> None:
+    logger.warning(
+        "llm_generation_retrying",
+        extra={
+            "extra_fields": {
+                "provider": "groq",
+                "attempt": retry_state.attempt_number,
+                "exception": str(retry_state.outcome.exception()),
+            }
+        },
+    )
+
+
+class GroqClient(LLMClient):
+    def __init__(self):
+        if not settings.groq_api_key:
+            raise LLMConfigurationError("GROQ_API_KEY is not configured.")
+
+        try:
+            self._client = groq.Groq(
+                api_key=settings.groq_api_key,
+                timeout=settings.groq_timeout_seconds,
+            )
+        except Exception as exc:
+            raise LLMConfigurationError(f"Failed to configure Groq client: {exc}") from exc
+
+    # Same transient-vs-permanent split as GeminiClient: only retry on
+    # timeout/API errors, not on an empty response (a retry won't fix that).
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+        reraise=True,
+        before_sleep=_log_retry,
+    )
+    def generate(self, prompt: str) -> str:
+        start = time.perf_counter()
+
+        try:
+            response = self._client.chat.completions.create(
+                model=settings.groq_model_name,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except groq.APITimeoutError as exc:
+            raise LLMTimeoutError(
+                f"Groq request timed out after {settings.groq_timeout_seconds}s: {exc}"
+            ) from exc
+        except groq.APIError as exc:
+            # Covers RateLimitError, APIStatusError, APIConnectionError, etc.
+            # — all groq SDK exceptions subclass APIError.
+            raise LLMAPIError(f"Groq API request failed: {exc}") from exc
+        except Exception as exc:
+            raise LLMAPIError(f"Unexpected error calling Groq: {exc}") from exc
+
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise LLMEmptyResponseError("Groq returned an empty response.")
+
+        processing_duration = time.perf_counter() - start
+
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) or 0
+        completion_tokens = getattr(usage, "completion_tokens", None) or 0
+        total_tokens = prompt_tokens + completion_tokens
+        estimated_cost_usd = round(
+            (total_tokens / 1000) * settings.groq_cost_per_1k_tokens, 6
+        )
+
+        logger.info(
+            "llm_generation_completed",
+            extra={
+                "extra_fields": {
+                    "provider": "groq",
+                    "model_name": settings.groq_model_name,
+                    "prompt_length": len(prompt),
+                    "response_length": len(text),
+                    "processing_duration": round(processing_duration, 4),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "estimated_cost_usd": estimated_cost_usd,
+                }
+            },
+        )
+
+        return text

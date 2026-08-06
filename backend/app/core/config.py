@@ -10,6 +10,33 @@ class Settings(BaseSettings):
     # Required. Google Gemini API key (used by the future RAG/generation pipeline).
     gemini_api_key: str
 
+    # Which LLM provider generate() calls go to by default: "gemini" or
+    # "groq". Both client classes implement the same LLMClient interface,
+    # so switching this is the entire A/B-testing/model-routing surface.
+    llm_provider: str = "gemini"
+
+    # Optional. If set to a different provider than llm_provider, that
+    # provider is used as an automatic fallback: after the primary
+    # provider's own retries are exhausted (LLMTimeoutError/LLMAPIError),
+    # FallbackLLMClient retries once against this provider instead of
+    # failing the request outright. Leave unset (None) to disable
+    # fallback and fail after the primary's retries.
+    fallback_llm_provider: str | None = None
+
+    # Groq API key. Only required if llm_provider or fallback_llm_provider
+    # is "groq".
+    groq_api_key: str = ""
+
+    # Groq model used for text generation.
+    groq_model_name: str = "llama-3.3-70b-versatile"
+
+    # Timeout, in seconds, for Groq API calls.
+    groq_timeout_seconds: int = 30
+
+    # Estimated USD cost per 1,000 tokens for Groq, used the same way as
+    # cost_per_1k_tokens below but with Groq's (much cheaper) pricing.
+    groq_cost_per_1k_tokens: float = 0.0006
+
     # Required. Shared secret clients must send in the X-API-Key header to
     # reach the documents/query routers. See core/auth.py.
     api_key: str

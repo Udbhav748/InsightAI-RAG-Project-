@@ -180,7 +180,13 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `RETRIEVAL_MIN_SCORE` | `0.3` | Minimum cosine similarity to keep a retrieved chunk. |
 | `GEMINI_MODEL_NAME` | `gemini-3.5-flash` | Gemini model used for answer generation. |
 | `GEMINI_TIMEOUT_SECONDS` | `30` | Timeout for Gemini API calls. |
-| `COST_PER_1K_TOKENS` | `0.00025` | Estimated USD cost per 1,000 tokens, used only to log a rough per-generation cost estimate — not billed usage. |
+| `COST_PER_1K_TOKENS` | `0.00025` | Estimated USD cost per 1,000 tokens for Gemini, used only to log a rough per-generation cost estimate — not billed usage. |
+| `LLM_PROVIDER` | `gemini` | Which provider `/chat` and `/summarize` use: `gemini` or `groq`. Both implement the same `LLMClient` interface (see `services/llm_provider.py`). |
+| `FALLBACK_LLM_PROVIDER` | — | Optional. If set to the other provider, `FallbackLLMClient` retries against it after the primary's own retries are exhausted. |
+| `GROQ_API_KEY` | — | Required only if `LLM_PROVIDER` or `FALLBACK_LLM_PROVIDER` is `groq`. |
+| `GROQ_MODEL_NAME` | `llama-3.3-70b-versatile` | Groq model used for text generation. |
+| `GROQ_TIMEOUT_SECONDS` | `30` | Timeout for Groq API calls. |
+| `GROQ_COST_PER_1K_TOKENS` | `0.0006` | Estimated USD cost per 1,000 tokens for Groq. |
 
 The frontend reads from `frontend/.env`:
 
@@ -316,6 +322,10 @@ InsightAI-RAG/
   different exception types.
 - **Groundedness is measured by a lexical-overlap proxy**, not a real
   faithfulness check (see `backend/eval/README.md`).
+- **Provider fallback is single-hop.** `FallbackLLMClient` tries the
+  primary provider (with its own internal retries), then the fallback
+  provider once — if both are down, the request fails. There's no
+  health-based routing or automatic recovery back to the primary.
 - **Not yet deployed** — Docker images build and run locally
   (`docker-compose.yml`), but nothing is live; see `docs/OPERATIONS.md`.
 
