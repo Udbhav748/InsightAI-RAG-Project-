@@ -68,6 +68,7 @@ A document uploaded through `/upload` is chunked, embedded, and written into the
 
 - **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request.
 - **Grounded chat** — every answer is generated only from retrieved chunks, with the source document and matched excerpts shown alongside the response.
+- **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context, and an ungrounded answer gets one capped regeneration attempt before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
 - **Conversational query routing** — small talk and meta-questions are handled without spending a retrieval + generation round trip on them.
 - **Document management** — browse everything you've uploaded, see page/chunk counts, and delete a document (which also removes its vectors from the index).
 - **Light & dark themes**, keyboard-friendly chat input, and toast notifications throughout.
@@ -178,6 +179,10 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2` | Sentence Transformers model. |
 | `RETRIEVAL_TOP_K` | `5` | Chunks retrieved per query by default. |
 | `RETRIEVAL_MIN_SCORE` | `0.3` | Minimum cosine similarity to keep a retrieved chunk. |
+| `RETRIEVAL_GRADE_THRESHOLD` | `0.5` | Minimum top-chunk score for retrieval to grade `"good"`. Below it (but above `RETRIEVAL_MIN_SCORE`), retrieval grades `"weak"` — the corrective loop's trigger for the web search fallback below. |
+| `WEB_SEARCH_ENABLED` | `false` | Enables the web search fallback for `"weak"`/`"insufficient"` retrieval grades. Off by default. |
+| `WEB_SEARCH_RESULT_COUNT` | `3` | Web results fetched when the fallback fires. |
+| `WEB_SEARCH_TIMEOUT_SECONDS` | `10` | Timeout for the web search call. |
 | `GEMINI_MODEL_NAME` | `gemini-3.5-flash` | Gemini model used for answer generation. |
 | `GEMINI_TIMEOUT_SECONDS` | `30` | Timeout for Gemini API calls. |
 | `COST_PER_1K_TOKENS` | `0.00025` | Estimated USD cost per 1,000 tokens for Gemini, used only to log a rough per-generation cost estimate — not billed usage. |
@@ -242,29 +247,38 @@ response:
     {
       "document_id": "ae845151-86b1-41e8-a63b-69289b88c67a",
       "chunk_id": "ae845151-86b1-41e8-a63b-69289b88c67a-0",
-      "excerpt": "A project is a temporary endeavor undertaken to create a unique product, service, or result. Projects have a defined beginning and end..."
+      "excerpt": "A project is a temporary endeavor undertaken to create a unique product, service, or result. Projects have a defined beginning and end...",
+      "url": null
     }
   ],
   "processing_time": 18.24,
   "tool_used": "retrieval",
-  "steps_taken": 3
+  "steps_taken": 4,
+  "answer_source": "documents"
 }
 ```
 
-`tool_used` is one of `"retrieval"`, `"summarization"`, or `"none"`
-(small-talk queries answered without touching the document index or the
-LLM). `steps_taken` counts the agent's internal steps for that request
-(planning, retrieval/summarization, generation, plus one more if the
-reflection self-correction step fired) — see `docs/ARCHITECTURE.md`.
+`tool_used` is one of `"retrieval"`, `"summarization"`, `"web_search"`
+(the corrective loop's web fallback fired and its results made it into
+the final answer), or `"none"` (small-talk queries answered without
+touching the document index or the LLM). `steps_taken` counts the agent's
+internal steps for that request — planning, retrieval, retrieval grading,
+generation, plus one more per regeneration (reflection retry, web search
+fetch, web-augmented regeneration) that actually fired — see
+`docs/ARCHITECTURE.md`. `answer_source` is `"documents"`, `"web"`, or
+`"mixed"`, based on which context actually made it into the final prompt.
 
 `sources` is chunk-level, not document-level: one entry per retrieved
-chunk the answer was built from, each with its own `chunk_id` and a
-`~200`-character `excerpt` of that chunk's text, so a citation points at
-the specific passage rather than just "this document contributed
-somehow." Both `sources` and `retrieved_chunks` cover the same chunks —
-`retrieved_chunks` carries the full chunk (text, score, metadata) for
-callers that need it; `sources` is the trimmed-down shape the frontend
-renders as citations.
+chunk (or web result) the answer was built from, each with its own
+`chunk_id` and a `~200`-character `excerpt`, so a citation points at the
+specific passage rather than just "this document contributed somehow."
+`retrieved_chunks` carries the full document chunks (text, score,
+metadata) for callers that need it; `sources` is the trimmed-down shape
+the frontend renders as citations, and is the only place web citations
+appear (they're not part of `retrieved_chunks`). A web-sourced entry
+looks like `{"document_id": "web", "chunk_id": "<url>", "excerpt": "...",
+"url": "<url>"}` — `url` is `null` for document citations and set only
+for web ones.
 
 **`POST /chat/feedback`** request body:
 
@@ -291,11 +305,15 @@ Full interactive documentation (generated by FastAPI) is available at `/docs` wh
 
 `backend/eval/` has three independent tools:
 
-- **`run_eval.py`** — runs a 16-entry dataset (`dataset_v1.json`) through
-  the real `ChatService` and reports planner routing accuracy (confusion
-  matrix, precision/recall/F1), Task Success Rate, a groundedness proxy,
-  and Injection Resistance. Requires a live `GEMINI_API_KEY` and at least
-  one indexed document.
+- **`run_eval.py`** — runs a dataset (`dataset_v1.json` by default, 16
+  entries; `dataset_v2.json` adds 2 web-findable entries for the
+  corrective loop's fallback) through the real `ChatService` and reports
+  planner routing accuracy (confusion matrix, precision/recall/F1), Task
+  Success Rate, a groundedness proxy, Injection Resistance, and — for
+  entries with an `expected_source` — **Source Accuracy** (did
+  `answer_source` match?). Requires a live `GEMINI_API_KEY` and at least
+  one indexed document; Source Accuracy on `dataset_v2.json`'s web
+  entries additionally needs `WEB_SEARCH_ENABLED=true`.
 - **`metrics_report.py`** — parses the backend's own JSON logs into
   latency percentiles, error rate by taxonomy category, and total
   token/cost usage, and reads `backend/feedback/feedback.jsonl` to report
@@ -346,10 +364,24 @@ InsightAI-RAG/
   the conversation.
 - **No OCR.** PDF text extraction (PyMuPDF) reads embedded/selectable
   text only — scanned image-only PDFs extract little or no text.
-- **Reflection catches one failure mode.** The self-correction step
-  (`ChatService._reflect`) only retries when chunks were retrieved but
-  the answer came back empty/fallback — it doesn't catch subtly wrong
-  answers, and only retries once.
+- **The corrective loop catches one failure mode.** `ChatService._correct`
+  only regenerates when chunks/web-results were available but the answer
+  came back empty/fallback — it doesn't catch subtly wrong answers, only
+  the "context existed but got ignored" pattern.
+- **Retrieval grading is a score threshold, not a semantic judgment.**
+  `_grade_retrieval` compares the top chunk's similarity score against
+  `RETRIEVAL_GRADE_THRESHOLD` — a chunk can score high while being
+  off-topic, or score just under the threshold while actually answering
+  the question. It's a cheap proxy for "is this confidently on-topic,"
+  not a real relevance check.
+- **Web search is off by default and fragile when on.** `WEB_SEARCH_ENABLED`
+  defaults to `false`. When enabled, `duckduckgo-search` is an unofficial
+  scraper with no API key or SLA — it's known to silently rate-limit or
+  return zero results from cloud/data-center IPs (bot detection), with no
+  exception raised. `ChatService` treats that identically to "genuinely no
+  web results" and falls through to the normal fallback reply, so this
+  degrades gracefully rather than erroring — but it means the fallback
+  can be quietly unavailable depending on where the backend runs.
 - **`embed_query`'s retry decorator is currently inert** — it's scoped to
   `LLMTimeoutError`/`LLMAPIError`, but `embed_query`'s own failures raise
   different exception types.

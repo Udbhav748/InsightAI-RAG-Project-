@@ -57,3 +57,9 @@ class RetrievedChunk(BaseModel):
         default_factory=dict,
         description="Metadata associated with the chunk (e.g. chunk_index, total_chunks, source).",
     )
+
+
+class WebSearchResult(BaseModel):
+    title: str = Field(..., description="Title of the web search result.")
+    url: str = Field(..., description="URL of the web search result.")
+    snippet: str = Field(..., description="Snippet/summary text of the web search result.")
