@@ -1,11 +1,11 @@
 """Extracts text from previously uploaded PDF files using PyMuPDF (fitz).
 
-Pages with no extractable text layer (scanned/image-only PDFs) fall back
-to OCR via pytesseract, which shells out to the tesseract binary — a
-system dependency, not a pip package (see backend/Dockerfile). That
-binary is genuinely optional: if it's missing, OCR is skipped and the
-page is treated the way every page here used to be treated before OCR
-existed, logged once as a warning. Ingestion must never crash over a
+Pages whose own text falls short of Settings.ocr_min_chars_per_page — not
+just totally blank pages — fall back to OCR via pytesseract, which shells
+out to the tesseract binary. That binary is a system dependency, not a
+pip package (see backend/Dockerfile), and it's genuinely optional: if
+it's missing, OCR is skipped and whatever thin native text a page had is
+kept as-is, logged once as a warning. Ingestion must never crash over a
 missing optional dependency.
 """
 
@@ -33,6 +33,12 @@ def _tesseract_available() -> bool:
     embedding_service.get_embedding_model), a missing system binary won't
     become available mid-process, so there's no reason to re-probe on
     every OCR'd page or every document.
+
+    Deliberately `except Exception`, not `except TesseractNotFoundError`:
+    a present-but-broken tesseract install (missing shared libraries, a
+    bad PATH, wrong architecture) raises other exception types from the
+    subprocess call, and those need to degrade the same way a missing
+    binary does — don't narrow this without re-checking that case.
     """
     try:
         pytesseract.get_tesseract_version()
@@ -53,10 +59,15 @@ def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
     """Extract text from every page of a PDF, in order.
 
     Returns a dict with extracted_text, total_pages, extracted_characters,
-    and pages_ocred. A page with no extractable text layer is first tried
-    via OCR (rasterize + pytesseract); if OCR is unavailable or also
-    finds nothing, the page is skipped when building extracted_text, but
-    still counted in total_pages.
+    and pages_ocred. A page whose own text falls short of
+    Settings.ocr_min_chars_per_page — not just a totally blank page — is
+    tried via OCR (rasterize + pytesseract); real scans routinely carry a
+    thin native text layer (a header, a page number, a few garbled
+    characters from a bad prior OCR pass) that would otherwise pass as
+    "has text" and ship a near-useless chunk to the index. If OCR isn't
+    available or also comes up empty, whatever thin native text existed
+    is kept rather than discarded — it's better than nothing even if it
+    didn't clear the trust threshold on its own.
     """
     if not file_path.is_file():
         raise DocumentNotFoundError(f"No such file: {file_path}")
@@ -82,12 +93,15 @@ def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
                     f"of {file_path.name}"
                 ) from exc
 
-            if page_text and page_text.strip():
+            native_text = page_text.strip() if page_text else ""
+
+            if len(native_text) >= settings.ocr_min_chars_per_page:
                 page_texts.append(page_text)
                 continue
 
-            # No extractable text layer — likely a scanned/image-only
-            # page. Fall back to OCR if the tesseract binary is available.
+            # Below the trust threshold — either truly blank or carrying
+            # only a thin native text layer. Try OCR; degrade to the thin
+            # native text (if any) rather than losing it outright.
             if not _tesseract_available():
                 if not ocr_unavailable_warned:
                     logger.warning(
@@ -95,14 +109,16 @@ def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
                         extra={"extra_fields": {"document_id": document_id}},
                     )
                     ocr_unavailable_warned = True
+                if native_text:
+                    page_texts.append(page_text)
                 continue
 
             try:
                 ocr_text = _ocr_page(page)
             except Exception as exc:
                 # A single page's OCR failing (corrupt image data, etc.)
-                # shouldn't take down the whole extraction — skip just
-                # this page, same as if it had no text at all.
+                # shouldn't take down the whole extraction — fall back to
+                # this page's thin native text (if any) and move on.
                 logger.warning(
                     "ocr_page_failed",
                     extra={
@@ -113,11 +129,17 @@ def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
                         }
                     },
                 )
+                if native_text:
+                    page_texts.append(page_text)
                 continue
 
             if ocr_text and ocr_text.strip():
                 page_texts.append(ocr_text)
                 pages_ocred += 1
+            elif native_text:
+                # OCR ran but found nothing usable either — the thin
+                # native text is still the best material available.
+                page_texts.append(page_text)
 
         total_pages = document.page_count
     finally:
