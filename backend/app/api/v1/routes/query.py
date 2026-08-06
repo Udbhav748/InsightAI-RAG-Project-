@@ -3,7 +3,7 @@
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from app.core.auth import require_api_key
 from app.core.exceptions import VectorStoreNotFoundError
@@ -13,6 +13,7 @@ from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
+from app.services.validation_service import validate_image_upload
 from app.services.vector_store import VectorStore
 
 router = APIRouter(tags=["Chat"], dependencies=[Depends(require_api_key)])
@@ -78,6 +79,54 @@ def chat(request: ChatRequest) -> ChatResponse:
 
     logger.info(
         "chat_response_sent",
+        extra={
+            "extra_fields": {
+                "answer_length": len(response.answer),
+                "retrieved_chunk_count": len(response.retrieved_chunks),
+                "processing_time": response.processing_time,
+            }
+        },
+    )
+
+    return response
+
+
+@router.post("/chat/diagnose", response_model=ChatResponse)
+async def diagnose(
+    image: UploadFile = File(...),
+    query: str | None = Form(None),
+) -> ChatResponse:
+    # A separate multipart endpoint rather than an optional file param on
+    # /chat: FastAPI resolves a whole request as either a JSON body or
+    # multipart/form-data per the endpoint's declared parameters, not per
+    # request, so /chat's existing ChatRequest JSON body and a File() param
+    # can't coexist on one route without breaking every current JSON caller.
+    chat_service = get_chat_service()
+
+    contents = await image.read()
+    await image.seek(0)
+    validate_image_upload(image, contents)
+
+    logger.info(
+        "diagnose_request_received",
+        extra={
+            "extra_fields": {
+                "filename": image.filename,
+                "content_type": image.content_type,
+                "has_accompanying_query": query is not None,
+            }
+        },
+    )
+
+    response = chat_service.handle_diagnose(
+        contents,
+        image.filename or "upload",
+        image.content_type or "application/octet-stream",
+        query=query,
+    )
+
+    logger.info(
+        "diagnose_response_sent",
         extra={
             "extra_fields": {
                 "answer_length": len(response.answer),

@@ -166,6 +166,39 @@ cd backend
 pytest
 ```
 
+### Running with LeafSense (image diagnosis)
+
+`POST /chat/diagnose` lets a user upload a plant leaf photo instead of
+typing a question — InsightAI calls out to LeafSense (a separate
+repo/process, its own TensorFlow/Keras stack) over HTTP to classify it,
+then runs the predicted disease through the normal retrieval + grounding
+pipeline. This is optional: if you never hit `/chat/diagnose`, LeafSense
+doesn't need to be running at all.
+
+LeafSense's own default port is **8000** — the same default this backend
+uses — so start it on a different port when running both locally:
+
+```bash
+# in the LeafSense repo
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --port 8001
+```
+
+Then point this backend at it (`backend/.env`):
+
+```bash
+VISION_SERVICE_URL=http://localhost:8001
+```
+
+`VISION_SERVICE_TIMEOUT_SECONDS` (default `15`) and
+`VISION_CONFIDENCE_THRESHOLD` (default `0.5`) are also configurable — see
+Configuration below. InsightAI's corpus currently only covers apple,
+corn, potato, tomato, and peach; a diagnosis for a crop outside that set
+(LeafSense recognizes 38 classes across 14 crops) will still classify
+correctly but fall through to the normal "couldn't find that in the
+uploaded documents" reply once retrieval comes up empty.
+
 ## Configuration
 
 All backend configuration lives in `backend/.env` (see `backend/.env.example`), loaded via `pydantic-settings`:
@@ -196,6 +229,9 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `GROQ_MODEL_NAME` | `llama-3.3-70b-versatile` | Groq model used for text generation. |
 | `GROQ_TIMEOUT_SECONDS` | `30` | Timeout for Groq API calls. |
 | `GROQ_COST_PER_1K_TOKENS` | `0.0006` | Estimated USD cost per 1,000 tokens for Groq. |
+| `VISION_SERVICE_URL` | `http://localhost:8001` | Base URL of the LeafSense vision service (separate repo/process). Not LeafSense's own default of `8000` — that collides with this backend's own default port. |
+| `VISION_SERVICE_TIMEOUT_SECONDS` | `15` | Timeout for calls to the vision service. |
+| `VISION_CONFIDENCE_THRESHOLD` | `0.5` | Below this confidence, a diagnosis is flagged `low_confidence: true` rather than presented as certain. |
 
 The frontend reads from `frontend/.env`:
 
@@ -215,6 +251,7 @@ the backend's `API_KEY` setting — a missing or wrong key returns `401`.
 | `POST` | `/upload` | required | Upload a PDF — extracts, chunks, embeds, and indexes it. |
 | `DELETE` | `/documents/{document_id}?confirm=true` | required | Remove a document and its vectors from the index. |
 | `POST` | `/chat` | required | Ask a question; returns an answer grounded in retrieved chunks. |
+| `POST` | `/chat/diagnose` | required | Upload a plant leaf photo; classifies it via LeafSense, then returns a grounded, cited answer for the predicted disease. |
 | `POST` | `/chat/feedback` | required | Record a thumbs up/down (and optional comment) on a previous answer. |
 
 **`DELETE /documents/{document_id}`** requires the `confirm=true` query
@@ -262,10 +299,12 @@ response:
 }
 ```
 
-`tool_used` is one of `"retrieval"`, `"summarization"`, `"web_search"`
-(the corrective loop's web fallback fired and its results made it into
-the final answer), or `"none"` (small-talk queries answered without
-touching the document index or the LLM). `steps_taken` counts the agent's
+`tool_used` is one of `"retrieval"`, `"summarization"`, `"diagnose"`
+(image-based queries via `/chat/diagnose`), `"web_search"` (the
+corrective loop's web fallback fired and its results made it into the
+final answer, on either a text or image query), or `"none"` (small-talk
+queries answered without touching the document index or the LLM).
+`steps_taken` counts the agent's
 internal steps for that request — planning, retrieval, retrieval grading,
 generation, plus one more per regeneration (reflection retry, web search
 fetch, web-augmented regeneration) that actually fired — see
@@ -283,6 +322,46 @@ appear (they're not part of `retrieved_chunks`). A web-sourced entry
 looks like `{"document_id": "web", "chunk_id": "<url>", "excerpt": "...",
 "url": "<url>"}` — `url` is `null` for document citations and set only
 for web ones.
+
+**`POST /chat/diagnose`** — `multipart/form-data`, not JSON (FastAPI
+resolves a request body as either JSON or multipart per the endpoint's
+declared parameters, not per-request, so this couldn't share `/chat`'s
+JSON body without breaking every existing text-only caller):
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `image` | file | yes | The leaf photo. |
+| `query` | text | no | Optional accompanying question, e.g. "is this from poor fertilization?" — folded into the retrieval query alongside the predicted disease. |
+
+Requires LeafSense to be running and reachable at `VISION_SERVICE_URL`
+(see "Running with LeafSense" above); returns `502` if it isn't.
+
+response — the same `ChatResponse` shape as `/chat`, plus a `diagnosis` field:
+
+```json
+{
+  "answer": "These symptoms indicate Bacterial Spot... nitrogen deficiency symptoms concentrate along the midrib.",
+  "retrieved_chunks": [ { "...": "..." } ],
+  "sources": [ { "...": "..." } ],
+  "processing_time": 4.1,
+  "tool_used": "diagnose",
+  "steps_taken": 5,
+  "answer_source": "documents",
+  "diagnosis": {
+    "raw_class": "Peach___Bacterial_spot",
+    "crop": "peach",
+    "disease": "bacterial spot",
+    "confidence": 0.94,
+    "low_confidence": false
+  }
+}
+```
+
+`diagnosis` is `null` on every other endpoint's response — it's only
+populated for `/chat/diagnose`. `low_confidence` is `true` below
+`VISION_CONFIDENCE_THRESHOLD`; the answer is still generated (a low-
+confidence prediction is a flag for the caller to surface, not a refusal
+to answer).
 
 **`POST /chat/feedback`** request body:
 

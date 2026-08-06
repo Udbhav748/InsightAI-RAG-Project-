@@ -59,6 +59,63 @@ flowchart TD
     end
 ```
 
+## Two-service architecture: InsightAI + LeafSense
+
+`POST /chat/diagnose` lets a user upload a plant leaf photo instead of
+typing a question. InsightAI has no vision model of its own — it calls
+**LeafSense**, a separate FastAPI service (its own repo, its own
+TensorFlow/Keras stack) over plain HTTP, gets back a predicted disease
+class, and feeds that into the *same* retrieval + corrective RAG loop
+described above. The two services never share a process, a codebase, or
+a Python environment; the only coupling is an HTTP request/response and
+the class-label vocabulary in `vision_client.py`'s `CLASS_LABEL_MAP`.
+
+```mermaid
+flowchart LR
+    subgraph InsightAI["InsightAI-RAG backend (this repo)"]
+        Route["POST /chat/diagnose<br/>(app/api/v1/routes/query.py)"]
+        VisionClient["vision_client.py<br/>diagnose_image()"]
+        Diagnose["ChatService.handle_diagnose<br/>(rag_service.py)"]
+        RAGLoop["Existing retrieval +<br/>corrective RAG loop"]
+    end
+
+    subgraph LeafSense["LeafSense backend (separate repo/process)"]
+        Predict["POST /predict/{model_id}<br/>(backend/main.py)"]
+        Model["Hybrid CBAM + EfficientNetB0 + ViT<br/>TensorFlow/Keras, 38 classes<br/>(backend/model_arch.py)"]
+    end
+
+    Photo["Leaf photo<br/>(multipart upload)"] --> Route
+    Route --> VisionClient
+    VisionClient -- "HTTP POST, multipart<br/>VISION_SERVICE_URL" --> Predict
+    Predict --> Model
+    Model -- "{class, confidence}" --> Predict
+    Predict -- "JSON response" --> VisionClient
+    VisionClient -- "VisionPrediction<br/>(crop, disease, confidence,<br/>low_confidence)" --> Diagnose
+    Diagnose -- "\"{disease} on {crop}\"<br/>as the query" --> RAGLoop
+    RAGLoop -- "grounded, cited answer<br/>+ diagnosis" --> Route
+```
+
+Failure handling: `vision_client.py` raises `VisionServiceError`
+(`taxonomy_category = "tool"`, same category as `WebSearchError`/
+`LLMAPIError`) if LeafSense is unreachable, times out
+(`Settings.vision_service_timeout_seconds`), or returns something outside
+its documented `{class, confidence}` shape — this propagates as a normal
+502 through the existing `AppError` → `error_handlers.py` path, no new
+handler wiring needed. A prediction below `Settings.vision_confidence_threshold`
+is *not* an error — it still flows through to retrieval/generation, just
+flagged `low_confidence=True` on the response's `diagnosis` field so the
+caller can decide how much to trust it. A crop LeafSense recognizes but
+the corpus has no documents for (e.g. grape, cherry — InsightAI's corpus
+currently covers apple, corn, potato, tomato, peach) isn't special-cased
+either: it runs through the same retrieval-then-generate path as any
+off-topic text query and lands on the same fixed fallback reply, since
+`_build_diagnosis_query`'s output is just another string to `retrieve()`.
+
+Ports: LeafSense's own default (`uvicorn main:app`, no `--port` flag) is
+**8000** — the same default this backend uses. `Settings.vision_service_url`
+defaults to `http://localhost:8001` specifically to avoid that collision;
+see the README for running both services together locally.
+
 ## Components
 
 **React frontend** (`frontend/src/`). A Vite + Tailwind SPA with five
@@ -84,7 +141,19 @@ tool or LLM involved at all), `summarize` (triggered by a
 "summarize"/"summary" keyword *and* a document-id-shaped UUID found in
 the query text — without both, it falls back to `retrieve`), or
 `retrieve` (the default, which runs the corrective RAG loop described
-below).
+below). A fourth action, `diagnose`, exists but bypasses `_plan` entirely
+— image presence on `POST /chat/diagnose` is an unambiguous routing
+signal `ChatService.handle_diagnose` acts on directly, with no text to
+classify (see "Two-service architecture" below).
+
+**Vision tool** (`app/services/vision_client.py`). Not a local model —
+an HTTP client for LeafSense, a separate FastAPI service with its own
+TensorFlow/Keras stack (see "Two-service architecture" below). Isolated
+the same way `web_search_service.py` isolates `duckduckgo_search`:
+nothing else in this codebase imports `httpx` for this purpose or knows
+LeafSense's class-label vocabulary. `ChatService.handle_diagnose` turns
+the predicted crop + disease into a query and feeds it through the exact
+same retrieval → grading → corrective-loop path `retrieve` uses.
 
 **Retrieval tool** (`app/services/retrieval_service.py` +
 `embedding_service.py`). Embeds the query with the same

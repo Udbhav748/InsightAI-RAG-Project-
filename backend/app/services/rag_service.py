@@ -28,8 +28,8 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
-from app.models.document import RetrievedChunk, WebSearchResult
-from app.models.schemas import ChatResponse, SourceReference
+from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
+from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
 from app.services.llm_client import LLMClient
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
@@ -41,6 +41,7 @@ from app.services.prompt_builder import (
 from app.services.retrieval_service import retrieve
 from app.services.summarization_service import summarize_document
 from app.services.vector_store import VectorStore
+from app.services.vision_client import diagnose_image
 from app.services.web_search_service import search_web
 
 logger = logging.getLogger(__name__)
@@ -197,9 +198,20 @@ def _match_conversational_reply(query: str) -> str | None:
     return None
 
 
+def _build_diagnosis_query(prediction: VisionPrediction, user_query: str | None) -> str:
+    """Turn a vision prediction into the query fed to the existing
+    retrieval pipeline. Includes crop, not just disease name: several
+    LeafSense classes share a disease name across crops (e.g.
+    "Bacterial_spot" exists for both peach and tomato, with different
+    corpus content), so crop alone disambiguates which document's chunks
+    should actually match."""
+    base = f"{prediction.disease} on {prediction.crop}" if prediction.disease != "healthy" else f"healthy {prediction.crop}"
+    return f"{base}. {user_query}" if user_query else base
+
+
 @dataclass
 class PlanDecision:
-    action: str  # "conversational" | "retrieve" | "summarize"
+    action: str  # "conversational" | "retrieve" | "summarize" | "diagnose"
     document_id: str | None = None
 
 
@@ -473,6 +485,100 @@ class ChatService:
             web_results=web_results,
         )
 
+    def handle_diagnose(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str,
+        query: str | None = None,
+        history: list[dict] | None = None,
+    ) -> ChatResponse:
+        """Diagnose a plant photo via LeafSense, then run the predicted
+        disease through the same corrective RAG loop handle_query uses —
+        the diagnose action doesn't get its own retrieval/grounding logic,
+        it just supplies a different query to the existing one.
+
+        Image presence is treated as an unambiguous routing signal (unlike
+        _plan's text classification, there's no ambiguity to resolve), so
+        this bypasses _plan() entirely rather than trying to teach it about
+        images; PlanDecision(action="diagnose") is still logged the same
+        way _plan's decisions are, for observability parity.
+
+        If the corpus has no content for the diagnosed crop, this falls
+        through to the same "couldn't find that in the uploaded documents"
+        fallback a normal text query would get for an off-topic question —
+        no special-casing, since it's the same retrieval-then-generate path.
+        """
+        start = time.perf_counter()
+        steps_taken = 1  # planning
+
+        plan = PlanDecision(action="diagnose")
+        logger.info(
+            "plan_decided",
+            extra={"extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}},
+        )
+
+        recent_history = history[-_MAX_HISTORY_TURNS:] if history else None
+
+        try:
+            steps_taken += 1  # vision inference
+            prediction = diagnose_image(image_bytes, filename, content_type)
+
+            diagnosis_query = _build_diagnosis_query(prediction, query)
+
+            steps_taken += 1  # retrieval
+            chunks = retrieve(diagnosis_query, self._vector_store)
+
+            steps_taken += 1  # grading
+            grade = self._grade_retrieval(diagnosis_query, chunks)
+
+            web_results: list[WebSearchResult] = []
+            web_search_attempted = False
+            if grade != "good" and settings.web_search_enabled:
+                web_results = self._search_web(diagnosis_query)
+                web_search_attempted = True
+                steps_taken += 1  # web search
+
+            answer = self._generate(diagnosis_query, chunks, recent_history, web_results=web_results)
+            llm_calls = 1
+            steps_taken += 1  # generation
+
+            answer, llm_calls, steps_taken, web_results, web_search_attempted = self._correct(
+                diagnosis_query,
+                chunks,
+                answer,
+                recent_history,
+                web_results,
+                web_search_attempted,
+                llm_calls,
+                steps_taken,
+            )
+        except AppError:
+            # Includes VisionServiceError from diagnose_image, alongside the
+            # same retrieval/prompt/LLM exceptions handle_query can raise.
+            raise
+        except Exception as exc:
+            raise ChatServiceError(f"Unexpected error while handling image diagnosis: {exc}") from exc
+
+        tool_used = "web_search" if web_results else "diagnose"
+        return self._respond(
+            answer=answer,
+            retrieved_chunks=chunks,
+            query=diagnosis_query,
+            query_type="diagnose",
+            tool_used=tool_used,
+            steps_taken=steps_taken,
+            start=start,
+            web_results=web_results,
+            diagnosis=DiagnosisInfo(
+                raw_class=prediction.raw_class,
+                crop=prediction.crop,
+                disease=prediction.disease,
+                confidence=prediction.confidence,
+                low_confidence=prediction.low_confidence,
+            ),
+        )
+
     def _respond(
         self,
         *,
@@ -484,27 +590,33 @@ class ChatService:
         steps_taken,
         start,
         web_results: list[WebSearchResult] | None = None,
+        diagnosis: DiagnosisInfo | None = None,
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
         web_results = web_results or []
         sources = _source_references(retrieved_chunks) + _web_source_references(web_results)
         answer_source = _answer_source(retrieved_chunks, web_results)
 
-        logger.info(
-            "chat_query_handled",
-            extra={
-                "extra_fields": {
-                    "query_length": len(query),
-                    "query_type": query_type,
-                    "tool_used": tool_used,
-                    "steps_taken": steps_taken,
-                    "retrieved_chunk_count": len(retrieved_chunks),
-                    "web_result_count": len(web_results),
-                    "answer_source": answer_source,
-                    "processing_duration": round(processing_duration, 4),
+        log_fields = {
+            "query_length": len(query),
+            "query_type": query_type,
+            "tool_used": tool_used,
+            "steps_taken": steps_taken,
+            "retrieved_chunk_count": len(retrieved_chunks),
+            "web_result_count": len(web_results),
+            "answer_source": answer_source,
+            "processing_duration": round(processing_duration, 4),
+        }
+        if diagnosis is not None:
+            log_fields.update(
+                {
+                    "diagnosis_crop": diagnosis.crop,
+                    "diagnosis_disease": diagnosis.disease,
+                    "diagnosis_confidence": diagnosis.confidence,
+                    "diagnosis_low_confidence": diagnosis.low_confidence,
                 }
-            },
-        )
+            )
+        logger.info("chat_query_handled", extra={"extra_fields": log_fields})
 
         return ChatResponse(
             answer=answer,
@@ -514,4 +626,5 @@ class ChatService:
             tool_used=tool_used,
             steps_taken=steps_taken,
             answer_source=answer_source,
+            diagnosis=diagnosis,
         )

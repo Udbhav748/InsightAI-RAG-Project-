@@ -66,3 +66,13 @@ class WebSearchResult(BaseModel):
     title: str = Field(..., description="Title of the web search result.")
     url: str = Field(..., description="URL of the web search result.")
     snippet: str = Field(..., description="Snippet/summary text of the web search result.")
+
+
+class VisionPrediction(BaseModel):
+    raw_class: str = Field(..., description="Raw class label as returned by LeafSense (e.g. 'Apple___Apple_scab').")
+    crop: str = Field(..., description="Plain-language crop name mapped from raw_class (e.g. 'apple').")
+    disease: str = Field(..., description="Plain-language disease name mapped from raw_class (e.g. 'apple scab').")
+    confidence: float = Field(..., description="Model confidence for the predicted class, in [0, 1].")
+    low_confidence: bool = Field(
+        ..., description="True if confidence is below Settings.vision_confidence_threshold."
+    )

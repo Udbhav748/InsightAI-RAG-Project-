@@ -46,6 +46,16 @@ class SourceReference(BaseModel):
     )
 
 
+class DiagnosisInfo(BaseModel):
+    raw_class: str = Field(..., description="Raw class label as returned by LeafSense.")
+    crop: str = Field(..., description="Plain-language crop name, e.g. 'peach'.")
+    disease: str = Field(..., description="Plain-language disease name, e.g. 'bacterial spot'.")
+    confidence: float = Field(..., description="Model confidence for the predicted class, in [0, 1].")
+    low_confidence: bool = Field(
+        ..., description="True if confidence is below Settings.vision_confidence_threshold."
+    )
+
+
 class ChatResponse(BaseModel):
     answer: str
     retrieved_chunks: list[RetrievedChunk]
@@ -57,6 +67,11 @@ class ChatResponse(BaseModel):
         "documents",
         description="Whether the answer drew on retrieved document chunks, web search "
         "results, or both. Always 'documents' for non-retrieval actions.",
+    )
+    diagnosis: DiagnosisInfo | None = Field(
+        None,
+        description="Present only for image-diagnosis requests (POST /chat/diagnose) — "
+        "the LeafSense prediction that produced this response's retrieval query.",
     )
 
 
