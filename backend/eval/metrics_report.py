@@ -1,6 +1,6 @@
 """Parses the backend's JSON logs and prints a lightweight metrics report:
-latency percentiles, error rate by taxonomy_category, and total LLM token
-usage/cost.
+latency percentiles, error rate by taxonomy_category, total LLM token
+usage/cost, and Acceptance Rate from chat feedback.
 
 This is a stand-in for real observability, not a replacement for it — in
 production you'd ship these same structured log lines to something like
@@ -17,6 +17,11 @@ Usage (from backend/):
 
     # or pipe directly:
     cat app.log | python eval/metrics_report.py
+
+Acceptance Rate is read separately, from backend/feedback/feedback.jsonl
+(written by POST /chat/feedback — see app/services/feedback_service.py),
+not from the log file argument above:
+    python eval/metrics_report.py app.log --feedback-file feedback/feedback.jsonl
 """
 
 import argparse
@@ -24,6 +29,13 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+# Mirrors Settings.feedback_dir_name / feedback_filename's defaults
+# (app/core/config.py) without importing app.core.config itself — this
+# script is otherwise dependency-free (no .env/Settings needed to just
+# parse log files), and the default here is only a convenience;
+# --feedback-file overrides it for a non-default FEEDBACK_DIR_NAME.
+DEFAULT_FEEDBACK_PATH = Path(__file__).resolve().parents[1] / "feedback" / "feedback.jsonl"
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -123,12 +135,45 @@ def report_tokens_and_cost(records: list[dict]) -> None:
     print()
 
 
+def report_acceptance_rate(feedback_path: Path) -> None:
+    """Acceptance Rate = thumbs-up ÷ total feedback events — the LLMOps
+    acceptance-rate metric. Reads backend/feedback/feedback.jsonl, one
+    JSON feedback event per line (see app/services/feedback_service.py)."""
+    print("=== Acceptance Rate (chat feedback) ===")
+    if not feedback_path.is_file():
+        print(f"No feedback file found at {feedback_path}.\n")
+        return
+
+    lines = feedback_path.read_text(encoding="utf-8").splitlines()
+    events = parse_log_lines(lines)
+    ratings = [event.get("rating") for event in events]
+    ups = sum(1 for rating in ratings if rating == "up")
+    downs = sum(1 for rating in ratings if rating == "down")
+    total = ups + downs
+
+    if total == 0:
+        print("No feedback events found.\n")
+        return
+
+    acceptance_rate = ups / total
+    print(f"  up:               {ups}")
+    print(f"  down:             {downs}")
+    print(f"  total:            {total}")
+    print(f"  Acceptance Rate:  {acceptance_rate:.4f} ({acceptance_rate * 100:.1f}%)")
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "log_file",
         nargs="?",
         help="Path to a JSON log file (one JSON object per line). Reads stdin if omitted.",
+    )
+    parser.add_argument(
+        "--feedback-file",
+        default=str(DEFAULT_FEEDBACK_PATH),
+        help=f"Path to the feedback JSONL file (default: {DEFAULT_FEEDBACK_PATH}).",
     )
     args = parser.parse_args()
 
@@ -148,6 +193,7 @@ def main() -> None:
     report_latency(records)
     report_error_rate_by_category(records)
     report_tokens_and_cost(records)
+    report_acceptance_rate(Path(args.feedback_file))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Pydantic request/response schemas for API validation and serialization."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -35,13 +36,29 @@ class ChatRequest(BaseModel):
     )
 
 
+class SourceReference(BaseModel):
+    document_id: str
+    chunk_id: str
+    excerpt: str = Field(..., description="First ~200 characters of the cited chunk's text.")
+
+
 class ChatResponse(BaseModel):
     answer: str
     retrieved_chunks: list[RetrievedChunk]
-    sources: list[str]
+    sources: list[SourceReference]
     processing_time: float
     tool_used: str
     steps_taken: int
+
+
+class FeedbackRequest(BaseModel):
+    message_id: str = Field(..., min_length=1)
+    rating: Literal["up", "down"]
+    comment: str | None = None
+
+
+class FeedbackResponse(BaseModel):
+    status: str
 
 
 class DocumentProcessingResponse(BaseModel):

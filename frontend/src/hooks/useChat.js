@@ -48,7 +48,6 @@ export default function useChat() {
           role: 'assistant',
           content: response.answer,
           sources: response.sources ?? [],
-          retrievedChunks: response.retrieved_chunks ?? [],
         },
       ])
     } catch (error) {

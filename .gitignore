@@ -19,6 +19,9 @@ backend/vector_store/
 # Eval run outputs (timestamped, regenerated per run)
 backend/eval/results/*.json
 
+# Chat feedback events (local append-only log, not for GitHub)
+backend/feedback/*.jsonl
+
 # Node
 node_modules/
 frontend/dist/
