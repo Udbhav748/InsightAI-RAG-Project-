@@ -1,10 +1,15 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Copy, RotateCcw, Sparkles, User } from 'lucide-react'
+import { Check, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
 import SourceReferences from './SourceReferences'
+import { sendFeedback } from '../../services/feedbackService'
+import useToast from '../../hooks/useToast'
+import getErrorMessage from '../../utils/errorMessage'
 
 export default function ChatBubble({ message, isLast, onRegenerate }) {
   const [copied, setCopied] = useState(false)
+  const [feedback, setFeedback] = useState(null) // null | 'up' | 'down'
+  const { showToast } = useToast()
   const isUser = message.role === 'user'
 
   const handleCopy = async () => {
@@ -14,6 +19,17 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
       setTimeout(() => setCopied(false), 1500)
     } catch {
       // Clipboard API unavailable — silently ignore, copy is a nicety.
+    }
+  }
+
+  const handleFeedback = async (rating) => {
+    if (feedback) return // already rated — send once per message
+    setFeedback(rating) // optimistic + disables both buttons immediately
+    try {
+      await sendFeedback(message.id, rating)
+    } catch (error) {
+      setFeedback(null) // let the user retry
+      showToast(getErrorMessage(error, 'Could not record feedback.'), 'error')
     }
   }
 
@@ -43,9 +59,7 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
           }
         >
           <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-          {!isUser && (
-            <SourceReferences sources={message.sources} retrievedChunks={message.retrievedChunks} />
-          )}
+          {!isUser && <SourceReferences sources={message.sources} />}
         </div>
 
         {!isUser && (
@@ -67,6 +81,38 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
                 <RotateCcw size={12} strokeWidth={1.75} />
                 Regenerate
               </button>
+            )}
+            {!message.isError && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('up')}
+                  disabled={feedback != null}
+                  aria-pressed={feedback === 'up'}
+                  aria-label="Good response"
+                  className={`flex items-center rounded-lg p-1.5 transition-colors disabled:pointer-events-none ${
+                    feedback === 'up'
+                      ? 'text-success'
+                      : 'text-slate-400 hover:bg-slate-900/5 hover:text-slate-600 disabled:opacity-30 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-secondary'
+                  }`}
+                >
+                  <ThumbsUp size={12} strokeWidth={1.75} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('down')}
+                  disabled={feedback != null}
+                  aria-pressed={feedback === 'down'}
+                  aria-label="Bad response"
+                  className={`flex items-center rounded-lg p-1.5 transition-colors disabled:pointer-events-none ${
+                    feedback === 'down'
+                      ? 'text-danger'
+                      : 'text-slate-400 hover:bg-slate-900/5 hover:text-slate-600 disabled:opacity-30 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-secondary'
+                  }`}
+                >
+                  <ThumbsDown size={12} strokeWidth={1.75} />
+                </button>
+              </>
             )}
           </div>
         )}

@@ -6,13 +6,15 @@ embedding call are stubbed out — no real Gemini or sentence-transformers
 calls happen here, so this suite runs fast and offline.
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
 from app.models.document import EmbeddedChunk
-from app.models.schemas import ChatResponse, DocumentDeleteResponse
+from app.models.schemas import ChatResponse, DocumentDeleteResponse, FeedbackResponse
 from app.services.faiss_vector_store import FAISSVectorStore
 from tests.conftest import assert_matches_schema
 
@@ -71,7 +73,7 @@ def seeded_vector_store(tmp_path):
 
 
 @pytest.fixture
-def client(monkeypatch, seeded_vector_store):
+def client(monkeypatch, seeded_vector_store, tmp_path):
     """A TestClient wired to the seeded, tmp_path-backed vector store and
     stubbed LLM/embedding calls — never touches the real vector store,
     Gemini, or the sentence-transformers model."""
@@ -88,8 +90,18 @@ def client(monkeypatch, seeded_vector_store):
     monkeypatch.setattr("app.api.v1.routes.query.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.retrieval_service.embed_query", lambda query: FAKE_EMBEDDING)
 
+    # Feedback events go to a tmp_path file, never the real
+    # backend/feedback/feedback.jsonl. record_feedback() looks these up as
+    # module globals at call time, so patching them here (rather than
+    # passing a path in) is enough even though query.py imported the
+    # function by name.
+    feedback_path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr("app.services.feedback_service.FEEDBACK_DIR", tmp_path)
+    monkeypatch.setattr("app.services.feedback_service.FEEDBACK_PATH", feedback_path)
+
     with TestClient(app) as test_client:
         test_client.fake_llm = fake_llm
+        test_client.feedback_path = feedback_path
         yield test_client
 
 
@@ -146,9 +158,62 @@ class TestChat:
 
         assert payload["answer"] == client.fake_llm.response_text
         assert payload["tool_used"] == "retrieval"
-        assert payload["sources"] == [SEEDED_DOCUMENT_ID]
+        assert payload["sources"] == [
+            {
+                "document_id": SEEDED_DOCUMENT_ID,
+                "chunk_id": "chunk-1",
+                "excerpt": SEEDED_CHUNK_TEXT,
+            }
+        ]
         assert payload["steps_taken"] >= 3  # plan + retrieve + generate
         assert len(client.fake_llm.calls) == 1  # no reflection retry needed
+
+
+class TestChatFeedback:
+    def test_valid_feedback_is_recorded(self, client):
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-1-123", "rating": "up", "comment": "Spot on."},
+        )
+        assert response.status_code == 200
+
+        payload = response.json()
+        assert_matches_schema(FeedbackResponse, payload)
+        assert payload == {"status": "recorded"}
+
+        lines = client.feedback_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["message_id"] == "msg-1-123"
+        assert event["rating"] == "up"
+        assert event["comment"] == "Spot on."
+
+    def test_comment_is_optional(self, client):
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-2-456", "rating": "down"},
+        )
+        assert response.status_code == 200
+        assert json.loads(client.feedback_path.read_text(encoding="utf-8"))["comment"] is None
+
+    def test_invalid_rating_returns_422(self, client):
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-3-789", "rating": "sideways"},
+        )
+        assert response.status_code == 422
+        assert not client.feedback_path.exists()
+
+    def test_missing_api_key_returns_401(self, client):
+        response = client.post(
+            "/chat/feedback",
+            json={"message_id": "msg-4-000", "rating": "up"},
+        )
+        assert response.status_code == 401
+        assert not client.feedback_path.exists()
 
 
 class TestDeleteDocument:

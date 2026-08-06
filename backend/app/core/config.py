@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Directory (relative to backend/) where uploaded files are stored.
     upload_dir_name: str = "uploads"
 
+    # Directory (relative to backend/) where chat feedback events are appended.
+    feedback_dir_name: str = "feedback"
+
+    # Filename for the feedback JSONL file, inside feedback_dir_name.
+    feedback_filename: str = "feedback.jsonl"
+
     # Maximum accepted upload size, in megabytes.
     max_upload_size_mb: int = 20
 

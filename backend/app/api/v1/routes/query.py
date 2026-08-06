@@ -3,12 +3,13 @@
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.auth import require_api_key
 from app.core.exceptions import VectorStoreNotFoundError
-from app.models.schemas import ChatRequest, ChatResponse
+from app.models.schemas import ChatRequest, ChatResponse, FeedbackRequest, FeedbackResponse
 from app.services.faiss_vector_store import FAISSVectorStore
+from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
@@ -87,3 +88,22 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
 
     return response
+
+
+@router.post("/chat/feedback", response_model=FeedbackResponse)
+def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResponse:
+    record_feedback(feedback.message_id, feedback.rating, feedback.comment)
+
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "feedback_submitted",
+                "path": request.url.path,
+                "message_id": feedback.message_id,
+                "rating": feedback.rating,
+            }
+        },
+    )
+
+    return FeedbackResponse(status="recorded")

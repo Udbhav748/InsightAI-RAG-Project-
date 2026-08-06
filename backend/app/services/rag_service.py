@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from app.core.exceptions import AppError, ChatServiceError
 from app.models.document import RetrievedChunk
-from app.models.schemas import ChatResponse
+from app.models.schemas import ChatResponse, SourceReference
 from app.services.llm_client import LLMClient
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
@@ -125,10 +125,31 @@ _DOCUMENT_ID_RE = re.compile(
 # How many of the most recent conversation turns get sent to the LLM.
 _MAX_HISTORY_TURNS = 6
 
+# Length of the excerpt shown per cited chunk in ChatResponse.sources.
+_EXCERPT_LENGTH = 200
+
 
 def _normalize(query: str) -> str:
     stripped = _PUNCTUATION_RE.sub("", query.lower())
     return _WHITESPACE_RE.sub(" ", stripped).strip()
+
+
+def _excerpt(text: str) -> str:
+    """First ~200 chars of a chunk's text, trimmed at a clean boundary."""
+    stripped = text.strip()
+    if len(stripped) <= _EXCERPT_LENGTH:
+        return stripped
+    return stripped[:_EXCERPT_LENGTH].rstrip() + "…"
+
+
+def _source_references(chunks: list[RetrievedChunk]) -> list[SourceReference]:
+    """One SourceReference per retrieved chunk — chunk-level, not deduped
+    by document, so a citation always points at the specific passage the
+    answer actually drew from."""
+    return [
+        SourceReference(document_id=chunk.document_id, chunk_id=chunk.chunk_id, excerpt=_excerpt(chunk.text))
+        for chunk in chunks
+    ]
 
 
 def _match_conversational_reply(query: str) -> str | None:
@@ -294,7 +315,7 @@ class ChatService:
         self, *, answer, retrieved_chunks, query, query_type, tool_used, steps_taken, start
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
-        sources = sorted({chunk.document_id for chunk in retrieved_chunks})
+        sources = _source_references(retrieved_chunks)
 
         logger.info(
             "chat_query_handled",
