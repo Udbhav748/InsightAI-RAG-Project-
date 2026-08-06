@@ -1,0 +1,37 @@
+name: CI
+
+"on": push
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Dummy values: Settings() requires both fields to be non-empty, but
+      # the test suite never makes a real Gemini/embedding call — GeminiClient
+      # and embed_query are stubbed out in tests/test_main.py, so no live
+      # key is needed here.
+      GEMINI_API_KEY: ci-test-key
+      API_KEY: ci-test-key
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend requirements
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
+
+      # TODO: run backend/eval/run_eval.py in CI once there's a live
+      # GEMINI_API_KEY safe to spend quota with (the dummy key above won't
+      # work — the eval harness calls the real Gemini API) and a way to
+      # seed the vector store with an indexed document beforehand. See
+      # backend/eval/README.md for both preconditions.

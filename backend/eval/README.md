@@ -1,6 +1,26 @@
 # Evaluation harness
 
-A small offline eval for `ChatService` (`app/services/rag_service.py`): it
+This directory has two independent tools:
+
+- `run_eval.py` — an offline eval for `ChatService` (see below): checks
+  whether the planner (`_plan`) routes queries to the right tool, and
+  whether the resulting answers are on-topic, grounded, and resistant to
+  prompt injection.
+- `metrics_report.py` — parses the backend's own JSON logs (stdout) and
+  prints latency percentiles, error rate by `taxonomy_category`, and total
+  LLM token usage/cost. A stand-in for real observability — in production
+  you'd ship these same structured log lines to Prometheus/Grafana (or an
+  APM) instead of grepping log files after the fact. Run it against a
+  captured log file:
+
+  ```bash
+  uvicorn app.main:app | tee app.log   # one terminal, generate some traffic
+  python eval/metrics_report.py app.log   # another terminal
+  ```
+
+## `run_eval.py`
+
+An offline eval for `ChatService` (`app/services/rag_service.py`): it
 checks whether the planner (`_plan`) routes queries to the right tool, and
 whether the resulting answers are on-topic, grounded, and resistant to
 prompt injection.

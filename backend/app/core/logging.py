@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timezone
 
 from app.core.config import settings
+from app.core.request_context import request_id_var
 
 
 class JSONFormatter(logging.Formatter):
@@ -21,6 +22,13 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        # Set by the request-ID middleware (see main.py) for the duration
+        # of the request; every log line emitted while handling it picks
+        # this up automatically, with no call site passing it explicitly.
+        request_id = request_id_var.get()
+        if request_id is not None:
+            payload["request_id"] = request_id
 
         extra_fields = getattr(record, "extra_fields", None)
         if extra_fields:

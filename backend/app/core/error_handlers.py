@@ -25,6 +25,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                     "path": request.url.path,
                     "status_code": exc.status_code,
                     "detail": exc.detail,
+                    "taxonomy_category": exc.taxonomy_category,
                 }
             },
         )

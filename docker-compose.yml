@@ -1,0 +1,43 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_vector_store:/app/vector_store
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Cold-importing torch/transformers/sentence-transformers before
+      # uvicorn even starts listening can take 30-45s+ on a slow disk —
+      # give it real headroom before the first probe counts against retries.
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vite bakes VITE_* values into the JS bundle at build time, and
+        # that bundle runs in the browser on the host — not inside the
+        # Docker network — so these must point wherever the browser can
+        # reach the backend (localhost:8000 via the port mapping above),
+        # not the in-network hostname "backend". Override with a root
+        # .env or `VITE_API_KEY=... docker compose up --build` if needed
+        # (VITE_API_KEY must match backend/.env's API_KEY).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_API_KEY: ${VITE_API_KEY:-}
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_uploads:
+  backend_vector_store:

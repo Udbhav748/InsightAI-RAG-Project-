@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # Timeout, in seconds, for Gemini API calls.
     gemini_timeout_seconds: int = 30
 
+    # Estimated USD cost per 1,000 tokens (prompt + completion combined),
+    # used only to log a rough cost estimate per generation — not actual
+    # billed usage. Default is a placeholder; set to your model's real
+    # blended rate.
+    cost_per_1k_tokens: float = 0.00025
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

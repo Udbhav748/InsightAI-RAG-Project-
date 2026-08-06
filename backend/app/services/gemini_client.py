@@ -85,6 +85,15 @@ class GeminiClient(LLMClient):
 
         processing_duration = time.perf_counter() - start
 
+        # usage_metadata can be absent for some response shapes (e.g. certain
+        # safety-filtered paths); default to 0 rather than letting a missing
+        # field break logging for an otherwise-successful generation.
+        usage = getattr(response, "usage_metadata", None)
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or 0
+        completion_tokens = getattr(usage, "candidates_token_count", None) or 0
+        total_tokens = prompt_tokens + completion_tokens
+        estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
+
         logger.info(
             "llm_generation_completed",
             extra={
@@ -93,6 +102,10 @@ class GeminiClient(LLMClient):
                     "prompt_length": len(prompt),
                     "response_length": len(text),
                     "processing_duration": round(processing_duration, 4),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "estimated_cost_usd": estimated_cost_usd,
                 }
             },
         )
