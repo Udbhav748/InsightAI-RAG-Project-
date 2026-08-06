@@ -68,6 +68,7 @@ A document uploaded through `/upload` is chunked, embedded, and written into the
 
 - **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request.
 - **Grounded chat** — every answer is generated only from retrieved chunks, with the source document and matched excerpts shown alongside the response.
+- **Hybrid retrieval** — FAISS semantic search fused with a BM25 lexical index by default (`HYBRID_SEARCH_ENABLED`), plus an opt-in cross-encoder re-ranking stage (`RERANKING_ENABLED`). Both are config-gated specifically so they've been A/B'd against a semantic-only baseline — see `docs/OPERATIONS.md`'s "Retrieval ablation" for the measured Precision@5/Recall@5/MRR numbers behind the defaults.
 - **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context, and an ungrounded answer gets one capped regeneration attempt before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
 - **Conversational query routing** — small talk and meta-questions are handled without spending a retrieval + generation round trip on them.
 - **Document management** — browse everything you've uploaded, see page/chunk counts, and delete a document (which also removes its vectors from the index).
@@ -181,6 +182,8 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `RETRIEVAL_MIN_SCORE` | `0.3` | Minimum cosine similarity to keep a retrieved chunk. |
 | `RETRIEVAL_GRADE_THRESHOLD` | `0.5` | Minimum top-chunk score for retrieval to grade `"good"`. Below it (but above `RETRIEVAL_MIN_SCORE`), retrieval grades `"weak"` — the corrective loop's trigger for the web search fallback below. |
 | `WEB_SEARCH_ENABLED` | `false` | Enables the web search fallback for `"weak"`/`"insufficient"` retrieval grades. Off by default. |
+| `HYBRID_SEARCH_ENABLED` | `true` | Fuses FAISS semantic search with a BM25 lexical index instead of semantic search alone. On by default — a measured, no-downside win; see `docs/OPERATIONS.md`'s "Retrieval ablation." |
+| `RERANKING_ENABLED` | `false` | Re-scores the retrieval candidate pool with a cross-encoder before returning the top results. Off by default — a real but thinly-evidenced (n=7) gain against a real per-request cost; see the same ablation section. |
 | `WEB_SEARCH_RESULT_COUNT` | `3` | Web results fetched when the fallback fires. |
 | `WEB_SEARCH_TIMEOUT_SECONDS` | `10` | Timeout for the web search call. |
 | `GEMINI_MODEL_NAME` | `gemini-3.5-flash` | Gemini model used for answer generation. |

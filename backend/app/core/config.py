@@ -113,6 +113,41 @@ class Settings(BaseSettings):
     # Timeout, in seconds, for the web search call.
     web_search_timeout_seconds: int = 10
 
+    # Enables hybrid search: fuse FAISS semantic search with a BM25 lexical
+    # index (services/hybrid_search.py) instead of semantic search alone.
+    # Defaults on: the ablation in docs/OPERATIONS.md's "Retrieval
+    # ablation" showed it improving Precision@5/Recall@5/MRR over the
+    # semantic-only baseline with no measured downside, and BM25 adds no
+    # extra model/network dependency — cheap enough to ship as the
+    # default rather than leave as an unproven opt-in. Still config-gated
+    # so it can be A/B'd against the baseline (or turned off) via the
+    # eval harness.
+    hybrid_search_enabled: bool = True
+
+    # Weight given to the (min-max normalized) semantic score in hybrid
+    # fusion; BM25's weight is 1 - this value. Both scores are normalized
+    # to [0, 1] before combining, so these weights are directly comparable.
+    hybrid_semantic_weight: float = 0.6
+
+    # Enables cross-encoder re-ranking (services/reranking_service.py) of
+    # retrieval's candidate pool. Off by default — unlike hybrid search,
+    # this stays opt-in: the ablation showed a real Precision@5 gain
+    # (0.37 -> 0.40) but only at n=7 queries, and re-ranking has a real
+    # operational cost hybrid search doesn't (a second model load, plus
+    # cross-encoder inference on every retrieve-action request) — not
+    # enough evidence yet to default every request into paying that cost.
+    # See docs/OPERATIONS.md's "Retrieval ablation" before flipping this.
+    reranking_enabled: bool = False
+
+    # Cross-encoder model used for re-ranking.
+    reranking_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+    # Candidate pool size for hybrid search (per retriever, before fusion)
+    # and for reranking (before narrowing back to retrieval_top_k). A
+    # wider pool than the final top_k gives fusion/reranking real material
+    # to work with instead of just re-ordering an already-narrow shortlist.
+    retrieval_candidate_k: int = 20
+
     # Gemini model used for text generation.
     gemini_model_name: str = "gemini-3.5-flash"
 

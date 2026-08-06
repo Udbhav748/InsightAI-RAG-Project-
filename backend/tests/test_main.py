@@ -89,6 +89,12 @@ def client(monkeypatch, seeded_vector_store, tmp_path):
     )
     monkeypatch.setattr("app.api.v1.routes.query.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.retrieval_service.embed_query", lambda query: FAKE_EMBEDDING)
+    # hybrid_search_enabled defaults to True (see docs/OPERATIONS.md's
+    # "Retrieval ablation"), and hybrid_search.py imports embed_query into
+    # its own namespace rather than going through retrieval_service's —
+    # the patch above alone wouldn't stop this test from loading the real
+    # sentence-transformers model via the hybrid path.
+    monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: FAKE_EMBEDDING)
 
     # Feedback events go to a tmp_path file, never the real
     # backend/feedback/feedback.jsonl. record_feedback() looks these up as
