@@ -174,6 +174,22 @@ class Settings(BaseSettings):
     # blended rate.
     cost_per_1k_tokens: float = 0.00025
 
+    # Base URL of the LeafSense vision service (a separate FastAPI process,
+    # its own TensorFlow/Keras stack — see services/vision_client.py).
+    # Defaults to 8001, NOT LeafSense's own default of 8000: LeafSense's
+    # backend/main.py hardcodes port 8000 when run directly, which collides
+    # with this backend's own default port. Start LeafSense with
+    # `uvicorn main:app --port 8001` when running both services locally.
+    vision_service_url: str = "http://localhost:8001"
+
+    # Timeout, in seconds, for calls to the vision service.
+    vision_service_timeout_seconds: int = 15
+
+    # Below this confidence, diagnose_image() still returns its prediction
+    # but flags it low_confidence=True (see models.document.VisionPrediction)
+    # rather than silently presenting an uncertain guess as settled.
+    vision_confidence_threshold: float = 0.5
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

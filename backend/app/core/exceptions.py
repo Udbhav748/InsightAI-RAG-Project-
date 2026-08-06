@@ -121,6 +121,11 @@ class RerankingError(AppError):
     taxonomy_category = "tool"
 
 
+class VisionServiceError(AppError):
+    status_code = 502
+    taxonomy_category = "tool"
+
+
 class PromptGenerationError(AppError):
     status_code = 400
     taxonomy_category = "prompt"
