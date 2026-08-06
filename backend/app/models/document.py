@@ -25,6 +25,9 @@ class ExtractedDocument(BaseModel):
     extracted_text: str = Field(..., description="Full text extracted from the document, in page order.")
     total_pages: int = Field(..., description="Total number of pages in the source document.")
     extracted_characters: int = Field(..., description="Character count of extracted_text.")
+    pages_ocred: int = Field(
+        ..., description="Number of pages that had no extractable text layer and were recovered via OCR."
+    )
 
 
 class DocumentChunk(BaseModel):

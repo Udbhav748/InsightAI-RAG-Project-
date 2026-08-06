@@ -66,7 +66,7 @@ A document uploaded through `/upload` is chunked, embedded, and written into the
 
 ## Features
 
-- **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request.
+- **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request. Pages with no extractable text layer (scanned/image-only PDFs) fall back to OCR (`document_service.py`, pytesseract/tesseract) automatically — no separate upload path or user action needed.
 - **Grounded chat** — every answer is generated only from retrieved chunks, with the source document and matched excerpts shown alongside the response.
 - **Hybrid retrieval** — FAISS semantic search fused with a BM25 lexical index by default (`HYBRID_SEARCH_ENABLED`), plus an opt-in cross-encoder re-ranking stage (`RERANKING_ENABLED`). Both are config-gated specifically so they've been A/B'd against a semantic-only baseline — see `docs/OPERATIONS.md`'s "Retrieval ablation" for the measured Precision@5/Recall@5/MRR numbers behind the defaults.
 - **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context, and an ungrounded answer gets one capped regeneration attempt before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
@@ -177,6 +177,7 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `FRONTEND_URL` | `http://localhost:5173` | Origin allowed by CORS. |
 | `MAX_UPLOAD_SIZE_MB` | `20` | Maximum accepted PDF size. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Characters per chunk / overlap between chunks. |
+| `OCR_DPI` | `200` | Rasterization DPI for OCR fallback on pages with no text layer. Higher improves accuracy at the cost of extraction time. |
 | `EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2` | Sentence Transformers model. |
 | `RETRIEVAL_TOP_K` | `5` | Chunks retrieved per query by default. |
 | `RETRIEVAL_MIN_SCORE` | `0.3` | Minimum cosine similarity to keep a retrieved chunk. |
@@ -365,8 +366,14 @@ InsightAI-RAG/
 - **Chat history isn't persisted at all.** Kept only in React state
   client-side and sent per-request (last 6 turns); a page refresh loses
   the conversation.
-- **No OCR.** PDF text extraction (PyMuPDF) reads embedded/selectable
-  text only — scanned image-only PDFs extract little or no text.
+- **OCR is a best-effort fallback, not equivalent to real text.** It only
+  runs on pages with no extractable text layer at all — it doesn't
+  improve or re-check pages PyMuPDF already got text from. Accuracy
+  depends on scan quality (skew, resolution, handwriting), and it
+  requires the `tesseract` system binary (installed in
+  `backend/Dockerfile`; not a pip package) — if that binary is missing or
+  broken, ingestion degrades to the pre-OCR behavior (page skipped,
+  logged as a warning) rather than failing the upload.
 - **The corrective loop catches one failure mode.** `ChatService._correct`
   only regenerates when chunks/web-results were available but the answer
   came back empty/fallback — it doesn't catch subtly wrong answers, only
@@ -408,7 +415,7 @@ dashboards) and why.
 - [ ] Persistent, server-side document history (currently tracked per-browser)
 - [ ] Multi-document collections / workspaces
 - [ ] Streaming chat responses
-- [ ] Support for additional file types beyond PDF, including OCR for scanned documents
+- [ ] Support for additional file types beyond PDF (currently PDF-only; scanned/image-only PDFs are handled via OCR, see Features)
 - [ ] Per-user authentication (JWT/RBAC) in place of the single shared API key
 - [ ] Encryption at rest for the vector store and uploaded files
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file

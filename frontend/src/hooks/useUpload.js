@@ -35,7 +35,11 @@ export default function useUpload() {
       // DocumentProcessingResponse carries no timestamp — stamp one
       // locally so Documents can sort/display by upload time.
       addToUploadHistory({ ...result, uploaded_at: new Date().toISOString() })
-      showToast(`${result.original_filename} uploaded successfully.`, 'success')
+      // pages_ocred > 0 means some pages had no text layer (scanned/image
+      // pages) and were recovered via OCR — worth surfacing, since OCR'd
+      // text is lower-fidelity than the document's real text.
+      const ocrNote = result.pages_ocred > 0 ? ` (${result.pages_ocred} page(s) recovered via OCR)` : ''
+      showToast(`${result.original_filename} uploaded successfully${ocrNote}.`, 'success')
     } catch (error) {
       const message = getErrorMessage(error, 'Upload failed. Please try again.')
       setStatus('error')

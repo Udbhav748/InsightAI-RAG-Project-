@@ -6,7 +6,7 @@ const HISTORY_KEY = 'insightai-upload-history'
  * Upload a PDF to the backend, reporting real byte-level progress.
  * @param {File} file
  * @param {(percent: number) => void} [onProgress]
- * @returns {Promise<{document_id: string, original_filename: string, stored_filename: string, file_size: number, upload_timestamp: string, status: string}>}
+ * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, total_embeddings: number, pages_ocred: number, processing_time: number, status: string}>}
  */
 export async function uploadDocument(file, onProgress) {
   const formData = new FormData()

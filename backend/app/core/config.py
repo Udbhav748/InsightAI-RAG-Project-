@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     # Character overlap between consecutive chunks.
     chunk_overlap: int = 200
 
+    # DPI used to rasterize a page for OCR (document_service.py), when the
+    # page has no extractable text layer (scanned/image-only PDFs).
+    # Higher improves OCR accuracy at the cost of extraction time; 200 is
+    # tesseract's usual sweet spot.
+    ocr_dpi: int = 200
+
     # Sentence Transformers model used to generate chunk embeddings.
     embedding_model_name: str = "all-MiniLM-L6-v2"
 

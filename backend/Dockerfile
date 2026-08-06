@@ -7,8 +7,12 @@ WORKDIR /app
 
 # faiss-cpu and torch (pulled in by sentence-transformers) link against
 # libgomp at runtime, which python:3.11-slim doesn't ship by default.
+# tesseract-ocr is the actual OCR engine pytesseract shells out to — it's
+# a system binary, not a pip package, and document_service.py's OCR
+# fallback degrades gracefully (skips OCR, logs a warning) if it's ever
+# missing, but it's installed here so the image supports it out of the box.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends libgomp1 tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
