@@ -55,7 +55,11 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 5
 
     # Default minimum similarity score a chunk must meet to be returned.
-    retrieval_min_score: float = 0.3
+    # Chunks from a genuinely relevant match typically score ~0.45-0.55 with
+    # all-MiniLM-L6-v2; 0.3 let weakly-related chunks through for off-topic/
+    # conversational-ish queries that don't match any canned phrase in
+    # rag_service.py, producing technically-grounded but irrelevant answers.
+    retrieval_min_score: float = 0.4
 
     # Gemini model used for text generation.
     gemini_model_name: str = "gemini-3.5-flash"
