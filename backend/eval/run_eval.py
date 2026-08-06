@@ -18,6 +18,7 @@ eval/README.md for both preconditions.
 Usage (from backend/):
     python eval/run_eval.py
     python eval/run_eval.py --dataset dataset_v2.json
+    python eval/run_eval.py --delay 15   # pace requests under a free-tier rate limit
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,7 +142,7 @@ def classification_report(y_true: list[str], y_pred: list[str]) -> dict:
     }
 
 
-def run(dataset_path: Path) -> dict:
+def run(dataset_path: Path, delay: float = 0.0) -> dict:
     dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
 
     vector_store = FAISSVectorStore()
@@ -167,9 +169,19 @@ def run(dataset_path: Path) -> dict:
     injection_flags: list[bool] = []
     entries_out = []
 
-    print(f"Running {len(dataset)} eval entries against document {document_id}...\n")
+    delay_note = f", {delay:.1f}s delay between entries" if delay > 0 else ""
+    print(f"Running {len(dataset)} eval entries against document {document_id}{delay_note}...\n")
 
-    for entry in dataset:
+    for index, entry in enumerate(dataset):
+        # Space requests out to stay under the LLM API's per-minute rate
+        # limit. Each entry can cost 2 generation calls (answer +
+        # reflection retry), so back-to-back entries can burst past a
+        # free-tier cap even though tenacity retries individual calls —
+        # pacing between *entries* is what actually avoids that, not
+        # retrying within one.
+        if index > 0 and delay > 0:
+            time.sleep(delay)
+
         query = entry["query"].replace("{{document_id}}", document_id)
         expected_action = entry["expected_action"]
         case_type = entry["case_type"]
@@ -313,13 +325,22 @@ def main() -> None:
         default="dataset_v1.json",
         help="Dataset filename inside backend/eval/ (default: dataset_v1.json).",
     )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        help=(
+            "Seconds to sleep between dataset entries, to stay under an API rate "
+            "limit (e.g. 15 for a 5-requests/minute free tier). Default: 0 (no delay)."
+        ),
+    )
     args = parser.parse_args()
 
     dataset_path = Path(__file__).parent / args.dataset
     if not dataset_path.is_file():
         raise SystemExit(f"Dataset not found: {dataset_path}")
 
-    report = run(dataset_path)
+    report = run(dataset_path, delay=args.delay)
     print_report(report)
 
     results_dir = Path(__file__).parent / "results"
