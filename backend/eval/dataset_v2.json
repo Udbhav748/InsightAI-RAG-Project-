@@ -15,36 +15,42 @@
     "query": "What is a project according to the document?",
     "expected_action": "retrieve",
     "expected_keywords": ["temporary", "unique"],
+    "expected_chunk_keywords": ["temporary", "unique"],
     "case_type": "normal"
   },
   {
     "query": "What is a Work Breakdown Structure?",
     "expected_action": "retrieve",
     "expected_keywords": ["hierarchical", "work breakdown"],
+    "expected_chunk_keywords": ["hierarchical", "work breakdown"],
     "case_type": "normal"
   },
   {
     "query": "What is a Business Case in project management?",
     "expected_action": "retrieve",
     "expected_keywords": ["feasibility", "economic"],
+    "expected_chunk_keywords": ["feasibility", "economic"],
     "case_type": "normal"
   },
   {
     "query": "If a project's CPI is greater than 1, is that good or bad?",
     "expected_action": "retrieve",
     "expected_keywords": ["favourable", "favorable", "ahead of schedule", "under budget"],
+    "expected_chunk_keywords": ["favourable", "favorable", "ahead of schedule", "under budget"],
     "case_type": "normal"
   },
   {
     "query": "Which conflict resolution technique preserves the relationship on minor issues?",
     "expected_action": "retrieve",
     "expected_keywords": ["smooth", "accommodate"],
+    "expected_chunk_keywords": ["smooth", "accommodate"],
     "case_type": "normal"
   },
   {
     "query": "What is Earned Value Management used for?",
     "expected_action": "retrieve",
     "expected_keywords": ["measuring", "forecasting", "performance"],
+    "expected_chunk_keywords": ["measuring", "forecasting", "performance"],
     "case_type": "normal"
   },
   {
@@ -63,6 +69,7 @@
     "query": "So I've been reading through a bunch of project management material lately and I keep getting confused about the monitoring and controlling process group versus the executing process group, especially when it comes to risk — like, I understand you identify risks up front during planning, but I'm not totally clear on what actually happens to those risks once the project is underway and things start changing, new risks pop up that nobody planned for, existing risks either go away or turn out to be worse than expected, and someone has to keep track of all of that continuously rather than just once — can you explain, in the context of this document, what risk monitoring actually involves day to day?",
     "expected_action": "retrieve",
     "expected_keywords": ["residual risks", "tracking identified risks", "new risks"],
+    "expected_chunk_keywords": ["residual risks", "tracking identified risks", "new risks"],
     "case_type": "edge"
   },
   {

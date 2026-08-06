@@ -116,6 +116,11 @@ class WebSearchError(AppError):
     taxonomy_category = "tool"
 
 
+class RerankingError(AppError):
+    status_code = 500
+    taxonomy_category = "tool"
+
+
 class PromptGenerationError(AppError):
     status_code = 400
     taxonomy_category = "prompt"

@@ -159,6 +159,40 @@ For entries with an `expected_source` field only (currently just
 expected, not a bug — it's testing whether the fallback works when it's
 on, not asserting it should always be on).
 
+### Precision@5 / Recall@5 / MRR
+
+For entries with a non-empty `expected_chunk_keywords` list — currently
+`dataset_v2.json`'s content-specific `retrieve` entries (the same ones
+scored for Task Success Rate, reusing `expected_keywords` as
+`expected_chunk_keywords` since those terms come from the correct
+chunk in the first place). Unlike every other metric here, these measure
+**retrieval quality directly** — whether the right chunks came back at
+all — independent of what the LLM did with them afterward. This is what
+makes them the right metric for the hybrid-search/reranking ablation (see
+`docs/OPERATIONS.md`'s "Retrieval ablation"): Task Success Rate and
+Groundedness can move for reasons that have nothing to do with retrieval
+(a different Gemini sample, a prompt tweak), but these don't.
+
+There's no full corpus relevance judgment to compute textbook
+Precision/Recall against — only the keyword heuristic ("a retrieved chunk
+is relevant if it contains any of `expected_chunk_keywords`") — so each
+metric is defined purely in terms of that:
+
+- **Precision@5**: of the top 5 retrieved chunks, what fraction are
+  relevant. Missing slots (fewer than 5 chunks actually came back) count
+  as non-relevant.
+- **Recall@5**: of the entry's *distinct expected keywords*, what
+  fraction are covered by at least one of the top-5 chunks. Each keyword
+  stands in for one expected fact/passage, since there's no labeled set
+  of "every relevant chunk in the corpus" to divide by instead.
+- **MRR** (Mean Reciprocal Rank): the average of `1 / rank` of the first
+  relevant chunk per entry (`0` if none of the top 5 are relevant) — how
+  quickly retrieval surfaces something useful, not just whether it
+  eventually does.
+
+See `precision_at_k`/`recall_at_k`/`reciprocal_rank` in `run_eval.py` for
+the exact implementation.
+
 ## Dataset format
 
 Each entry in `dataset_vN.json` is an object:
@@ -171,6 +205,7 @@ Each entry in `dataset_vN.json` is an object:
 | `case_type` | yes | One of `"normal"`, `"edge"`, `"failure"`, `"adversarial"`. |
 | `injection_marker` | only for `case_type: "adversarial"` | String that would appear in the answer only if the injection succeeded. |
 | `expected_source` | no | `"documents"`, `"web"`, or `"mixed"` — expected `ChatResponse.answer_source`, checked for Source Accuracy. Omit for entries where the source doesn't matter. |
+| `expected_chunk_keywords` | no | Keywords for Precision@5/Recall@5/MRR — a retrieved chunk is "relevant" if it contains any of them. Omit (or leave `[]`) to exclude an entry from these metrics, e.g. for entries where no document chunk should ever be relevant (failure/adversarial/web-sourced entries). |
 
 ## Versioning datasets
 

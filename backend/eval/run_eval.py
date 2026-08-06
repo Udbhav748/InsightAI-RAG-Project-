@@ -14,6 +14,13 @@ ChatService._plan (for planner classification) and ChatService.handle_query
   ChatResponse.answer_source ("documents"/"web"/"mixed") match it? Only
   meaningful with Settings.web_search_enabled=true — see dataset_v2.json's
   two web-findable entries and eval/README.md.
+- Precision@5 / Recall@5 / MRR: for entries with expected_chunk_keywords,
+  how good was *retrieval itself* (independent of the generated answer)?
+  A retrieved chunk is "relevant" if it contains any of the entry's
+  expected_chunk_keywords — see precision_at_k/recall_at_k/reciprocal_rank
+  below for exactly what each measures, and eval/README.md for the
+  worked definitions. This is what the "Retrieval ablation" numbers in
+  docs/OPERATIONS.md are built from.
 
 Requires a real GEMINI_API_KEY (this calls the live LLM) and at least one
 document already indexed in the backend's vector store — see
@@ -81,6 +88,52 @@ def is_grounded(answer: str, chunks: list[RetrievedChunk]) -> bool:
     for chunk in chunks:
         chunk_words |= _content_words(chunk.text)
     return bool(answer_words & chunk_words)
+
+
+RETRIEVAL_EVAL_K = 5
+
+# A retrieved chunk is "relevant" if it contains any of an entry's
+# expected_chunk_keywords (case-insensitive substring, via
+# contains_any_keyword). There's no full corpus relevance judgment to
+# compute textbook Precision/Recall against — only this keyword heuristic
+# — so each metric below is defined purely in terms of it:
+#
+#   precision_at_k: what fraction of what was retrieved is relevant.
+#   recall_at_k: what fraction of the *distinct expected keywords* were
+#     covered by at least one retrieved chunk — each keyword stands in
+#     for one expected fact/passage, since there's no labeled set of
+#     "all relevant chunks in the corpus" to divide by instead.
+#   reciprocal_rank: how quickly (at what rank) the first relevant chunk
+#     showed up, 0 if none did within k.
+
+
+def precision_at_k(chunks: list[RetrievedChunk], keywords: list[str], k: int) -> float:
+    """Fraction of the top-k retrieved chunks that are relevant. Missing
+    slots (fewer than k chunks were actually retrieved) count as
+    non-relevant, per the standard P@K convention."""
+    top = chunks[:k]
+    relevant_count = sum(1 for chunk in top if contains_any_keyword(chunk.text, keywords))
+    return relevant_count / k
+
+
+def recall_at_k(chunks: list[RetrievedChunk], keywords: list[str], k: int) -> float:
+    """Fraction of the entry's expected_chunk_keywords covered by at least
+    one of the top-k retrieved chunks."""
+    if not keywords:
+        return 0.0
+    top = chunks[:k]
+    covered = sum(
+        1 for keyword in keywords if any(keyword.lower() in chunk.text.lower() for chunk in top)
+    )
+    return covered / len(keywords)
+
+
+def reciprocal_rank(chunks: list[RetrievedChunk], keywords: list[str], k: int) -> float:
+    """1 / rank of the first top-k chunk that's relevant; 0 if none are."""
+    for rank, chunk in enumerate(chunks[:k], start=1):
+        if contains_any_keyword(chunk.text, keywords):
+            return 1.0 / rank
+    return 0.0
 
 
 def discover_document_id() -> str:
@@ -178,6 +231,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     grounded_flags: list[bool] = []
     injection_flags: list[bool] = []
     source_accuracy_flags: list[bool] = []
+    precision_flags: list[float] = []
+    recall_flags: list[float] = []
+    reciprocal_ranks: list[float] = []
     entries_out = []
 
     delay_note = f", {delay:.1f}s delay between entries" if delay > 0 else ""
@@ -198,6 +254,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         case_type = entry["case_type"]
         keywords = entry.get("expected_keywords") or []
         expected_source = entry.get("expected_source")
+        chunk_keywords = entry.get("expected_chunk_keywords") or []
 
         plan = chat_service._plan(query, history=None)
         y_true.append(expected_action)
@@ -208,6 +265,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         injection_resisted = None
         answer_source = None
         source_correct = None
+        precision = None
+        recall = None
+        rr = None
         answer = ""
         tool_used = "none"
         steps_taken = 0
@@ -236,6 +296,14 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             if expected_source:
                 source_correct = answer_source == expected_source
                 source_accuracy_flags.append(source_correct)
+
+            if chunk_keywords:
+                precision = precision_at_k(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
+                recall = recall_at_k(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
+                rr = reciprocal_rank(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
+                precision_flags.append(precision)
+                recall_flags.append(recall)
+                reciprocal_ranks.append(rr)
         except AppError as exc:
             error = str(exc)
             if keywords:
@@ -247,6 +315,11 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             if expected_source:
                 source_accuracy_flags.append(False)
                 source_correct = False
+            if chunk_keywords:
+                precision, recall, rr = 0.0, 0.0, 0.0
+                precision_flags.append(precision)
+                recall_flags.append(recall)
+                reciprocal_ranks.append(rr)
 
         status = "OK" if error is None else f"ERROR: {error}"
         print(f"[{case_type:11s}] {expected_action:>13s} -> {plan.action:<13s} | {query[:70]!r} | {status}")
@@ -263,6 +336,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "answer_source": answer_source,
                 "expected_source": expected_source,
                 "source_correct": source_correct,
+                "precision_at_5": precision,
+                "recall_at_5": recall,
+                "reciprocal_rank": rr,
                 "error": error,
                 "task_success": task_success,
                 "grounded": grounded,
@@ -285,6 +361,9 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     source_accuracy = (
         sum(source_accuracy_flags) / len(source_accuracy_flags) if source_accuracy_flags else None
     )
+    precision_at_5 = sum(precision_flags) / len(precision_flags) if precision_flags else None
+    recall_at_5 = sum(recall_flags) / len(recall_flags) if recall_flags else None
+    mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else None
 
     report = {
         "dataset": dataset_path.name,
@@ -292,6 +371,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "llm_provider": settings.llm_provider,
         "fallback_llm_provider": settings.fallback_llm_provider,
         "prompt_version": PROMPT_VERSION,
+        "hybrid_search_enabled": settings.hybrid_search_enabled,
+        "reranking_enabled": settings.reranking_enabled,
         "document_id_used": document_id,
         "n_entries": len(dataset),
         "case_type_counts": dict(Counter(entry["case_type"] for entry in dataset)),
@@ -307,6 +388,12 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "injection_resistance_n": len(injection_flags),
         "source_accuracy": round(source_accuracy, 4) if source_accuracy is not None else None,
         "source_accuracy_n": len(source_accuracy_flags),
+        "precision_at_5": round(precision_at_5, 4) if precision_at_5 is not None else None,
+        "precision_at_5_n": len(precision_flags),
+        "recall_at_5": round(recall_at_5, 4) if recall_at_5 is not None else None,
+        "recall_at_5_n": len(recall_flags),
+        "mrr": round(mrr, 4) if mrr is not None else None,
+        "mrr_n": len(reciprocal_ranks),
         "entries": entries_out,
     }
     return report
@@ -349,6 +436,16 @@ def print_report(report: dict) -> None:
         f"{fmt(report['injection_resistance'], report['injection_resistance_n'])}"
     )
     print(f"Source Accuracy:        {fmt(report['source_accuracy'], report['source_accuracy_n'])}")
+
+    print("\n" + "=" * 70)
+    print(
+        f"RETRIEVAL QUALITY METRICS  (hybrid_search_enabled="
+        f"{report['hybrid_search_enabled']}, reranking_enabled={report['reranking_enabled']})"
+    )
+    print("=" * 70)
+    print(f"Precision@5:            {fmt(report['precision_at_5'], report['precision_at_5_n'])}")
+    print(f"Recall@5:               {fmt(report['recall_at_5'], report['recall_at_5_n'])}")
+    print(f"MRR:                    {fmt(report['mrr'], report['mrr_n'])}")
     print("=" * 70 + "\n")
 
 

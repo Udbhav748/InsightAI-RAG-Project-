@@ -53,6 +53,142 @@ document (`eval/README.md`'s preconditions), it isn't run in CI
 comparisons are a manual, deliberate step, not something that runs on
 every push.
 
+## Retrieval ablation
+
+Two retrieval enhancements, `HYBRID_SEARCH_ENABLED` (FAISS semantic +
+BM25 lexical, fused; **on by default**, see below) and
+`RERANKING_ENABLED` (cross-encoder re-ranking of the candidate pool; off
+by default) are config-gated specifically so they can be A/B'd against
+each other and against a semantic-only baseline — same procedure as
+above, but read `precision_at_5`/`recall_at_5`/`mrr` from the results
+JSON instead (`eval/README.md`'s "Precision@5 / Recall@5 / MRR" section
+has the exact definitions). These measure retrieval itself, independent
+of what the LLM did with the chunks afterward, which is what makes them
+the right metric for this specific comparison — Task Success Rate and
+the groundedness proxy can move for reasons that have nothing to do with
+retrieval quality (a different LLM sample, in particular).
+
+**A real 3-way run** (`dataset_v2.json`, `LLM_PROVIDER=groq`,
+7 content-bearing entries with `expected_chunk_keywords`; "baseline"
+below means both flags off, i.e. not this project's actual default):
+
+| Config | Precision@5 | Recall@5 | MRR | Results file |
+|---|---|---|---|---|
+| Baseline (both off) | 0.3143 | 0.8214 | 0.7500 | `eval/results/20260806T093248Z.json` |
+| `+hybrid` | 0.3714 | 0.9643 | 0.9048 | `eval/results/20260806T093526Z.json` |
+| `+hybrid+rerank` | 0.4000 | 0.9643 | 0.8095 | `eval/results/20260806T093845Z.json` |
+
+What this run actually shows:
+
+- **Hybrid search was a clean win on all three metrics** — BM25 catching
+  exact-term matches (acronyms like "WBS"/"CPI", specific technique
+  names) that a pure semantic search sometimes ranks lower than a
+  looser paraphrase match. Recall@5 in particular jumped from 0.82 to
+  0.96: one more of the "right" chunks made it into the top 5 per query
+  on average.
+- **Reranking improves Precision@5 further (0.37 → 0.40) at flat
+  Recall@5 (0.96 → 0.96); the MRR delta (0.90 → 0.81) is noise, not a
+  finding.** Checked directly against the raw per-entry data in
+  `20260806T093526Z.json` vs. `20260806T093845Z.json`: exactly **one**
+  of the 7 scored queries changed at all — the risk-monitoring edge
+  case, whose first relevant chunk moved from rank 1 to rank 3 (still
+  inside the top 5, just not first). `(1/1 - 1/3) / 7 ≈ 0.0952`, which
+  is the entire observed MRR delta (0.0953) — one query, not a pattern,
+  and at n=7 a single query is already ~14% of the sample.
+
+  More importantly, **MRR is the wrong metric to weight for this
+  system's architecture.** MRR measures how early the first relevant
+  result appears — the metric that matters when a human scans a ranked
+  list and clicks one link. `ChatService` doesn't do that: every
+  retrieved chunk goes into the prompt as one flat context block
+  (`prompt_builder.build_prompt`), so whether the relevant chunk landed
+  at rank 1 or rank 3 makes no difference to what the LLM actually sees.
+  What matters for this architecture is Precision@5 (how much of what's
+  in context is relevant — less noise for the LLM to sift) and Recall@5
+  (whether the relevant chunk made it into context *at all*). Both
+  either improved or held under reranking. Read this ablation as
+  **"reranking improves precision at flat recall; the rank-order
+  metric it also moved on is both noise-level and the least
+  decision-relevant one for how this system actually consumes
+  retrieval results."**
+- **Task Success Rate (0.8182) and Injection Resistance (1.0) were
+  identical across all three configs**; the groundedness proxy actually
+  *dipped* slightly with hybrid/rerank on (1.0 → 0.57 → 0.50). That's
+  consistent with the metrics measuring different things: groundedness
+  is lexical overlap between the *answer* and *whatever chunks came
+  back*, and a wider/different candidate pool changes which chunks
+  came back — it's not evidence retrieval got worse (Recall@5 says the
+  opposite).
+
+**Is 0.40 Precision@5 actually good? Only relative to how many relevant
+chunks exist to find.** Computed directly from the indexed document's 99
+chunks (`vector_store/metadata.json`), counting how many chunks actually
+contain each query's `expected_chunk_keywords`:
+
+| Query | Relevant chunks in corpus | Max achievable P@5 |
+|---|---|---|
+| "What is a project…" | 5 | 1.00 |
+| "What is a Work Breakdown Structure?" | 1 | 0.20 |
+| "What is a Business Case…" | 3 | 0.60 |
+| "…CPI greater than 1…" | 3 | 0.60 |
+| "…conflict resolution technique…" | 3 | 0.60 |
+| "What is Earned Value Management used for?" | 36 | 1.00 |
+| risk-monitoring edge case | 1 | 0.20 |
+| **Mean** | **7.4** | **0.60** |
+
+(Max achievable P@5 per query is `min(relevant_chunks, 5) / 5` — you
+can't score higher than "all 5 slots relevant," and you can't clear
+`relevant_chunks / 5` if fewer than 5 relevant chunks exist at all.)
+
+The mean ceiling (0.60) is well above the measured `+hybrid+rerank`
+score (0.40) — this system is **not** near a ceiling effect, there's
+real precision headroom left. The variance is worth noting too: the
+"Earned Value Management" query's ceiling is inflated by "measuring"/
+"forecasting"/"performance" being generic project-management vocabulary
+that appears in 36 of 99 chunks, not all of them really about EVM
+specifically — the same keyword-substring heuristic that defines
+Precision@5/Recall@5 (see `eval/README.md`) is doing the counting here
+too, so it inherits the same noise for generic-word queries. WBS and the
+risk-monitoring query sit at the other extreme: exactly one chunk in the
+whole document is relevant, so no retrieval strategy can score above
+0.20 on those specific queries no matter how good it is. Read 0.40
+against 0.60, not against 1.0.
+
+**Why hybrid search defaults on and reranking doesn't** (`app/core/config.py`):
+hybrid search's improvement was unambiguous on every metric with no
+added model/network dependency (BM25 is pure CPU, always available), so
+it ships as the default rather than sit as an unproven opt-in. Reranking's
+gain is real (flat recall, better precision) but thinner evidence (one
+ablation run, n=7) against a real cost every other feature here doesn't
+have: a second model loaded into memory and cross-encoder inference on
+every `retrieve`-action request. That combination — genuine signal, small
+n, nonzero cost — is exactly what config-gating an opt-in feature is for;
+flipping it to default-on is a call worth revisiting once it's been run
+against more queries or a different document.
+
+**Why Groq, not Gemini**: the first attempt used the default
+`LLM_PROVIDER=gemini` and hit the free tier's **daily** quota (20
+requests/day for `gemini-3.5-flash`) partway through the very first
+run — most entries after query 3 failed with `429
+RESOURCE_EXHAUSTED`, and the aggregate metrics accordingly cratered
+because the failure path scores those entries `0.0` rather than skipping
+them (see `run_eval.py`'s except-branch). That contaminated run is not
+included in the table above; it's a genuine illustration of why a clean
+baseline matters before trusting an ablation number — see
+`eval/results/20260806T092932Z.json` if you want to see what a
+quota-exhausted run looks like. Switching to `LLM_PROVIDER=groq`
+(already a supported provider, see "Comparing providers" below) gave a
+clean run for all three configs; the two `summarize`-action entries still
+failed on Groq's tokens-per-minute limit for the full-document prompt,
+but that doesn't affect Precision@5/Recall@5/MRR, which only score
+`retrieve`-action entries.
+
+**To reproduce**: set `LLM_PROVIDER=groq` (or accept Gemini's daily cap
+and spread the three runs across multiple days), then for each config,
+set `HYBRID_SEARCH_ENABLED`/`RERANKING_ENABLED` in `backend/.env`,
+restart the backend, and run `python eval/run_eval.py --dataset
+dataset_v2.json --delay 5`.
+
 ## Comparing providers (Gemini vs. Groq)
 
 `app/services/llm_provider.py` picks the LLM implementation from

@@ -5,6 +5,13 @@ passing L2-normalized embeddings (see embedding_service), so that inner
 product is equivalent to cosine similarity. Metadata is persisted
 separately as JSON, positionally aligned with vector rows in the index
 (row i <-> metadata[i]).
+
+Also owns a BM25Index (see hybrid_search.py) alongside the FAISS index —
+a second, lexical view over the same chunk texts, rebuilt from self._metadata
+every time it changes (create_index/add_embeddings/delete_document/load),
+since BM25Okapi has no incremental update API. search_bm25() exposes it.
+This BM25 pairing is a FAISSVectorStore-specific capability, not part of
+the VectorStore ABC — see hybrid_search.py's module docstring for why.
 """
 
 import json
@@ -23,6 +30,7 @@ from app.core.exceptions import (
     VectorStoreNotFoundError,
 )
 from app.models.document import EmbeddedChunk, RetrievedChunk
+from app.services.hybrid_search import BM25Index
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -38,10 +46,24 @@ class FAISSVectorStore(VectorStore):
         self.metadata_path = metadata_path or DEFAULT_METADATA_PATH
         self._index: faiss.Index | None = None
         self._metadata: list[dict] = []
+        self._bm25_index = BM25Index()
+
+    def _record_to_chunk(self, record: dict, score: float) -> RetrievedChunk:
+        record_metadata = record["metadata"]
+        text = record_metadata.get("text", "")
+        metadata = {key: value for key, value in record_metadata.items() if key != "text"}
+        return RetrievedChunk(
+            chunk_id=record["chunk_id"],
+            document_id=record["document_id"],
+            text=text,
+            score=score,
+            metadata=metadata,
+        )
 
     def create_index(self, dimension: int) -> None:
         self._index = faiss.IndexFlatIP(dimension)
         self._metadata = []
+        self._bm25_index.rebuild(self._metadata)
 
     def add_embeddings(self, embedded_chunks: list[EmbeddedChunk]) -> None:
         if self._index is None:
@@ -77,6 +99,8 @@ class FAISSVectorStore(VectorStore):
                 f"Vector count ({self._index.ntotal}) and metadata count "
                 f"({len(self._metadata)}) diverged after add_embeddings()."
             )
+
+        self._bm25_index.rebuild(self._metadata)
 
         processing_duration = time.perf_counter() - start
 
@@ -116,23 +140,21 @@ class FAISSVectorStore(VectorStore):
         for score, position in zip(scores[0], positions[0]):
             if position == -1:
                 continue
-
-            record = self._metadata[position]
-            record_metadata = record["metadata"]
-            text = record_metadata.get("text", "")
-            metadata = {key: value for key, value in record_metadata.items() if key != "text"}
-
-            results.append(
-                RetrievedChunk(
-                    chunk_id=record["chunk_id"],
-                    document_id=record["document_id"],
-                    text=text,
-                    score=float(score),
-                    metadata=metadata,
-                )
-            )
+            results.append(self._record_to_chunk(self._metadata[position], float(score)))
 
         return results
+
+    def search_bm25(self, query: str, top_k: int) -> list[RetrievedChunk]:
+        """BM25 lexical search — a FAISSVectorStore-specific capability
+        alongside search() (semantic), not part of the VectorStore ABC.
+        Used by hybrid_search.hybrid_search() when
+        Settings.hybrid_search_enabled. score is BM25's raw score, not a
+        0-1 similarity — callers that fuse it with search()'s scores are
+        responsible for normalizing first (see hybrid_search.py)."""
+        return [
+            self._record_to_chunk(record, score)
+            for record, score in self._bm25_index.search(query, top_k)
+        ]
 
     def delete_document(self, document_id: str) -> int:
         if self._index is None:
@@ -165,6 +187,7 @@ class FAISSVectorStore(VectorStore):
 
         self._index = new_index
         self._metadata = [self._metadata[i] for i in keep_positions]
+        self._bm25_index.rebuild(self._metadata)
 
         processing_duration = time.perf_counter() - start
 
@@ -186,24 +209,13 @@ class FAISSVectorStore(VectorStore):
         if self._index is None:
             return []
 
-        matches = []
-        for record in self._metadata:
-            if record["document_id"] != document_id:
-                continue
-            record_metadata = record["metadata"]
-            text = record_metadata.get("text", "")
-            metadata = {key: value for key, value in record_metadata.items() if key != "text"}
-            matches.append(
-                RetrievedChunk(
-                    chunk_id=record["chunk_id"],
-                    document_id=record["document_id"],
-                    text=text,
-                    # Not a similarity score — there's no query here, this
-                    # is a full-document fetch. 1.0 just signals "included".
-                    score=1.0,
-                    metadata=metadata,
-                )
-            )
+        # score=1.0 isn't a similarity score — there's no query here, this
+        # is a full-document fetch. It just signals "included".
+        matches = [
+            self._record_to_chunk(record, 1.0)
+            for record in self._metadata
+            if record["document_id"] == document_id
+        ]
 
         matches.sort(key=lambda chunk: chunk.metadata.get("chunk_index", 0))
         return matches
@@ -251,6 +263,7 @@ class FAISSVectorStore(VectorStore):
 
         self._index = index
         self._metadata = metadata
+        self._bm25_index.rebuild(self._metadata)
 
     def total_vectors(self) -> int:
         return self._index.ntotal if self._index is not None else 0
