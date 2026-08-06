@@ -76,6 +76,9 @@ class DocumentProcessingResponse(BaseModel):
     total_pages: int
     total_chunks: int
     total_embeddings: int
+    pages_ocred: int = Field(
+        0, description="Number of pages that had no extractable text layer and were recovered via OCR."
+    )
     processing_time: float
     status: str
 

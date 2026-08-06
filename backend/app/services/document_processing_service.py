@@ -38,7 +38,12 @@ class DocumentProcessingService:
 
         file_path = UPLOAD_DIR / uploaded["stored_filename"]
         extracted = extract_text_from_pdf(document_id, file_path)
-        self._log_stage("extraction", document_id, total_pages=extracted["total_pages"])
+        self._log_stage(
+            "extraction",
+            document_id,
+            total_pages=extracted["total_pages"],
+            pages_ocred=extracted["pages_ocred"],
+        )
 
         extracted_document = ExtractedDocument(document_id=document_id, **extracted)
 
@@ -86,6 +91,7 @@ class DocumentProcessingService:
                     "total_pages": extracted["total_pages"],
                     "total_chunks": len(chunks),
                     "total_embeddings": len(embedded_chunks),
+                    "pages_ocred": extracted["pages_ocred"],
                     "processing_duration": round(processing_duration, 4),
                 }
             },
@@ -97,6 +103,7 @@ class DocumentProcessingService:
             total_pages=extracted["total_pages"],
             total_chunks=len(chunks),
             total_embeddings=len(embedded_chunks),
+            pages_ocred=extracted["pages_ocred"],
             processing_time=round(processing_duration, 4),
             status="processed",
         )

@@ -169,8 +169,9 @@ which is exact but means delete cost scales with total index size.
 `document_processing_service.py`). Validation (`validation_service.py`:
 MIME type, size limit, PDF magic bytes) → save to disk
 (`upload_service.py`, UUID filename) → text extraction (`document_service.py`,
-PyMuPDF — reads embedded text only, **not OCR**; a scanned image-only PDF
-extracts little or no text) → chunking (`chunking_service.py`,
+PyMuPDF for pages with an embedded text layer, falling back to OCR
+(pytesseract/tesseract) for pages with none — see the README's Features
+and Known Limitations for what that fallback covers) → chunking (`chunking_service.py`,
 `RecursiveCharacterTextSplitter`, configurable size/overlap) → embedding
 (`embedding_service.py`) → indexing (`faiss_vector_store.py`). PII
 detection (`pii_service.py`: regex for emails, phone numbers,
