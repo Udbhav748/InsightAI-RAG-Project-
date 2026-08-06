@@ -9,8 +9,8 @@ from app.core.auth import require_api_key
 from app.core.exceptions import VectorStoreNotFoundError
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services.faiss_vector_store import FAISSVectorStore
-from app.services.gemini_client import GeminiClient
 from app.services.llm_client import LLMClient
+from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
 from app.services.vector_store import VectorStore
 
@@ -40,8 +40,9 @@ def get_vector_store() -> VectorStore:
 
 @lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
-    """Construct the Gemini client once and reuse it on every request."""
-    return GeminiClient()
+    """Build the configured LLM client (see Settings.llm_provider /
+    fallback_llm_provider) once and reuse it on every request."""
+    return build_llm_client()
 
 
 def get_chat_service() -> ChatService:
