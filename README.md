@@ -68,6 +68,8 @@ A document uploaded through `/upload` is chunked, embedded, and written into the
 
 - **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request. Pages with no extractable text layer (scanned/image-only PDFs) fall back to OCR (`document_service.py`, pytesseract/tesseract) automatically — no separate upload path or user action needed.
 - **Grounded chat** — every answer is generated only from retrieved chunks, with the source document and matched excerpts shown alongside the response.
+- **Streamed, visible agent progress** — `POST /chat/stream` (Server-Sent Events) fans out each pipeline stage (planning, retrieval, grading, web search, generating, reflecting) as it happens, plus the answer token-by-token, instead of one response at the end. The chat UI renders this as a live "agent trace" strip above the forming answer, collapsing into an expandable summary once done.
+- **Plant disease diagnosis from a photo** — `POST /chat/diagnose` classifies an uploaded leaf image via [LeafSense](#running-with-leafsense-image-diagnosis) (a separate vision service) and runs the predicted disease through the same grounded retrieval pipeline as a text question.
 - **Hybrid retrieval** — FAISS semantic search fused with a BM25 lexical index by default (`HYBRID_SEARCH_ENABLED`), plus an opt-in cross-encoder re-ranking stage (`RERANKING_ENABLED`). Both are config-gated specifically so they've been A/B'd against a semantic-only baseline — see `docs/OPERATIONS.md`'s "Retrieval ablation" for the measured Precision@5/Recall@5/MRR numbers behind the defaults.
 - **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context, and an ungrounded answer gets one capped regeneration attempt before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
 - **Conversational query routing** — small talk and meta-questions are handled without spending a retrieval + generation round trip on them.
@@ -251,6 +253,7 @@ the backend's `API_KEY` setting — a missing or wrong key returns `401`.
 | `POST` | `/upload` | required | Upload a PDF — extracts, chunks, embeds, and indexes it. |
 | `DELETE` | `/documents/{document_id}?confirm=true` | required | Remove a document and its vectors from the index. |
 | `POST` | `/chat` | required | Ask a question; returns an answer grounded in retrieved chunks. |
+| `POST` | `/chat/stream` | required | Same as `/chat`, but streamed as Server-Sent Events — pipeline progress and the answer as it's generated, instead of one response at the end. |
 | `POST` | `/chat/diagnose` | required | Upload a plant leaf photo; classifies it via LeafSense, then returns a grounded, cited answer for the predicted disease. |
 | `POST` | `/chat/feedback` | required | Record a thumbs up/down (and optional comment) on a previous answer. |
 
@@ -322,6 +325,35 @@ appear (they're not part of `retrieved_chunks`). A web-sourced entry
 looks like `{"document_id": "web", "chunk_id": "<url>", "excerpt": "...",
 "url": "<url>"}` — `url` is `null` for document citations and set only
 for web ones.
+
+**`POST /chat/stream`** — same request body as `POST /chat` (above), same
+auth, same underlying pipeline. Instead of one JSON response, it returns
+`text/event-stream`: a sequence of SSE `data:` lines, each a JSON object
+with a `type`:
+
+- `{"type": "trace", "stage": "planning"|"retrieval"|"grading"|"web_search"|"generating"|"reflecting", "detail": {...}}`
+  — emitted as the pipeline progresses through each stage. `detail`'s
+  shape depends on the stage, e.g. `{"chunk_count": 5}` for `retrieval`,
+  `{"grade": "good"}` for `grading`. A `"reflecting"` stage means the
+  corrective loop is discarding the current answer attempt and
+  regenerating from scratch — any `answer_chunk` text streamed before it
+  belongs to that discarded attempt, not a continuation of it.
+- `{"type": "answer_chunk", "text": "..."}` — a piece of the answer, in
+  order, as the LLM generates it. Already filtered so the model's own
+  "Sources:" citation list (see `tool_used`/`sources` above) never
+  reaches the client, the same way the non-streaming path strips it.
+- `{"type": "error", "detail": {"error_type": "...", "message": "...", "status_code": 404}}`
+  — emitted instead of `"done"` if the pipeline fails partway. SSE
+  responses commit to a `200` status as soon as streaming starts, so a
+  failure can't become an HTTP error status the way it would on
+  `POST /chat`; this is how it's surfaced instead.
+- exactly one final `{"type": "done", "payload": {...}}` on success —
+  `payload` is the identical `ChatResponse` shape `POST /chat` returns.
+
+`EventSource` (the browser's built-in SSE client) can't send the
+`X-API-Key` header or a POST body, so the frontend consumes this with
+`fetch` + a manually-parsed `ReadableStream` instead (see
+`frontend/src/services/chatService.js`'s `streamChatMessage`).
 
 **`POST /chat/diagnose`** — `multipart/form-data`, not JSON (FastAPI
 resolves a request body as either JSON or multipart per the endpoint's

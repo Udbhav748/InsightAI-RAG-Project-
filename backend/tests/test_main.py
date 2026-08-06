@@ -44,6 +44,15 @@ class FakeLLMClient:
         self.calls.append(prompt)
         return self.response_text
 
+    def generate_stream(self, prompt: str):
+        # Split into two pieces (not a single yield) so /chat/stream tests
+        # actually exercise multi-chunk reassembly, not just the
+        # LLMClient-default single-yield fallback.
+        self.calls.append(prompt)
+        midpoint = len(self.response_text) // 2
+        yield self.response_text[:midpoint]
+        yield self.response_text[midpoint:]
+
 
 @pytest.fixture
 def seeded_vector_store(tmp_path):
@@ -175,6 +184,70 @@ class TestChat:
         ]
         assert payload["steps_taken"] >= 4  # plan + retrieve + grade + generate
         assert len(client.fake_llm.calls) == 1  # no reflection retry needed
+
+
+def _parse_sse_events(response_text: str) -> list[dict]:
+    return [
+        json.loads(line[len("data: ") :])
+        for line in response_text.split("\n\n")
+        if line.startswith("data: ")
+    ]
+
+
+class TestChatStream:
+    def test_event_sequence_ends_with_valid_done_event(self, client):
+        response = client.post(
+            "/chat/stream",
+            headers=VALID_HEADERS,
+            json={"query": "What does the document say about project scope?"},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+        events = _parse_sse_events(response.text)
+        assert events, "expected at least one SSE event"
+
+        event_types = [event["type"] for event in events]
+        assert event_types[0] == "trace"
+        assert events[0]["stage"] == "planning"
+        assert "answer_chunk" in event_types
+        assert event_types[-1] == "done"
+
+        # Every trace stage the retrieve pipeline should hit for a normal,
+        # well-grounded query, in order (web_search/reflecting are absent
+        # here since nothing about this fixture triggers the corrective
+        # loop or the web fallback).
+        trace_stages = [event["stage"] for event in events if event["type"] == "trace"]
+        assert trace_stages == ["planning", "retrieval", "grading", "generating"]
+
+        done_payload = events[-1]["payload"]
+        assert_matches_schema(ChatResponse, done_payload)
+        assert done_payload["answer"] == client.fake_llm.response_text
+        assert done_payload["tool_used"] == "retrieval"
+        assert done_payload["answer_source"] == "documents"
+        assert done_payload["sources"] == [
+            {
+                "document_id": SEEDED_DOCUMENT_ID,
+                "chunk_id": "chunk-1",
+                "excerpt": SEEDED_CHUNK_TEXT,
+                "url": None,
+            }
+        ]
+
+        # The reassembled answer_chunk text matches the done payload's
+        # answer exactly — streaming and the final response agree.
+        streamed_answer = "".join(
+            event["text"] for event in events if event["type"] == "answer_chunk"
+        )
+        assert streamed_answer == done_payload["answer"]
+
+    def test_missing_api_key_returns_401(self, client):
+        response = client.post("/chat/stream", json={"query": "anything"})
+        assert response.status_code == 401
+
+    def test_rejects_empty_query(self, client):
+        response = client.post("/chat/stream", headers=VALID_HEADERS, json={"query": ""})
+        assert response.status_code == 422
 
 
 class TestChatFeedback:

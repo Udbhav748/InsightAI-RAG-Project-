@@ -1,9 +1,12 @@
 """Routes for natural language question-answering against uploaded documents."""
 
+import json
 import logging
+from collections.abc import Iterator
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_api_key
 from app.core.exceptions import VectorStoreNotFoundError
@@ -89,6 +92,51 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
 
     return response
+
+
+def _sse_line(event: dict) -> str:
+    """Serialize one stream_query() event as an SSE `data:` line.
+
+    The "done" event's payload is a ChatResponse (a Pydantic model, not
+    plain JSON yet) — every other event type is already a plain dict.
+    model_dump(mode="json") matches exactly what response_model=ChatResponse
+    would have serialized on POST /chat, so a client parsing "done" gets
+    the identical shape either endpoint would give it.
+    """
+    if event.get("type") == "done":
+        event = {**event, "payload": event["payload"].model_dump(mode="json")}
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@router.post("/chat/stream")
+def chat_stream(request: ChatRequest) -> StreamingResponse:
+    # Same auth (router-level Depends(require_api_key)) and request body
+    # as POST /chat — this is the same pipeline, just fanning out its
+    # progress as Server-Sent Events instead of returning one response at
+    # the end. POST /chat itself is untouched; this is an additive route.
+    chat_service = get_chat_service()
+
+    logger.info(
+        "chat_stream_request_received",
+        extra={
+            "extra_fields": {
+                "query_length": len(request.query),
+                "top_k": request.top_k,
+                "min_score": request.min_score,
+            }
+        },
+    )
+
+    def event_source() -> Iterator[str]:
+        for event in chat_service.stream_query(
+            request.query,
+            top_k=request.top_k,
+            min_score=request.min_score,
+            history=request.history,
+        ):
+            yield _sse_line(event)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @router.post("/chat/diagnose", response_model=ChatResponse)

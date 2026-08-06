@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { MessageCircle } from 'lucide-react'
 import ChatBubble from '../components/chat/ChatBubble'
-import TypingIndicator from '../components/chat/TypingIndicator'
 import ChatInput from '../components/chat/ChatInput'
 import EmptyState from '../components/ui/EmptyState'
 import useChat from '../hooks/useChat'
@@ -58,7 +57,6 @@ export default function Chat() {
             ))}
           </AnimatePresence>
         )}
-        {isSending && <TypingIndicator />}
         <div ref={bottomRef} />
       </div>
 
