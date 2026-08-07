@@ -114,33 +114,33 @@ def report_error_rate_by_category(records: list[dict]) -> None:
 
 
 def report_loop_count_and_avg_steps(records: list[dict]) -> None:
-    """Loop Count / Average Steps, from the chat_query_handled event
-    (see rag_service.py's ChatService._respond) that every /chat and
-    /chat/stream response logs regardless of which action the planner
-    picked.
+    """Average Steps and loop_capped rate, from two events ChatService
+    already logs — no new logging needed, this only aggregates fields
+    that exist today:
 
-    Average Steps is a flat mean of steps_taken across every event,
-    matching how the field is already surfaced as one number per response
-    (see the README's API reference) rather than broken out per query_type.
+    - chat_query_handled (ChatService._respond, one per /chat or
+      /chat/stream response): its steps_taken field is averaged across
+      every request regardless of query_type, matching how the field is
+      already surfaced as one number per response (see the README's API
+      reference).
+    - loop_capped (ChatService._correct/_correct_streamed,
+      rag_service.py): logged specifically when the corrective loop hits
+      Settings-independent _MAX_LLM_CALLS (3) generate() calls without
+      resolving — i.e. the loop was forced to stop and return whatever
+      answer it had, rather than looping freely. This is a narrower,
+      more precise signal than "did the loop run at all" (most
+      reflection/web-fallback iterations resolve well under the cap and
+      never log this event) — it specifically flags requests where the
+      cap, not the model being satisfied, ended the loop.
 
-    Loop Count only applies to query_type == "document_query" — the only
-    path that ever calls ChatService._correct()/_correct_streamed().
-    "conversational" and "summarize" requests always report a fixed
-    steps_taken (1 and 3 respectively) and never loop. A document_query
-    request "looped" when steps_taken exceeds 4 (planning + retrieval +
-    grading + generation — the deterministic path when the corrective
-    loop finds nothing to fix): anything above that means a reflection
-    retry and/or the web-search fallback actually fired.
-
-    One caveat: with Settings.web_search_enabled=True (off by default),
-    a "weak"/"insufficient" grade also adds a step for an eager
-    pre-generation web search fetch (see handle_query's docstring on why
-    that's deliberately separate from _correct's own fallback) — that
-    step is indistinguishable from a real loop iteration using
-    steps_taken alone, so with web search enabled this slightly
-    overcounts "looped". Not a concern at this project's default config.
+    The fraction is loop_capped events over chat_query_handled requests:
+    both are counted straight from the same parsed log stream, so no
+    correlation by request id is needed (there's exactly one
+    chat_query_handled per request, and at most one loop_capped per
+    request since hitting the cap ends the loop immediately).
     """
     handled = [record for record in records if record.get("message") == "chat_query_handled"]
+    capped = [record for record in records if record.get("message") == "loop_capped"]
 
     print("=== Loop Count / Average Steps ===")
     if not handled:
@@ -149,17 +149,11 @@ def report_loop_count_and_avg_steps(records: list[dict]) -> None:
 
     all_steps = [record.get("steps_taken", 0) for record in handled]
     avg_steps = sum(all_steps) / len(all_steps)
+    capped_rate = len(capped) / len(handled)
 
-    document_queries = [record for record in handled if record.get("query_type") == "document_query"]
-    looped = [record for record in document_queries if record.get("steps_taken", 0) > 4]
-
-    print(f"  requests (all types):    {len(handled)}")
-    print(f"  average steps:           {avg_steps:.2f}")
-    print(f"  document_query requests: {len(document_queries)}")
-    loop_line = f"  loop count:              {len(looped)}"
-    if document_queries:
-        loop_line += f"  ({len(looped) / len(document_queries) * 100:.1f}% of document_query requests)"
-    print(loop_line)
+    print(f"  requests:            {len(handled)}")
+    print(f"  average steps:       {avg_steps:.2f}")
+    print(f"  loop_capped events:  {len(capped)}  ({capped_rate * 100:.1f}% of requests)")
     print()
 
 
