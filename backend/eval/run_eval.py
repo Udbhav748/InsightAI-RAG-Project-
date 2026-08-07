@@ -5,6 +5,11 @@ ChatService._plan (for planner classification) and ChatService.handle_query
 (for the actual answer), then reports:
 
 - a confusion matrix + accuracy/precision/recall/F1 for planner routing
+- Tool-argument accuracy: for expected_action == "summarize" entries, did
+  the planner extract the right document_id from the query, not just
+  pick the right action? Routing and argument extraction are separate
+  failure modes (see PlanDecision in rag_service.py) and the confusion
+  matrix above only covers the former.
 - Task Success Rate: does the answer contain an expected keyword?
 - Groundedness proxy: for retrieval answers, do they share vocabulary with
   the chunks that were actually retrieved?
@@ -227,6 +232,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
 
     y_true: list[str] = []
     y_pred: list[str] = []
+    tool_arg_accuracy_flags: list[bool] = []
     task_success_flags: list[bool] = []
     grounded_flags: list[bool] = []
     injection_flags: list[bool] = []
@@ -259,6 +265,18 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         plan = chat_service._plan(query, history=None)
         y_true.append(expected_action)
         y_pred.append(plan.action)
+
+        document_id_correct = None
+        if expected_action == "summarize":
+            # Routing accuracy (did the planner pick "summarize" at all) is
+            # already captured by the confusion matrix above — this checks
+            # the tool *argument*: did it extract the right document_id from
+            # the query, not just the right action? plan.document_id is
+            # None whenever plan.action != "summarize" (see PlanDecision),
+            # which correctly fails this check too — getting the argument
+            # right is moot if the action itself was misrouted.
+            document_id_correct = plan.document_id == document_id
+            tool_arg_accuracy_flags.append(document_id_correct)
 
         task_success = None
         grounded = None
@@ -330,6 +348,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "case_type": case_type,
                 "expected_action": expected_action,
                 "predicted_action": plan.action,
+                "document_id_correct": document_id_correct,
                 "tool_used": tool_used,
                 "steps_taken": steps_taken,
                 "answer": answer,
@@ -348,6 +367,11 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
 
     planner_report = classification_report(y_true, y_pred)
     matrix = confusion_matrix(y_true, y_pred)
+    tool_arg_accuracy = (
+        sum(tool_arg_accuracy_flags) / len(tool_arg_accuracy_flags)
+        if tool_arg_accuracy_flags
+        else None
+    )
 
     task_success_rate = (
         sum(task_success_flags) / len(task_success_flags) if task_success_flags else None
@@ -380,6 +404,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             "confusion_matrix": matrix,
             **planner_report,
         },
+        "tool_arg_accuracy": round(tool_arg_accuracy, 4) if tool_arg_accuracy is not None else None,
+        "tool_arg_accuracy_n": len(tool_arg_accuracy_flags),
         "task_success_rate": round(task_success_rate, 4) if task_success_rate is not None else None,
         "task_success_n": len(task_success_flags),
         "groundedness_proxy": round(groundedness_proxy, 4) if groundedness_proxy is not None else None,
@@ -422,12 +448,17 @@ def print_report(report: dict) -> None:
     print(f"macro F1:     {report['planner']['macro_f1']:.4f}")
     print(f"weighted F1:  {report['planner']['weighted_f1']:.4f}")
 
+    def fmt(value, n):
+        return f"{value:.4f} (n={n})" if value is not None else f"n/a (n={n})"
+
+    print(
+        f"\nTool-argument accuracy (summarize's document_id): "
+        f"{fmt(report['tool_arg_accuracy'], report['tool_arg_accuracy_n'])}"
+    )
+
     print("\n" + "=" * 70)
     print("ANSWER-QUALITY METRICS")
     print("=" * 70)
-
-    def fmt(value, n):
-        return f"{value:.4f} (n={n})" if value is not None else f"n/a (n={n})"
 
     print(f"Task Success Rate:      {fmt(report['task_success_rate'], report['task_success_n'])}")
     print(f"Groundedness proxy:     {fmt(report['groundedness_proxy'], report['groundedness_n'])}")
