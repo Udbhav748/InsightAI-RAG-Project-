@@ -273,16 +273,17 @@ sticky failover state.
 Nothing here is more sophisticated than git:
 
 - **Tag known-good states.** Before a deploy, tag the commit:
-  `git tag -a v0.1.0 -m "known-good: gemini-3.5-flash, PROMPT_VERSION v1"`.
+  `git tag -a v0.1.0 -m "known-good: llama-3.3-70b-versatile via Groq, PROMPT_VERSION v1"`.
   Since `PROMPT_VERSION` is a source constant (`prompt_builder.py`), not
   an env var, the tagged commit *is* the pin for prompt version — there's
   no separate config file to keep in sync with it.
-- **Pin the model via config, not code.** `GEMINI_MODEL_NAME` (and every
-  other tunable in `app/core/config.py`) is read from `backend/.env` at
-  startup. Keep whatever `.env` values were live for a given tagged
-  release recorded somewhere outside git (`.env` is gitignored,
-  deliberately, since `backend/.env.example` is the tracked template) —
-  a deploy runbook or your platform's secret manager, not the repo.
+- **Pin the model via config, not code.** `GEMINI_MODEL_NAME`/`GROQ_MODEL_NAME`
+  (and every other tunable in `app/core/config.py`) is read from
+  `backend/.env` at startup. Keep whatever `.env` values were live for a
+  given tagged release recorded somewhere outside git (`.env` is
+  gitignored, deliberately, since `backend/.env.example` is the tracked
+  template) — a deploy runbook or your platform's secret manager, not
+  the repo.
 - **To roll back**: redeploy the tagged commit's Docker image
   (`backend/Dockerfile`, already built and verified locally — see
   `docker-compose.yml`) with the `.env`/secrets that were live for that
@@ -293,6 +294,20 @@ Nothing here is more sophisticated than git:
 - **Verify the rollback** by re-running `eval/run_eval.py` against it and
   confirming the metrics land back near that tag's original
   `eval/results/*.json`.
+
+**This procedure has actually been exercised, not just written down.**
+`v0.1.0` was tagged at `0e289c3`, checked out into an isolated
+`git worktree` (so the build genuinely came from the tagged ref, not
+just whatever happened to already be checked out), built into a Docker
+image, and run against `eval/run_eval.py` — reproducing the same planner
+accuracy (1.0), Task Success Rate (1.0), Injection Resistance (1.0),
+tool-argument accuracy (1.0), and the same known Groq TPM 413 on the two
+`summarize` entries as the baseline run
+(`eval/results/20260807T215538Z.json`) it was compared against. The one
+metric that moved (groundedness proxy: 0.8333 → 0.9167) is expected
+run-to-run noise from LLM sampling on a 12-sample lexical-overlap
+heuristic, not a regression — worth knowing as the expected variance
+band before ever needing this procedure under real pressure.
 
 There's no automated rollback trigger (no health-based auto-revert, no
 canary) — this is a manual procedure, appropriate for the current
