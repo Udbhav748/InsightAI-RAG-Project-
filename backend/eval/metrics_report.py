@@ -1,6 +1,7 @@
 """Parses the backend's JSON logs and prints a lightweight metrics report:
-latency percentiles, error rate by taxonomy_category, total LLM token
-usage/cost, and Acceptance Rate from chat feedback.
+latency percentiles, error rate by taxonomy_category, corrective-RAG Loop
+Count and Average Steps, total LLM token usage/cost, and Acceptance Rate
+from chat feedback.
 
 This is a stand-in for real observability, not a replacement for it — in
 production you'd ship these same structured log lines to something like
@@ -112,6 +113,56 @@ def report_error_rate_by_category(records: list[dict]) -> None:
     print()
 
 
+def report_loop_count_and_avg_steps(records: list[dict]) -> None:
+    """Loop Count / Average Steps, from the chat_query_handled event
+    (see rag_service.py's ChatService._respond) that every /chat and
+    /chat/stream response logs regardless of which action the planner
+    picked.
+
+    Average Steps is a flat mean of steps_taken across every event,
+    matching how the field is already surfaced as one number per response
+    (see the README's API reference) rather than broken out per query_type.
+
+    Loop Count only applies to query_type == "document_query" — the only
+    path that ever calls ChatService._correct()/_correct_streamed().
+    "conversational" and "summarize" requests always report a fixed
+    steps_taken (1 and 3 respectively) and never loop. A document_query
+    request "looped" when steps_taken exceeds 4 (planning + retrieval +
+    grading + generation — the deterministic path when the corrective
+    loop finds nothing to fix): anything above that means a reflection
+    retry and/or the web-search fallback actually fired.
+
+    One caveat: with Settings.web_search_enabled=True (off by default),
+    a "weak"/"insufficient" grade also adds a step for an eager
+    pre-generation web search fetch (see handle_query's docstring on why
+    that's deliberately separate from _correct's own fallback) — that
+    step is indistinguishable from a real loop iteration using
+    steps_taken alone, so with web search enabled this slightly
+    overcounts "looped". Not a concern at this project's default config.
+    """
+    handled = [record for record in records if record.get("message") == "chat_query_handled"]
+
+    print("=== Loop Count / Average Steps ===")
+    if not handled:
+        print("No chat_query_handled entries found in the logs.\n")
+        return
+
+    all_steps = [record.get("steps_taken", 0) for record in handled]
+    avg_steps = sum(all_steps) / len(all_steps)
+
+    document_queries = [record for record in handled if record.get("query_type") == "document_query"]
+    looped = [record for record in document_queries if record.get("steps_taken", 0) > 4]
+
+    print(f"  requests (all types):    {len(handled)}")
+    print(f"  average steps:           {avg_steps:.2f}")
+    print(f"  document_query requests: {len(document_queries)}")
+    loop_line = f"  loop count:              {len(looped)}"
+    if document_queries:
+        loop_line += f"  ({len(looped) / len(document_queries) * 100:.1f}% of document_query requests)"
+    print(loop_line)
+    print()
+
+
 def report_tokens_and_cost(records: list[dict]) -> None:
     generations = [
         record for record in records if record.get("message") == "llm_generation_completed"
@@ -192,6 +243,7 @@ def main() -> None:
     print(f"Parsed {len(records)} log lines.\n")
     report_latency(records)
     report_error_rate_by_category(records)
+    report_loop_count_and_avg_steps(records)
     report_tokens_and_cost(records)
     report_acceptance_rate(Path(args.feedback_file))
 
