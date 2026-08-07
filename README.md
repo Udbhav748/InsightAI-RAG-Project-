@@ -521,7 +521,11 @@ InsightAI-RAG/
   provider once — if both are down, the request fails. There's no
   health-based routing or automatic recovery back to the primary.
 - **Not yet deployed** — Docker images build and run locally
-  (`docker-compose.yml`), but nothing is live; see `docs/OPERATIONS.md`.
+  (`docker-compose.yml`), and the Cloud Run deploy path (Dockerfile,
+  `backend/scripts/deploy_cloud_run.sh`, `.github/workflows/deploy.yml`) is
+  ready to run, but no `gcloud` command has actually been executed from this
+  repo yet — nothing is live. See `docs/OPERATIONS.md`'s "Deploying to
+  Cloud Run" section.
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
@@ -538,7 +542,7 @@ dashboards) and why.
 - [ ] Per-user authentication (JWT/RBAC) in place of the single shared API key
 - [ ] Encryption at rest for the vector store and uploaded files
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file
-- [ ] Deploy to a managed platform (Cloud Run or Render — see `docs/OPERATIONS.md`)
+- [ ] Actually run the Cloud Run deploy (config and CI are ready — see `docs/OPERATIONS.md`'s "Deploying to Cloud Run"), and point the frontend build at Vercel or Cloudflare Pages
 - [ ] Record the eval variant (model/prompt version) directly in `run_eval.py`'s results JSON
 
 ## License

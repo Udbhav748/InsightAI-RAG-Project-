@@ -1,0 +1,58 @@
+name: Deploy backend to Cloud Run
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+
+# Kept separate from ci.yml (which stays pytest-only) so a deploy failure is
+# never conflated with a test failure in the same job/badge.
+#
+# One-time prerequisites this workflow assumes already exist (see
+# docs/OPERATIONS.md's "Deploying to Cloud Run" section — not something this
+# workflow can bootstrap itself):
+#   - A GCP project with Cloud Run, Artifact Registry, and Secret Manager
+#     APIs enabled.
+#   - An Artifact Registry Docker repo.
+#   - GCS buckets for backend/vector_store/ and backend/uploads/.
+#   - Secrets gemini-api-key / api-key already created in Secret Manager.
+#   - A Workload Identity Federation pool + provider, and a service account
+#     with permission to deploy to Cloud Run and push to Artifact Registry —
+#     WIF is used instead of a long-lived JSON key so no GCP credential
+#     needs to sit in GitHub Secrets at all.
+#   - Repo secrets/variables: GCP_PROJECT, GCP_REGION,
+#     ARTIFACT_REGISTRY_REPO, BUCKET_VECTOR_STORE, BUCKET_UPLOADS,
+#     FRONTEND_URL, WIF_PROVIDER, WIF_SERVICE_ACCOUNT.
+
+permissions:
+  contents: read
+  id-token: write # required for Workload Identity Federation
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build, push, and deploy
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
+          BUCKET_VECTOR_STORE: ${{ vars.BUCKET_VECTOR_STORE }}
+          BUCKET_UPLOADS: ${{ vars.BUCKET_UPLOADS }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+        run: backend/scripts/deploy_cloud_run.sh
