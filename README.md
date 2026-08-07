@@ -39,7 +39,7 @@ InsightAI-RAG is a full-stack Retrieval-Augmented Generation app: a FastAPI back
 ```
                     ┌──────────────┐
    PDF upload  ───▶ │  PyMuPDF     │  extract text per page
-                    └──────┬───────┘
+                    └──────┬───────┘  (OCR fallback for scanned/thin-text pages)
                            ▼
                     ┌──────────────┐
                     │  Chunking    │  langchain-text-splitters
@@ -55,14 +55,22 @@ InsightAI-RAG is a full-stack Retrieval-Augmented Generation app: a FastAPI back
                     ┌──────────────┐
                     │  FAISS index │  persisted to disk,
                     │ (IndexFlatIP)│  cosine similarity search
-                    └──────┬───────┘
-                           ▼
-   Question    ───▶ ┌──────────────┐     top-k chunks     ┌──────────────┐
-   in chat          │  Retrieval   │ ───────────────────▶ │    Gemini    │ ──▶ Answer + cited sources
-                     └──────────────┘                      └──────────────┘
+                    └──────────────┘
 ```
 
 A document uploaded through `/upload` is chunked, embedded, and written into the same in-memory FAISS index that `/chat` queries — so a new document is searchable immediately, no reload or reindex step required.
+
+A chat message doesn't go straight to the LLM — it goes through a small hand-rolled agent (`ChatService`, plain Python, no LangGraph/CrewAI — see `docs/ARCHITECTURE.md`'s "Framework choice" for why):
+
+1. **Plan.** A keyword/regex planner (no LLM call) routes the query to one of three actions: `conversational` (small talk, answered directly), `summarize` (a "summarize"/"summary" keyword plus a document-id-shaped UUID in the text), or `retrieve` (the default).
+2. **Retrieve.** FAISS semantic search fused with a BM25 lexical index by default (hybrid search), then an optional cross-encoder re-ranking pass over the candidate pool before narrowing to `top_k` — both config-gated and A/B'd against a semantic-only baseline (`docs/OPERATIONS.md`'s "Retrieval ablation").
+3. **Grade.** The top result's score sorts retrieval into `insufficient` / `weak` / `good` — no LLM call, just a threshold check. `weak`/`insufficient` pulls in a web search fallback (off by default) *before* the first generation attempt, so the model has it alongside whatever document context came back.
+4. **Generate, then correct.** Gemini (or Groq) answers from the retrieved context. If the answer comes back empty or ungrounded, the corrective loop regenerates once with an explicit "you didn't use the context" instruction, then — if still ungrounded and web search wasn't already used — escalates to a web-search-augmented regeneration. Every path is capped at 3 total `generate()` calls per request.
+5. **Answer**, with per-chunk citations (and, when web search contributed, per-result citations) attached — never a bare model reply.
+
+`POST /chat/stream` fans this same sequence out live as Server-Sent Events (plan → retrieve → grade → generate/correct → answer, token by token) instead of waiting for the final response.
+
+**Image-based diagnosis** (`POST /chat/diagnose`) skips the planner entirely: an uploaded leaf photo goes to [LeafSense](#running-with-leafsense-image-diagnosis), a separate vision service, which returns a predicted crop/disease; that prediction becomes the query and runs through the exact same retrieve → grade → correct pipeline above.
 
 ## Features
 
@@ -71,7 +79,7 @@ A document uploaded through `/upload` is chunked, embedded, and written into the
 - **Streamed, visible agent progress** — `POST /chat/stream` (Server-Sent Events) fans out each pipeline stage (planning, retrieval, grading, web search, generating, reflecting) as it happens, plus the answer token-by-token, instead of one response at the end. The chat UI renders this as a live "agent trace" strip above the forming answer, collapsing into an expandable summary once done.
 - **Plant disease diagnosis from a photo** — `POST /chat/diagnose` classifies an uploaded leaf image via [LeafSense](#running-with-leafsense-image-diagnosis) (a separate vision service) and runs the predicted disease through the same grounded retrieval pipeline as a text question.
 - **Hybrid retrieval** — FAISS semantic search fused with a BM25 lexical index by default (`HYBRID_SEARCH_ENABLED`), plus an opt-in cross-encoder re-ranking stage (`RERANKING_ENABLED`). Both are config-gated specifically so they've been A/B'd against a semantic-only baseline — see `docs/OPERATIONS.md`'s "Retrieval ablation" for the measured Precision@5/Recall@5/MRR numbers behind the defaults.
-- **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context, and an ungrounded answer gets one capped regeneration attempt before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
+- **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context. An ungrounded answer regenerates once with an explicit "you didn't use the context" instruction, then — if still ungrounded and web search wasn't already used — escalates to one more, web-augmented regeneration; every path is capped at 3 total generation calls per request before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
 - **Conversational query routing** — small talk and meta-questions are handled without spending a retrieval + generation round trip on them.
 - **Document management** — browse everything you've uploaded, see page/chunk counts, and delete a document (which also removes its vectors from the index).
 - **Light & dark themes**, keyboard-friendly chat input, and toast notifications throughout.
