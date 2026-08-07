@@ -16,6 +16,7 @@ the VectorStore ABC — see hybrid_search.py's module docstring for why.
 
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -47,6 +48,16 @@ class FAISSVectorStore(VectorStore):
         self._index: faiss.Index | None = None
         self._metadata: list[dict] = []
         self._bm25_index = BM25Index()
+        # Guards add_embeddings/delete_document/save against two concurrent
+        # writers racing (e.g. two /upload requests, or an upload and a
+        # delete). threading.Lock rather than asyncio.Lock: FastAPI runs
+        # async routes on the event loop but sync `def` routes (like
+        # DELETE /documents/{id}) in a worker thread pool, so a lock scoped
+        # to one event loop wouldn't actually cover both call paths — this
+        # one does, at the cost of briefly blocking whichever thread is
+        # waiting, which these already-synchronous, already-fast index/
+        # metadata writes make an acceptable trade.
+        self._lock = threading.Lock()
 
     def _record_to_chunk(self, record: dict, score: float) -> RetrievedChunk:
         record_metadata = record["metadata"]
@@ -66,55 +77,56 @@ class FAISSVectorStore(VectorStore):
         self._bm25_index.rebuild(self._metadata)
 
     def add_embeddings(self, embedded_chunks: list[EmbeddedChunk]) -> None:
-        if self._index is None:
-            raise VectorStoreNotFoundError(
-                "No index to add to. Call create_index() or load() first."
-            )
-        if not embedded_chunks:
-            return
+        with self._lock:
+            if self._index is None:
+                raise VectorStoreNotFoundError(
+                    "No index to add to. Call create_index() or load() first."
+                )
+            if not embedded_chunks:
+                return
 
-        dimension = self._index.d
-        for chunk in embedded_chunks:
-            if len(chunk.embedding) != dimension:
-                raise EmbeddingDimensionMismatchError(
-                    f"Embedding for chunk {chunk.chunk_id} has dimension "
-                    f"{len(chunk.embedding)}, but the index expects {dimension}."
+            dimension = self._index.d
+            for chunk in embedded_chunks:
+                if len(chunk.embedding) != dimension:
+                    raise EmbeddingDimensionMismatchError(
+                        f"Embedding for chunk {chunk.chunk_id} has dimension "
+                        f"{len(chunk.embedding)}, but the index expects {dimension}."
+                    )
+
+            start = time.perf_counter()
+
+            vectors = np.array([chunk.embedding for chunk in embedded_chunks], dtype="float32")
+            self._index.add(vectors)
+            self._metadata.extend(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "document_id": chunk.document_id,
+                    "metadata": chunk.metadata,
+                }
+                for chunk in embedded_chunks
+            )
+
+            if self._index.ntotal != len(self._metadata):
+                raise MetadataSyncError(
+                    f"Vector count ({self._index.ntotal}) and metadata count "
+                    f"({len(self._metadata)}) diverged after add_embeddings()."
                 )
 
-        start = time.perf_counter()
+            self._bm25_index.rebuild(self._metadata)
 
-        vectors = np.array([chunk.embedding for chunk in embedded_chunks], dtype="float32")
-        self._index.add(vectors)
-        self._metadata.extend(
-            {
-                "chunk_id": chunk.chunk_id,
-                "document_id": chunk.document_id,
-                "metadata": chunk.metadata,
-            }
-            for chunk in embedded_chunks
-        )
+            processing_duration = time.perf_counter() - start
 
-        if self._index.ntotal != len(self._metadata):
-            raise MetadataSyncError(
-                f"Vector count ({self._index.ntotal}) and metadata count "
-                f"({len(self._metadata)}) diverged after add_embeddings()."
+            logger.info(
+                "vectors_added",
+                extra={
+                    "extra_fields": {
+                        "vectors_added": len(embedded_chunks),
+                        "total_vectors": self._index.ntotal,
+                        "embedding_dimension": dimension,
+                        "processing_duration": round(processing_duration, 4),
+                    }
+                },
             )
-
-        self._bm25_index.rebuild(self._metadata)
-
-        processing_duration = time.perf_counter() - start
-
-        logger.info(
-            "vectors_added",
-            extra={
-                "extra_fields": {
-                    "vectors_added": len(embedded_chunks),
-                    "total_vectors": self._index.ntotal,
-                    "embedding_dimension": dimension,
-                    "processing_duration": round(processing_duration, 4),
-                }
-            },
-        )
 
     def search(self, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
         if self._index is None:
@@ -157,51 +169,52 @@ class FAISSVectorStore(VectorStore):
         ]
 
     def delete_document(self, document_id: str) -> int:
-        if self._index is None:
-            raise VectorStoreNotFoundError(
-                "No index to delete from. Call create_index() or load() first."
+        with self._lock:
+            if self._index is None:
+                raise VectorStoreNotFoundError(
+                    "No index to delete from. Call create_index() or load() first."
+                )
+
+            keep_positions = [
+                i for i, record in enumerate(self._metadata) if record["document_id"] != document_id
+            ]
+            removed_count = len(self._metadata) - len(keep_positions)
+            if removed_count == 0:
+                return 0
+
+            start = time.perf_counter()
+            dimension = self._index.d
+
+            # IndexFlatIP has no native remove-by-id, but it stores raw vectors,
+            # so rebuilding from the vectors we want to keep is exact (not an
+            # approximation) and cheap at this project's scale.
+            if keep_positions:
+                all_vectors = self._index.reconstruct_n(0, self._index.ntotal)
+                kept_vectors = all_vectors[keep_positions]
+            else:
+                kept_vectors = np.empty((0, dimension), dtype="float32")
+
+            new_index = faiss.IndexFlatIP(dimension)
+            if len(kept_vectors) > 0:
+                new_index.add(kept_vectors)
+
+            self._index = new_index
+            self._metadata = [self._metadata[i] for i in keep_positions]
+            self._bm25_index.rebuild(self._metadata)
+
+            processing_duration = time.perf_counter() - start
+
+            logger.info(
+                "document_deleted",
+                extra={
+                    "extra_fields": {
+                        "document_id": document_id,
+                        "vectors_removed": removed_count,
+                        "total_vectors": self._index.ntotal,
+                        "processing_duration": round(processing_duration, 4),
+                    }
+                },
             )
-
-        keep_positions = [
-            i for i, record in enumerate(self._metadata) if record["document_id"] != document_id
-        ]
-        removed_count = len(self._metadata) - len(keep_positions)
-        if removed_count == 0:
-            return 0
-
-        start = time.perf_counter()
-        dimension = self._index.d
-
-        # IndexFlatIP has no native remove-by-id, but it stores raw vectors,
-        # so rebuilding from the vectors we want to keep is exact (not an
-        # approximation) and cheap at this project's scale.
-        if keep_positions:
-            all_vectors = self._index.reconstruct_n(0, self._index.ntotal)
-            kept_vectors = all_vectors[keep_positions]
-        else:
-            kept_vectors = np.empty((0, dimension), dtype="float32")
-
-        new_index = faiss.IndexFlatIP(dimension)
-        if len(kept_vectors) > 0:
-            new_index.add(kept_vectors)
-
-        self._index = new_index
-        self._metadata = [self._metadata[i] for i in keep_positions]
-        self._bm25_index.rebuild(self._metadata)
-
-        processing_duration = time.perf_counter() - start
-
-        logger.info(
-            "document_deleted",
-            extra={
-                "extra_fields": {
-                    "document_id": document_id,
-                    "vectors_removed": removed_count,
-                    "total_vectors": self._index.ntotal,
-                    "processing_duration": round(processing_duration, 4),
-                }
-            },
-        )
 
         return removed_count
 
@@ -221,19 +234,20 @@ class FAISSVectorStore(VectorStore):
         return matches
 
     def save(self) -> None:
-        if self._index is None:
-            raise VectorStoreNotFoundError(
-                "No index to save. Call create_index() or load() first."
-            )
-        if self._index.ntotal != len(self._metadata):
-            raise MetadataSyncError(
-                f"Refusing to save: vector count ({self._index.ntotal}) and metadata "
-                f"count ({len(self._metadata)}) are out of sync."
-            )
+        with self._lock:
+            if self._index is None:
+                raise VectorStoreNotFoundError(
+                    "No index to save. Call create_index() or load() first."
+                )
+            if self._index.ntotal != len(self._metadata):
+                raise MetadataSyncError(
+                    f"Refusing to save: vector count ({self._index.ntotal}) and metadata "
+                    f"count ({len(self._metadata)}) are out of sync."
+                )
 
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(self._index, str(self.index_path))
-        self.metadata_path.write_text(json.dumps(self._metadata))
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            faiss.write_index(self._index, str(self.index_path))
+            self.metadata_path.write_text(json.dumps(self._metadata))
 
     def load(self) -> None:
         if not self.index_path.is_file():
