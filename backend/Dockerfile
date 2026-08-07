@@ -33,4 +33,8 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form (not exec-form CMD ["...", "8000"]) so ${PORT} actually expands:
+# Cloud Run injects PORT (default 8080) and requires the container to listen
+# on it; docker-compose.yml doesn't set PORT locally, so this still falls
+# back to 8000 there, matching its "8000:8000" port mapping unchanged.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

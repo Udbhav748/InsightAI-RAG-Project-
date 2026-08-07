@@ -299,44 +299,146 @@ canary) — this is a manual procedure, appropriate for the current
 single-instance, not-yet-deployed scale (see next section and Q9 in
 `docs/DESIGN_REVIEW.md`).
 
-## Deployment recommendation
+## Deploying to Cloud Run
 
-**Recommendation: a managed container platform — Cloud Run or Render —
-over a self-managed EC2 instance.** Both `backend/Dockerfile` and
-`frontend/Dockerfile` already build and run correctly via
-`docker-compose.yml` (verified locally end-to-end: backend healthcheck
-passing, `/health` and `/docs` responding, frontend serving the SPA with
-working client-side-route fallback), so either platform could deploy the
-existing images with no Dockerfile changes.
+**Backend → Google Cloud Run. Frontend → a static host (Vercel or
+Cloudflare Pages), not a container.** `backend/Dockerfile` already builds
+and runs correctly via `docker-compose.yml` (verified locally end-to-end:
+healthcheck passing, `/health` and `/docs` responding) — Cloud Run deploys
+that same image, not a rewrite. `frontend/Dockerfile`'s nginx stage stays
+for local `docker-compose.yml` parity, but production frontend serving
+moves off it: it's a static Vite build, and paying for container compute
+(or routing it through `nginx`) to serve static files has no upside once a
+CDN-backed static host does it for free with less to maintain.
 
-Why a managed platform over EC2, specifically for this project:
+Cloud Run over Render specifically for this project: `sentence-transformers`
++ `torch` + a loaded FAISS index need real memory headroom that Render's
+free tier (512MB) is tight for. Cloud Run's per-instance memory is
+configurable up to several GB and bills per-request, scaling to zero when
+idle — near-zero cost for bursty, low-volume traffic instead of a fixed
+monthly charge for an always-on box.
 
-- **HTTPS out of the box.** This app currently only speaks plain HTTP
-  (`uvicorn ... --host 0.0.0.0 --port 8000`, `nginx` serving port 80) —
-  there's no TLS termination anywhere in the repo. Cloud Run/Render
-  terminate TLS automatically; EC2 would need a reverse proxy (or ALB)
-  and certificate management added and maintained.
-- **Secret storage.** `backend/.env` currently holds `GEMINI_API_KEY` and
-  `API_KEY` as plaintext env vars, loaded via `env_file` in
-  `docker-compose.yml` — fine for local dev, not how a real deployment
-  should hand out secrets. Both platforms have a managed secrets
-  mechanism to replace that file; EC2 would need one wired up manually
-  (Secrets Manager + IAM, at minimum).
-- **Autoscaling and load balancing**, without provisioning or managing
-  the underlying VMs — relevant given the single-`lru_cache`-instance
-  architecture (`get_vector_store()`/`get_llm_client()` in
-  `app/api/v1/routes/query.py`) doesn't need to change to run on either
-  platform's scale-to-zero/scale-out model, since each instance loads its
-  own copy of the (currently single, shared-file) FAISS index on
-  startup — see Q9 in `docs/DESIGN_REVIEW.md` for why that's still a real
-  limitation once you have more than one instance.
-- **No OS/patching burden.** EC2 means owning the instance's OS updates,
-  security patches, and Docker daemon maintenance; a managed platform
-  doesn't.
+### The one constraint that shapes everything below
 
-**This is not yet deployed anywhere.** There's no live URL, no deployment
-YAML/Terraform, and no CI step that deploys on merge (`.github/workflows/ci.yml`
-only installs dependencies and runs `pytest`). Deploying to Cloud Run or
-Render is listed here as the concrete next step, not something already
-done — see `docs/DESIGN_REVIEW.md` Q9/Q10 and the README's Future Work
-section.
+This app assumes **one process holds the one in-memory FAISS index**
+(`get_vector_store()`'s `@lru_cache(maxsize=1)` in
+`app/api/v1/routes/query.py`), backed by one `vector_store/index.faiss` +
+`metadata.json` file pair. Writes are now guarded by a `threading.Lock`
+(`faiss_vector_store.py`) — but that protects one process, not multiple.
+Cloud Run will run more than one instance of a service concurrently under
+load unless told not to, and if the index files are GCS-FUSE-mounted for
+persistence (next section), FUSE provides **no cross-writer file locking** —
+concurrent writes from two instances silently lose data ("last write wins,"
+per Cloud Run's own docs), not just race. So every command below sets
+`--max-instances=1`. That's a correctness requirement, not a cost knob —
+and it's still compatible with scaling to zero when idle, since
+`min-instances` stays at its default of 0; there's just never more than one
+instance *running* at once.
+
+### Persistent storage: GCS FUSE volume mounts
+
+Two GCS buckets, mounted read-write so `backend/vector_store/` and
+`backend/uploads/` survive a scale-to-zero cycle instead of losing all data
+on every cold start (Cloud Run's local disk is otherwise ephemeral):
+
+```bash
+gcloud run deploy insightai-rag-backend \
+  --image REGION-docker.pkg.dev/PROJECT/REPO/insightai-rag-backend:TAG \
+  --execution-environment gen2 \
+  --add-volume name=vector-store,type=cloud-storage,bucket=BUCKET_VECTOR_STORE,readonly=false \
+  --add-volume-mount volume=vector-store,mount-path=/app/vector_store \
+  --add-volume name=uploads,type=cloud-storage,bucket=BUCKET_UPLOADS,readonly=false \
+  --add-volume-mount volume=uploads,mount-path=/app/uploads \
+  --max-instances=1 \
+  --region=REGION \
+  --allow-unauthenticated
+```
+
+`--execution-environment gen2` is required — GCS volume mounts don't work on
+gen1. No application code changes were needed for this: `upload_service.py`/
+`faiss_vector_store.py` already just read/write these two directories by
+path, and FUSE makes the GCS-backed mount look like local disk to them.
+Known limitation, not solved here: Cloud Storage FUSE isn't fully
+POSIX-compliant and has no cross-writer locking — safe *only* because
+`--max-instances=1` guarantees there's never a second writer to race
+against.
+
+### Secrets
+
+`GEMINI_API_KEY`, `API_KEY`, and (if used) `GROQ_API_KEY` go in Secret
+Manager instead of plain env vars:
+
+```bash
+echo -n "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
+gcloud run deploy insightai-rag-backend \
+  --update-secrets=GEMINI_API_KEY=gemini-api-key:latest,API_KEY=api-key:latest \
+  ...
+```
+
+`FRONTEND_URL` stays a plain env var, set to the deployed frontend's real
+origin — `main.py`'s CORS middleware is a single-origin allowlist
+(`allow_origins=[settings.frontend_url]`), so this is the one setting that
+must be correct for the frontend to reach the API at all. There's no
+multi-origin support today (e.g. for a preview-deploy URL alongside
+production) — not needed yet, matching the rest of this app's single-tenant
+scope.
+
+### Running it: the deploy script
+
+`backend/scripts/deploy_cloud_run.sh` builds, pushes, and deploys in one
+command — the exact flags above, read from environment variables
+(`GCP_PROJECT`, `GCP_REGION`, `ARTIFACT_REGISTRY_REPO`,
+`BUCKET_VECTOR_STORE`, `BUCKET_UPLOADS`, `FRONTEND_URL`; see the script's own
+header for the full list). Requires `gcloud auth login` first and the
+one-time GCP setup below already done. `--print-only` prints the exact
+command it would run — including the image tag it would build — without
+touching Docker or your GCP account, so you can check the shape before
+committing to it:
+
+```bash
+GCP_PROJECT=... GCP_REGION=... ARTIFACT_REGISTRY_REPO=... \
+BUCKET_VECTOR_STORE=... BUCKET_UPLOADS=... FRONTEND_URL=... \
+  backend/scripts/deploy_cloud_run.sh --print-only
+```
+
+One-time GCP setup this script assumes already exists (not something it
+provisions): a GCP project with Cloud Run, Artifact Registry, and Secret
+Manager APIs enabled; an Artifact Registry Docker repo; the two GCS buckets
+above; and the `gemini-api-key`/`api-key` secrets.
+
+### CI/CD
+
+`.github/workflows/deploy.yml` runs the same script on every push to `main`
+that touches `backend/**` (separate from `.github/workflows/ci.yml`, which
+stays pytest-only, so a deploy failure is never conflated with a test
+failure in the same job). Authenticates via Workload Identity Federation —
+no long-lived GCP service account key sits in GitHub Secrets — which needs
+a one-time WIF pool/provider set up in your GCP project; see the workflow
+file's own header comment for exactly what it expects to already exist
+(`WIF_PROVIDER`/`WIF_SERVICE_ACCOUNT` secrets, plus the same
+`GCP_PROJECT`/`GCP_REGION`/etc. as repo variables).
+
+Frontend redeploys are already automatic under Vercel's/Cloudflare Pages'
+own git integration — no GitHub Actions step needed for it. Build settings
+are identical on either platform (neither needs a platform-specific config
+file for a Vite app): build command `npm run build`, output directory
+`dist`, and build-time env vars `VITE_API_BASE_URL` (the deployed Cloud Run
+URL) / `VITE_API_KEY` (matching the backend's `API_KEY` secret) — Vite
+inlines `VITE_*` at build time, not runtime (see `frontend/Dockerfile`'s
+existing comment on why these have to be build args).
+
+### Before making this reachable by anyone but you
+
+`docs/OPERATIONS.md`'s A/B section above already documents hitting Gemini's
+free-tier cap (20 requests/day) mid-eval-run. If this deployment is meant to
+be reachable by someone else (e.g. for grading), that cap is a real risk —
+decide between `LLM_PROVIDER=groq` (already supported, see "Comparing
+providers" above) or a paid Gemini tier before sharing a URL. Both paths
+already work today; this is a config decision, not new engineering.
+
+**This is not yet deployed anywhere.** The pieces above (Dockerfile,
+`deploy_cloud_run.sh`, `deploy.yml`) are ready to run, but no `gcloud`
+command has actually been executed from this repo — there's no live URL yet.
+Deploying is a manual step the project owner runs with their own GCP
+account; see `docs/DESIGN_REVIEW.md` Q9/Q10 for what's still a known
+limitation regardless (single global index, no per-tenant isolation).
