@@ -268,12 +268,17 @@ constraints beyond it:
   `metadata.json` is one global index for every document, loaded as a
   single process-wide singleton (`get_vector_store()` in
   `app/api/v1/routes/query.py`, `@lru_cache(maxsize=1)`). There's no
-  sharding, no per-tenant isolation, and no concurrency control around
-  writes — `FAISSVectorStore.add_embeddings`/`delete_document`/`save`
-  aren't guarded by any lock, so two uploads or an upload racing a
-  delete at the same instant is a real (untested) correctness risk. A
-  multi-user deployment would need a proper vector database
-  (namespaced/multi-tenant) rather than this file.
+  sharding and no per-tenant isolation — every document lives in the
+  same global index, so a multi-user deployment would need a proper
+  vector database (namespaced/multi-tenant) rather than this file.
+  Concurrent *writes* are guarded, though:
+  `FAISSVectorStore.add_embeddings`/`delete_document`/`save` share a
+  `threading.Lock`, so two uploads or an upload racing a delete at the
+  same instant can no longer corrupt the index/metadata pairing (see
+  `faiss_vector_store.py`). Reads (`search`, `get_chunks_by_document`,
+  `load`) aren't locked, so a read concurrent with a write can still
+  observe a mid-rebuild index — a narrower gap than the unguarded-writes
+  one, but still open.
 - **Single API key.** One shared secret for the whole API — no per-user
   keys, no key rotation, no rate limiting, no way to revoke one client
   without rotating the key for everyone.
@@ -306,7 +311,8 @@ data: one shared API key instead of per-user auth, no encryption at
 rest, PII is flagged but never scrubbed or blocked, cost figures are
 config-derived estimates rather than billed usage (Q8), the eval
 harness that would catch a quality regression isn't gated in CI (Q6),
-and the FAISS index has no write-concurrency protection (Q9). Those are
-exactly the gaps this document and
+and the FAISS index still has no per-tenant isolation (Q9 — its write
+race is closed, but sharding isn't). Those are exactly the gaps this
+document and
 [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) already name — the honest
 answer is "trust it for exactly the scope it's built for, not further."
