@@ -37,6 +37,16 @@ ChatService._plan (for planner classification) and ChatService.handle_query
   below for exactly what each measures, and eval/README.md for the
   worked definitions. This is what the "Retrieval ablation" numbers in
   docs/OPERATIONS.md are built from.
+- Citation Accuracy: same entries as Precision@5/Recall@5/MRR, but a
+  different question from either that or Groundedness proxy. Groundedness
+  checks whether the *answer text* shares vocabulary with any retrieved
+  chunk; Precision@5 checks whether *retrieval* pulled back relevant
+  chunks at all. This checks the actual citation surface a caller sees —
+  ChatResponse.sources — and whether at least one of *those specific*
+  excerpts contains real supporting evidence for the claim, using the
+  same keyword-support heuristic as Precision@5. This is the automated
+  version of what docs/HUMAN_EVAL.md row 4 caught by hand: a correct
+  answer whose 5 listed sources didn't obviously contain the definition.
 
 Requires a real GEMINI_API_KEY (this calls the live LLM) and at least one
 document already indexed in the backend's vector store — see
@@ -63,6 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.exceptions import AppError, VectorStoreNotFoundError  # noqa: E402
 from app.models.document import RetrievedChunk  # noqa: E402
+from app.models.schemas import SourceReference  # noqa: E402
 from app.services.faiss_vector_store import DEFAULT_METADATA_PATH, FAISSVectorStore  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.services.llm_provider import build_llm_client  # noqa: E402
@@ -150,6 +161,20 @@ def reciprocal_rank(chunks: list[RetrievedChunk], keywords: list[str], k: int) -
         if contains_any_keyword(chunk.text, keywords):
             return 1.0 / rank
     return 0.0
+
+
+def citation_supported(sources: list[SourceReference], keywords: list[str]) -> bool:
+    """Whether at least one source actually attached to the response
+    (ChatResponse.sources — the real citation surface a caller sees, not
+    just whatever retrieve() pulled back) contains real supporting
+    evidence for the claim. Same keyword-support heuristic Precision@5
+    uses, applied to each source's excerpt (the ~200-char slice actually
+    shown to a caller, not the full untrimmed chunk text) rather than to
+    every retrieved chunk indiscriminately — a keyword present in a
+    chunk's full text but trimmed out of the excerpt a reviewer would
+    actually see is exactly the kind of gap this is meant to catch, not
+    paper over."""
+    return any(contains_any_keyword(source.excerpt, keywords) for source in sources)
 
 
 def discover_document_id() -> str:
@@ -261,6 +286,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     precision_flags: list[float] = []
     recall_flags: list[float] = []
     reciprocal_ranks: list[float] = []
+    citation_accuracy_flags: list[bool] = []
     entries_out = []
 
     delay_note = f", {delay:.1f}s delay between entries" if delay > 0 else ""
@@ -309,6 +335,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         precision = None
         recall = None
         rr = None
+        citation_accurate = None
         answer = ""
         tool_used = "none"
         steps_taken = 0
@@ -359,6 +386,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 precision_flags.append(precision)
                 recall_flags.append(recall)
                 reciprocal_ranks.append(rr)
+                citation_accurate = citation_supported(response.sources, chunk_keywords)
+                citation_accuracy_flags.append(citation_accurate)
         except AppError as exc:
             error = str(exc)
             if keywords:
@@ -382,6 +411,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 precision_flags.append(precision)
                 recall_flags.append(recall)
                 reciprocal_ranks.append(rr)
+                citation_accurate = False  # no real sources to have supported anything
+                citation_accuracy_flags.append(citation_accurate)
 
         status = "OK" if error is None else f"ERROR: {error}"
         print(f"[{case_type:11s}] {expected_action:>13s} -> {plan.action:<13s} | {query[:70]!r} | {status}")
@@ -402,6 +433,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "precision_at_5": precision,
                 "recall_at_5": recall,
                 "reciprocal_rank": rr,
+                "citation_accurate": citation_accurate,
                 "error": error,
                 "task_success": task_success,
                 "grounded": grounded,
@@ -440,6 +472,11 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     precision_at_5 = sum(precision_flags) / len(precision_flags) if precision_flags else None
     recall_at_5 = sum(recall_flags) / len(recall_flags) if recall_flags else None
     mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else None
+    citation_accuracy = (
+        sum(citation_accuracy_flags) / len(citation_accuracy_flags)
+        if citation_accuracy_flags
+        else None
+    )
 
     report = {
         "dataset": dataset_path.name,
@@ -476,6 +513,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "recall_at_5_n": len(recall_flags),
         "mrr": round(mrr, 4) if mrr is not None else None,
         "mrr_n": len(reciprocal_ranks),
+        "citation_accuracy": round(citation_accuracy, 4) if citation_accuracy is not None else None,
+        "citation_accuracy_n": len(citation_accuracy_flags),
         "entries": entries_out,
     }
     return report
@@ -541,6 +580,10 @@ def print_report(report: dict) -> None:
     print(f"Precision@5:            {fmt(report['precision_at_5'], report['precision_at_5_n'])}")
     print(f"Recall@5:               {fmt(report['recall_at_5'], report['recall_at_5_n'])}")
     print(f"MRR:                    {fmt(report['mrr'], report['mrr_n'])}")
+    print(
+        f"Citation Accuracy:      "
+        f"{fmt(report['citation_accuracy'], report['citation_accuracy_n'])}"
+    )
     print("=" * 70 + "\n")
 
 
