@@ -216,6 +216,31 @@ metric is defined purely in terms of that:
 See `precision_at_k`/`recall_at_k`/`reciprocal_rank` in `run_eval.py` for
 the exact implementation.
 
+### Citation Accuracy
+
+Same entries as Precision@5/Recall@5/MRR, but a different question from
+either that or Groundedness proxy:
+
+- Groundedness checks the **answer text** — does it share vocabulary with
+  *any* retrieved chunk.
+- Precision@5 checks **retrieval** — did relevant chunks come back at
+  all, independent of what the LLM did with them.
+- Citation Accuracy checks the **citation surface a caller actually
+  sees** — `ChatResponse.sources` — and whether at least one of those
+  specific excerpts contains real supporting evidence, using the same
+  keyword-support heuristic as Precision@5 (`citation_supported` in
+  `run_eval.py`).
+
+Checked against each source's `excerpt` (the ~200-char slice a caller
+would actually see) rather than the full underlying chunk text — a
+keyword present in a chunk but trimmed out of the excerpt is exactly the
+kind of gap this is meant to surface, not paper over by checking text
+nobody's shown. This is the automated version of what
+`docs/HUMAN_EVAL.md` row 4 caught by hand: a correct, well-grounded
+answer whose 5 listed sources didn't obviously contain the WBS
+definition — Citation Accuracy would have flagged that row as `False`
+automatically, without needing a human to notice it.
+
 ## Dataset format
 
 Each entry in `dataset_vN.json` is an object:
