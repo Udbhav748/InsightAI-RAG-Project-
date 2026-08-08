@@ -521,11 +521,11 @@ InsightAI-RAG/
   provider once — if both are down, the request fails. There's no
   health-based routing or automatic recovery back to the primary.
 - **Not yet deployed** — Docker images build and run locally
-  (`docker-compose.yml`), and the Cloud Run deploy path (Dockerfile,
-  `backend/scripts/deploy_cloud_run.sh`, `.github/workflows/deploy.yml`) is
-  ready to run, but no `gcloud` command has actually been executed from this
-  repo yet — nothing is live. See `docs/OPERATIONS.md`'s "Deploying to
-  Cloud Run" section.
+  (`docker-compose.yml`), and the Render deploy path (Dockerfile,
+  `render.yaml`, the auto-seeded demo document for Render's ephemeral free
+  tier) is ready to run, but no Render service has actually been created
+  from this repo yet — nothing is live. See `docs/OPERATIONS.md`'s
+  "Deploying to Render" section.
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
@@ -537,13 +537,13 @@ dashboards) and why.
 
 - [ ] Persistent, server-side document history (currently tracked per-browser)
 - [ ] Multi-document collections / workspaces
-- [ ] Streaming chat responses
 - [ ] Support for additional file types beyond PDF (currently PDF-only; scanned/image-only PDFs are handled via OCR, see Features)
 - [ ] Per-user authentication (JWT/RBAC) in place of the single shared API key
 - [ ] Encryption at rest for the vector store and uploaded files
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file
-- [ ] Actually run the Cloud Run deploy (config and CI are ready — see `docs/OPERATIONS.md`'s "Deploying to Cloud Run"), and point the frontend build at Vercel or Cloudflare Pages
+- [ ] Actually create the Render service (config is ready — see `docs/OPERATIONS.md`'s "Deploying to Render"), and point the frontend build at Vercel or Cloudflare Pages
 - [ ] Record the eval variant (model/prompt version) directly in `run_eval.py`'s results JSON
+- [ ] Persistent storage on Render beyond the auto-seeded demo document (paid tier's persistent Disk, or an external store) so real uploads survive the free tier's 15-minute idle spin-down
 
 ## License
 

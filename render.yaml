@@ -1,0 +1,49 @@
+services:
+  - type: web
+    runtime: docker
+    name: insightai-rag-backend
+    plan: free
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_NAME
+        value: InsightAI-RAG
+      - key: APP_VERSION
+        value: 0.1.0
+      - key: DEBUG
+        value: "false"
+      # Must be set to the deployed frontend's real origin (Vercel/Cloudflare
+      # Pages) once it exists — main.py's CORS middleware is a single-origin
+      # allowlist, so chat requests from the frontend will fail with a CORS
+      # error until this matches exactly. Placeholder to force a conscious
+      # choice rather than silently defaulting to something wrong.
+      - key: FRONTEND_URL
+        sync: false
+      # groq, not gemini: Gemini's free tier caps at 20 requests/day (hit
+      # directly during this project's own eval runs — see
+      # docs/OPERATIONS.md), which a live, possibly-multi-visitor demo would
+      # burn through fast. Groq's free tier is more forgiving. Switch back to
+      # gemini here (and set GEMINI_API_KEY below) if a paid Gemini tier is
+      # in place instead.
+      - key: LLM_PROVIDER
+        value: groq
+      # BM25 lexical fusion — pure CPU, no extra model loaded, no measured
+      # memory cost. See docs/OPERATIONS.md's "Retrieval ablation".
+      - key: HYBRID_SEARCH_ENABLED
+        value: "true"
+      # Off by default here specifically because it hasn't been verified to
+      # fit Render free tier's 512MB RAM alongside sentence-transformers +
+      # torch + FastAPI — reranking loads a second model (cross-encoder) on
+      # top of the embedding model. Flip to "true" only after confirming the
+      # service actually stays up under real traffic with it on; see
+      # docs/OPERATIONS.md's "Deploying to Render" section.
+      - key: RERANKING_ENABLED
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
