@@ -268,6 +268,49 @@ the request still fails, and there's no automatic recovery back to the
 primary once it's healthy again — a request-by-request decision, not a
 sticky failover state.
 
+## Query embedding cache
+
+`embedding_service.embed_query` — the single function both
+`retrieval_service.py` and `hybrid_search.py` call to embed an incoming
+chat query — caches its result in-process via `functools.lru_cache`
+(`maxsize=256`), keyed on the query string normalized by `.strip()`
+alone (deliberately not case-folded — the normalized string is also
+exactly what gets encoded on a miss, so a hit can never return an
+embedding for text other than what that exact call would have produced
+itself).
+
+**Scope: query embeddings only, deliberately not retrieval results or
+generated answers.** A query embedding is a pure function of (normalized
+query text, model weights) — the model loads once per process
+(`get_embedding_model`'s own `lru_cache`) and never changes mid-process,
+so this can never go stale. Retrieval results and generated answers are
+different: both depend on the vector store's *mutable* state (a document
+can be uploaded or deleted between two otherwise-identical requests), so
+caching either risks serving a stale answer after the underlying index
+changed — a correctness bug, not just a missed optimization. That's why
+only the embedding step is cached here.
+
+One implementation detail worth being explicit about: the cached helper
+(`_embed_query_cached`) returns a `tuple`, not the `list[float]`
+`embed_query` itself returns to callers. `lru_cache` shares the exact
+same return object across every cache hit — if the cache held a mutable
+`list` directly, one caller mutating its result in place would silently
+corrupt the value every other caller sharing that entry sees next.
+`embed_query` always returns a fresh `list` built from the cached tuple,
+so its return-type contract to callers doesn't change at all; only the
+private cached layer deals in the immutable form.
+
+**Measured latency** (`eval/embedding_cache_benchmark.py`, real
+`all-MiniLM-L6-v2` model, cold model already loaded before timing
+starts): averaged over 4 distinct queries, cache-miss latency
+0.0538s vs. cache-hit latency 0.0001s — a **739x speedup, 99.9% lower
+latency** on a cache hit. Run it yourself with:
+
+```bash
+cd backend
+python eval/embedding_cache_benchmark.py
+```
+
 ## Rollback plan
 
 Nothing here is more sophisticated than git:
