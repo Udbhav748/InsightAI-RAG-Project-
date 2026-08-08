@@ -314,146 +314,126 @@ canary) — this is a manual procedure, appropriate for the current
 single-instance, not-yet-deployed scale (see next section and Q9 in
 `docs/DESIGN_REVIEW.md`).
 
-## Deploying to Cloud Run
+## Deploying to Render
 
-**Backend → Google Cloud Run. Frontend → a static host (Vercel or
+**Backend → Render (Docker). Frontend → a static host (Vercel or
 Cloudflare Pages), not a container.** `backend/Dockerfile` already builds
 and runs correctly via `docker-compose.yml` (verified locally end-to-end:
-healthcheck passing, `/health` and `/docs` responding) — Cloud Run deploys
+healthcheck passing, `/health` and `/docs` responding) — Render deploys
 that same image, not a rewrite. `frontend/Dockerfile`'s nginx stage stays
 for local `docker-compose.yml` parity, but production frontend serving
 moves off it: it's a static Vite build, and paying for container compute
 (or routing it through `nginx`) to serve static files has no upside once a
 CDN-backed static host does it for free with less to maintain.
 
-Cloud Run over Render specifically for this project: `sentence-transformers`
-+ `torch` + a loaded FAISS index need real memory headroom that Render's
-free tier (512MB) is tight for. Cloud Run's per-instance memory is
-configurable up to several GB and bills per-request, scaling to zero when
-idle — near-zero cost for bursty, low-volume traffic instead of a fixed
-monthly charge for an always-on box.
+Render over Cloud Run: **Cloud Run requires a GCP billing account (a
+payment method on file) even to use its free-tier resources.** That's a
+hard blocker, not a preference — Render's free tier needs no card at all.
+The real cost of that choice is memory: Render's free web service instance
+caps at **512MB RAM**, tight for `sentence-transformers` + `torch` + a
+loaded FAISS index alongside FastAPI. See "Memory" below for how that's
+handled.
 
-### The one constraint that shapes everything below
+### The constraint that shapes everything below: an ephemeral filesystem
 
-This app assumes **one process holds the one in-memory FAISS index**
-(`get_vector_store()`'s `@lru_cache(maxsize=1)` in
-`app/api/v1/routes/query.py`), backed by one `vector_store/index.faiss` +
-`metadata.json` file pair. Writes are now guarded by a `threading.Lock`
-(`faiss_vector_store.py`) — but that protects one process, not multiple.
-Cloud Run will run more than one instance of a service concurrently under
-load unless told not to, and if the index files are GCS-FUSE-mounted for
-persistence (next section), FUSE provides **no cross-writer file locking** —
-concurrent writes from two instances silently lose data ("last write wins,"
-per Cloud Run's own docs), not just race. So every command below sets
-`--max-instances=1`. That's a correctness requirement, not a cost knob —
-and it's still compatible with scaling to zero when idle, since
-`min-instances` stays at its default of 0; there's just never more than one
-instance *running* at once.
+Render's free tier wipes the entire local filesystem on every spin-down —
+not just on redeploy. A free service spins down after **15 minutes of no
+traffic** and spinning back up is a full rebuild, not a resumed container
+(confirmed against Render's own docs). Persistent disks exist on Render,
+but only on paid tiers.
 
-### Persistent storage: GCS FUSE volume mounts
+Practically: anything uploaded through `/upload` — and the FAISS index it
+builds — is gone the next time the service goes idle for 15 minutes. This
+isn't a corruption risk (unlike the concurrent-writer problem
+`threading.Lock` in `faiss_vector_store.py` already closes) — it's that the
+app's core "upload once, ask questions later" loop doesn't survive a normal
+idle gap on this tier at all.
 
-Two GCS buckets, mounted read-write so `backend/vector_store/` and
-`backend/uploads/` survive a scale-to-zero cycle instead of losing all data
-on every cold start (Cloud Run's local disk is otherwise ephemeral):
+**Handled by auto-seeding a bundled demo document on cold start.**
+`backend/demo_corpus/pmp_key_concepts.pdf` is baked into the image;
+`app/services/demo_seed_service.py`, wired into `main.py`'s FastAPI
+`lifespan` handler, ingests it automatically on startup *only if the vector
+store is empty* — a genuine cold start (Render) seeds fresh, a warm process
+with real data (local dev, or any platform with real persistent storage)
+is untouched. This means the live demo always has something to query
+against out of the box. It does **not** solve persistence for a real
+uploaded document — that still won't survive an idle gap on the free tier,
+which is a known, documented limitation, not something silently papered
+over.
 
-```bash
-gcloud run deploy insightai-rag-backend \
-  --image REGION-docker.pkg.dev/PROJECT/REPO/insightai-rag-backend:TAG \
-  --execution-environment gen2 \
-  --add-volume name=vector-store,type=cloud-storage,bucket=BUCKET_VECTOR_STORE,readonly=false \
-  --add-volume-mount volume=vector-store,mount-path=/app/vector_store \
-  --add-volume name=uploads,type=cloud-storage,bucket=BUCKET_UPLOADS,readonly=false \
-  --add-volume-mount volume=uploads,mount-path=/app/uploads \
-  --max-instances=1 \
-  --region=REGION \
-  --allow-unauthenticated
-```
+### Memory
 
-`--execution-environment gen2` is required — GCS volume mounts don't work on
-gen1. No application code changes were needed for this: `upload_service.py`/
-`faiss_vector_store.py` already just read/write these two directories by
-path, and FUSE makes the GCS-backed mount look like local disk to them.
-Known limitation, not solved here: Cloud Storage FUSE isn't fully
-POSIX-compliant and has no cross-writer locking — safe *only* because
-`--max-instances=1` guarantees there's never a second writer to race
-against.
+The embedding model is pre-downloaded into the image at build time (see
+the Dockerfile's `RUN python -c "from sentence_transformers import
+SentenceTransformer; SentenceTransformer(...)"` step) so a cold start
+doesn't also pay for a Hugging Face download on top of loading it — that
+step alone measured at roughly a minute over a slow/unauthenticated
+connection locally.
 
-### Secrets
+`render.yaml` ships with **`RERANKING_ENABLED: false`**. With it off,
+`docker run --memory=512m` against the actual built image — the same
+config `render.yaml` deploys — was tested directly: cold start (seed
+ingestion, embedding model load, 99 chunks embedded) peaked at **~497MB
+(97% of the 512MB limit)** before settling to ~320MB once idle and
+serving; `/health` returned 200 throughout and the container was never
+OOM-killed. That's real evidence this fits, not just a guess — but the
+peak margin is thin (roughly 15MB), so it's plausible Render's actual
+infrastructure (different overhead than this local Docker Desktop VM)
+pushes it over on a bad day. **Reranking stays off**: it loads a second
+model (a cross-encoder) on top of the embedding model, and there's no
+headroom left in that peak to absorb it. `HYBRID_SEARCH_ENABLED` stays
+`true` — it's pure CPU (BM25), no second model, no measured memory cost
+(see "Retrieval ablation" above). If Render's own dashboard shows real
+headroom under sustained traffic, `RERANKING_ENABLED` can be revisited —
+but treat the free tier's margin here as tight, not comfortable.
 
-`GEMINI_API_KEY`, `API_KEY`, and (if used) `GROQ_API_KEY` go in Secret
-Manager instead of plain env vars:
+### Deploying
 
-```bash
-echo -n "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
-gcloud run deploy insightai-rag-backend \
-  --update-secrets=GEMINI_API_KEY=gemini-api-key:latest,API_KEY=api-key:latest \
-  ...
-```
+No `gcloud`-equivalent CLI needed — Render deploys straight from a
+connected GitHub repo:
 
-`FRONTEND_URL` stays a plain env var, set to the deployed frontend's real
-origin — `main.py`'s CORS middleware is a single-origin allowlist
-(`allow_origins=[settings.frontend_url]`), so this is the one setting that
-must be correct for the frontend to reach the API at all. There's no
-multi-origin support today (e.g. for a preview-deploy URL alongside
-production) — not needed yet, matching the rest of this app's single-tenant
-scope.
+1. Sign up at [render.com](https://render.com) (no card required for the
+   free tier).
+2. **New → Blueprint**, connect the GitHub repo. Render reads `render.yaml`
+   at the repo root and provisions the service it describes.
+3. During the Blueprint creation flow, Render prompts for every `envVar`
+   marked `sync: false` in `render.yaml`: `GEMINI_API_KEY`, `API_KEY`,
+   `GROQ_API_KEY`, and `FRONTEND_URL` (leave `FRONTEND_URL` as a placeholder
+   until the frontend's real URL exists — step below — then update it in
+   the dashboard; CORS will reject requests from the real frontend until
+   this matches exactly).
+4. Deploy. Render builds `backend/Dockerfile` and serves on the URL it
+   assigns (`https://insightai-rag-backend.onrender.com`-shaped).
 
-### Running it: the deploy script
+### Deploying the frontend
 
-`backend/scripts/deploy_cloud_run.sh` builds, pushes, and deploys in one
-command — the exact flags above, read from environment variables
-(`GCP_PROJECT`, `GCP_REGION`, `ARTIFACT_REGISTRY_REPO`,
-`BUCKET_VECTOR_STORE`, `BUCKET_UPLOADS`, `FRONTEND_URL`; see the script's own
-header for the full list). Requires `gcloud auth login` first and the
-one-time GCP setup below already done. `--print-only` prints the exact
-command it would run — including the image tag it would build — without
-touching Docker or your GCP account, so you can check the shape before
-committing to it:
+Vercel or Cloudflare Pages, whichever's preferred — genuinely
+interchangeable for a static Vite build, and neither needs a
+platform-specific config file. Both auto-deploy on push via their own git
+integration, no GitHub Actions step needed for this half of the app.
+Build settings, identical on either platform:
 
-```bash
-GCP_PROJECT=... GCP_REGION=... ARTIFACT_REGISTRY_REPO=... \
-BUCKET_VECTOR_STORE=... BUCKET_UPLOADS=... FRONTEND_URL=... \
-  backend/scripts/deploy_cloud_run.sh --print-only
-```
+- Build command: `npm run build`
+- Output directory: `dist`
+- Env vars (build-time — Vite inlines `VITE_*` at build time, not runtime,
+  see `frontend/Dockerfile`'s existing comment on why): `VITE_API_BASE_URL`
+  = the Render backend's URL, `VITE_API_KEY` = the same value as the
+  backend's `API_KEY` secret.
 
-One-time GCP setup this script assumes already exists (not something it
-provisions): a GCP project with Cloud Run, Artifact Registry, and Secret
-Manager APIs enabled; an Artifact Registry Docker repo; the two GCS buckets
-above; and the `gemini-api-key`/`api-key` secrets.
-
-### CI/CD
-
-`.github/workflows/deploy.yml` runs the same script on every push to `main`
-that touches `backend/**` (separate from `.github/workflows/ci.yml`, which
-stays pytest-only, so a deploy failure is never conflated with a test
-failure in the same job). Authenticates via Workload Identity Federation —
-no long-lived GCP service account key sits in GitHub Secrets — which needs
-a one-time WIF pool/provider set up in your GCP project; see the workflow
-file's own header comment for exactly what it expects to already exist
-(`WIF_PROVIDER`/`WIF_SERVICE_ACCOUNT` secrets, plus the same
-`GCP_PROJECT`/`GCP_REGION`/etc. as repo variables).
-
-Frontend redeploys are already automatic under Vercel's/Cloudflare Pages'
-own git integration — no GitHub Actions step needed for it. Build settings
-are identical on either platform (neither needs a platform-specific config
-file for a Vite app): build command `npm run build`, output directory
-`dist`, and build-time env vars `VITE_API_BASE_URL` (the deployed Cloud Run
-URL) / `VITE_API_KEY` (matching the backend's `API_KEY` secret) — Vite
-inlines `VITE_*` at build time, not runtime (see `frontend/Dockerfile`'s
-existing comment on why these have to be build args).
+Once the frontend has a real URL, go back to the Render dashboard and set
+`FRONTEND_URL` to it — this is the CORS allowlist `main.py` checks against.
 
 ### Before making this reachable by anyone but you
 
 `docs/OPERATIONS.md`'s A/B section above already documents hitting Gemini's
-free-tier cap (20 requests/day) mid-eval-run. If this deployment is meant to
-be reachable by someone else (e.g. for grading), that cap is a real risk —
-decide between `LLM_PROVIDER=groq` (already supported, see "Comparing
-providers" above) or a paid Gemini tier before sharing a URL. Both paths
-already work today; this is a config decision, not new engineering.
+free-tier cap (20 requests/day) mid-eval-run — why `render.yaml` defaults
+`LLM_PROVIDER` to `groq`. If a paid Gemini tier is available instead, switch
+it back in the dashboard; either way this is a config decision already
+supported today, not new engineering.
 
-**This is not yet deployed anywhere.** The pieces above (Dockerfile,
-`deploy_cloud_run.sh`, `deploy.yml`) are ready to run, but no `gcloud`
-command has actually been executed from this repo — there's no live URL yet.
-Deploying is a manual step the project owner runs with their own GCP
+**This is not yet deployed anywhere.** The pieces above (`Dockerfile`,
+`render.yaml`, `demo_seed_service.py`) are ready to run, but no Render
+service has actually been created from this repo yet — there's no live URL.
+Deploying is a manual step the project owner runs with their own Render
 account; see `docs/DESIGN_REVIEW.md` Q9/Q10 for what's still a known
 limitation regardless (single global index, no per-tenant isolation).

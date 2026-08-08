@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/app/.cache/huggingface
 
 WORKDIR /app
 
@@ -24,7 +25,23 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the embedding model into the image at build time. Without
+# this, embedding_service.py pulls it from Hugging Face Hub on first use —
+# fine for a long-lived process, but on a platform with an ephemeral
+# filesystem (Render's free tier wipes local disk, and any HF cache with
+# it, on every spin-down) that download would repeat on every single cold
+# start. Baking it into the image turns a ~76s cold start (measured: ~58s
+# download + 18s actual encoding) into just the ~18s encoding step.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 COPY app ./app
+# One small bundled PDF, auto-ingested on startup only if the vector store
+# is empty (app/services/demo_seed_service.py) — exists so a deployment
+# with an ephemeral filesystem (e.g. Render's free tier, which wipes local
+# disk on every spin-down) always has something to query against without
+# requiring a real upload first. Never touches a store that already has
+# data (local dev, or any platform with real persistent storage).
+COPY demo_corpus ./demo_corpus
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/uploads /app/vector_store \
@@ -34,7 +51,7 @@ USER appuser
 EXPOSE 8000
 
 # Shell form (not exec-form CMD ["...", "8000"]) so ${PORT} actually expands:
-# Cloud Run injects PORT (default 8080) and requires the container to listen
+# both Render and Cloud Run inject PORT and require the container to listen
 # on it; docker-compose.yml doesn't set PORT locally, so this still falls
 # back to 8000 there, matching its "8000:8000" port mapping unchanged.
 CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
