@@ -370,22 +370,39 @@ doesn't also pay for a Hugging Face download on top of loading it — that
 step alone measured at roughly a minute over a slow/unauthenticated
 connection locally.
 
-`render.yaml` ships with **`RERANKING_ENABLED: false`**. With it off,
-`docker run --memory=512m` against the actual built image — the same
-config `render.yaml` deploys — was tested directly: cold start (seed
-ingestion, embedding model load, 99 chunks embedded) peaked at **~497MB
-(97% of the 512MB limit)** before settling to ~320MB once idle and
-serving; `/health` returned 200 throughout and the container was never
-OOM-killed. That's real evidence this fits, not just a guess — but the
-peak margin is thin (roughly 15MB), so it's plausible Render's actual
-infrastructure (different overhead than this local Docker Desktop VM)
-pushes it over on a bad day. **Reranking stays off**: it loads a second
-model (a cross-encoder) on top of the embedding model, and there's no
-headroom left in that peak to absorb it. `HYBRID_SEARCH_ENABLED` stays
-`true` — it's pure CPU (BM25), no second model, no measured memory cost
-(see "Retrieval ablation" above). If Render's own dashboard shows real
-headroom under sustained traffic, `RERANKING_ENABLED` can be revisited —
-but treat the free tier's margin here as tight, not comfortable.
+`render.yaml` ships with **`RERANKING_ENABLED: false`**. Before the two
+fixes below, `docker run --memory=512m` against the built image locally
+peaked at ~497MB (97% of the 512MB limit) and survived — but **the first
+real Render deploy OOM-killed anyway** ("Ran out of memory (used over
+512MB)"), confirming the local Docker Desktop VM used to build/test this
+doesn't reproduce Render's actual memory accounting closely enough to
+trust a locally-passing test as sufficient on its own.
+
+Two fixes closed most of that gap, verified with a second round of the
+same local test:
+
+- **Thread pools constrained** (`Dockerfile`:
+  `OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS=1`,
+  `TOKENIZERS_PARALLELISM=false`). torch/numpy/faiss default their
+  BLAS/OMP thread pool to the *visible* CPU count, which in a container
+  often reflects the host's full core count rather than the fraction
+  actually allocated (Render's free tier: 0.1 CPU) — each extra thread
+  allocates its own buffers, real memory, not just wasted scheduling.
+- **Batched embedding encoding** (`Settings.embedding_batch_size`,
+  default 8, `embedding_service.py`). Encoding an entire document's
+  chunks in one `encode()` call was a real, measured transient memory
+  spike; smaller batches trade a little throughput for a materially
+  lower peak.
+
+Together: peak dropped from ~500MB (97.7%) to **~480MB (93.8%)** —
+real headroom gained, not just theorized, though still not a
+comfortable margin. **Reranking stays off**: it loads a second model (a
+cross-encoder) on top of the embedding model, and there's no headroom
+in that peak to absorb it. `HYBRID_SEARCH_ENABLED` stays `true` — pure
+CPU (BM25), no second model (see "Retrieval ablation" above). If a real
+Render deploy still OOMs after these fixes, the next lever is
+`EMBEDDING_BATCH_SIZE` lower than 8, then `HYBRID_SEARCH_ENABLED=false`
+as a last resort before considering a paid tier.
 
 ### Deploying
 
