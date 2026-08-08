@@ -53,10 +53,41 @@ def get_embedding_model() -> SentenceTransformer:
 
 
 
+# Query embeddings are a pure function of (normalized query text, model
+# weights) -- the model is loaded once per process (get_embedding_model's
+# own lru_cache) and never changes mid-process, so this can never go
+# stale the way caching retrieval results or generated answers would
+# (both depend on the vector store's mutable state -- documents can be
+# uploaded/deleted between requests, which the embedding step doesn't
+# care about at all). Deliberately a *separate*, smaller cache from
+# get_embedding_model's maxsize=1 -- this one is keyed per distinct
+# query, not per model.
+#
+# Returns a tuple, not a list: lru_cache shares the exact same return
+# object across every cache hit, and a list is mutable -- if this were
+# embed_query itself, a caller mutating its result in place (nothing
+# does today, but nothing stops a future one) would silently corrupt the
+# cached value for every other caller sharing that entry. embed_query()
+# below always returns a fresh list built from this, so its return-type
+# contract doesn't change at all; only this private helper deals in the
+# cache-safe immutable form.
+@lru_cache(maxsize=256)
+def _embed_query_cached(normalized_query: str) -> tuple[float, ...]:
+    model = get_embedding_model()
+    try:
+        vector = model.encode(normalized_query, normalize_embeddings=True)
+    except Exception as exc:
+        raise EmbeddingGenerationError(f"Failed to generate embedding for query: {exc}") from exc
+    return tuple(vector.tolist())
+
+
 # Scoped to LLMTimeoutError/LLMAPIError per spec, matching GeminiClient.generate.
 # In practice this function's own failures raise EmbeddingGenerationError /
 # EmbeddingModelLoadError instead, so today this decorator only retries if a
 # future implementation surfaces one of those two LLM-specific error types.
+# lru_cache doesn't cache exceptions, so a failed call retries the real
+# model.encode() on the next attempt rather than retrying against a cached
+# failure.
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -66,15 +97,17 @@ def get_embedding_model() -> SentenceTransformer:
 )
 def embed_query(query: str) -> list[float]:
     """Embed a single query string, using the same model and normalization
-    as generate_embeddings, so query and chunk vectors share one space."""
-    model = get_embedding_model()
+    as generate_embeddings, so query and chunk vectors share one space.
 
-    try:
-        vector = model.encode(query, normalize_embeddings=True)
-    except Exception as exc:
-        raise EmbeddingGenerationError(f"Failed to generate embedding for query: {exc}") from exc
-
-    return vector.tolist()
+    Cached (see _embed_query_cached) keyed on the query normalized by
+    .strip() alone -- deliberately not case-folded or otherwise altered,
+    since that's also what actually gets encoded on a cache miss (the
+    normalized string, not the raw input), so a cache hit can never
+    return an embedding for text other than what this exact call would
+    have encoded itself.
+    """
+    normalized_query = query.strip()
+    return list(_embed_query_cached(normalized_query))
 
 
 def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
