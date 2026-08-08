@@ -2,7 +2,22 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/app/.cache/huggingface
+    HF_HOME=/app/.cache/huggingface \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    TOKENIZERS_PARALLELISM=false
+# torch/numpy/faiss default their BLAS/OMP thread pool to the *visible*
+# CPU count, which in a container often reflects the host's full core
+# count, not the fraction actually allocated (Render's free tier: 0.1
+# CPU). Each extra thread allocates its own working buffers — real
+# memory, not just wasted CPU scheduling — and this project's traffic is
+# single-request-at-a-time on a machine this small, so there's no
+# parallelism benefit being given up. Found this after a real deploy:
+# Render's free tier OOM-killed the app at >512MB despite this same image
+# peaking at ~497MB under a local `docker run --memory=512m` test — the
+# gap is exactly this kind of per-thread overhead that a synthetic local
+# memory cap doesn't reproduce the same way real host CPU visibility does.
 
 WORKDIR /app
 
