@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     # Sentence Transformers model used to generate chunk embeddings.
     embedding_model_name: str = "all-MiniLM-L6-v2"
 
+    # Chunks per encode() batch. Encoding a whole document's chunks in one
+    # batch is fine on a normal machine, but on a memory-constrained
+    # deployment (Render's free tier: 512MB) it's a real, measured
+    # transient memory spike — confirmed against a live Render deploy that
+    # OOM-killed on it. Smaller batches trade a little throughput for a
+    # materially lower peak.
+    embedding_batch_size: int = 8
+
     # Directory (relative to backend/) where the vector store is persisted.
     vector_store_dir_name: str = "vector_store"
 

@@ -90,6 +90,7 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
         vectors = model.encode(
             [chunk.text for chunk in chunks],
             normalize_embeddings=True,
+            batch_size=settings.embedding_batch_size,
         )
     except Exception as exc:
         raise EmbeddingGenerationError(
