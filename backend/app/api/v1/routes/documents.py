@@ -1,4 +1,4 @@
-"""Routes for PDF document upload and management."""
+"""Routes for PDF document upload, listing, and management."""
 
 import logging
 
@@ -7,13 +7,41 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 from app.api.v1.routes.query import get_vector_store
 from app.core.auth import require_api_key
 from app.core.exceptions import ConfirmationRequiredError, DocumentNotFoundError
-from app.models.schemas import DocumentDeleteResponse, DocumentProcessingResponse
+from app.models.schemas import (
+    DocumentDeleteResponse,
+    DocumentListResponse,
+    DocumentProcessingResponse,
+)
 from app.services.document_processing_service import DocumentProcessingService
+from app.services.document_repository import delete_document_metadata, list_documents
 from app.services.upload_service import UPLOAD_DIR
 from app.services.validation_service import validate_pdf_upload
 
 router = APIRouter(tags=["Documents"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/documents", response_model=DocumentListResponse)
+def list_uploaded_documents(request: Request) -> DocumentListResponse:
+    """List the caller's documents (tenant-scoped when the DB is enabled;
+    empty when the DB is disabled)."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    docs = list_documents(tenant_id)
+
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "documents_listed",
+                "path": request.url.path,
+                "count": len(docs),
+                "client": getattr(request.state, "client_name", "unknown"),
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+
+    return DocumentListResponse(documents=docs, total=len(docs))
 
 
 @router.post(
@@ -33,7 +61,8 @@ async def upload_document(
     # (see query.py), so a document processed here is immediately visible
     # to chat without a reload.
     service = DocumentProcessingService(get_vector_store())
-    response = await service.process(file)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    response = await service.process(file, tenant_id=tenant_id)
 
     logger.info(
         "audit_event",
@@ -43,6 +72,7 @@ async def upload_document(
                 "path": request.url.path,
                 "document_id": response.document_id,
                 "client": getattr(request.state, "client_name", "unknown"),
+                "tenant_id": tenant_id,
             }
         },
     )
@@ -72,6 +102,9 @@ def delete_document(
     # anything, so a missing file here isn't an error.
     for path in UPLOAD_DIR.glob(f"{document_id}.*"):
         path.unlink(missing_ok=True)
+
+    # Best-effort removal of the durable metadata row (no-op if DB disabled).
+    delete_document_metadata(document_id)
 
     logger.info(
         "audit_event",

@@ -25,6 +25,7 @@ from fastapi import Header, Request
 
 from app.core.config import settings
 from app.core.exceptions import UnauthorizedError
+from app.services.tenant_service import find_api_key, resolve_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,12 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
     key_table = settings.api_key_table
     client_name = key_table.get(key_hash)
+    if client_name is None:
+        # Not an env-configured key — try the DB api_keys table (covers
+        # keys added directly to PostgreSQL, not present in API_KEYS env).
+        db_lookup = find_api_key(key_hash)
+        if db_lookup is not None:
+            client_name, _tenant_id = db_lookup
     if client_name is not None:
         # Check rate limit
         if not _check_rate_limit(client_name):
@@ -89,7 +96,12 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
                 extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": client_name}},
             )
             raise UnauthorizedError("Rate limit exceeded. Please slow down.")
+        # Resolve the tenant for this client (creating the row on first
+        # sight when the DB is enabled); None when the DB is disabled,
+        # in which case downstream persistence is also disabled.
+        tenant_id = resolve_tenant(client_name)
         request.state.client_name = client_name
+        request.state.tenant_id = tenant_id
         return
 
     logger.warning(

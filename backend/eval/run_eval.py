@@ -50,6 +50,30 @@ ChatService._plan (for planner classification) and ChatService.handle_query
   same keyword-support heuristic as Precision@5. This is the automated
   version of what docs/HUMAN_EVAL.md row 4 caught by hand: a correct
   answer whose 5 listed sources didn't obviously contain the definition.
+- Hit Rate@5: for the same expected_chunk_keywords entries, whether at
+  least one relevant chunk appeared in the top-5 retrieved — the binary
+  "did retrieval surface anything relevant at all" complement to MRR's
+  rank-weighted version.
+- Schema Compliance Rate + Field Accuracy: every required ChatResponse
+  field must be present and populated with a semantically valid value
+  (non-empty answer, known tool_used/answer_source, steps_taken >= 1,
+  list-typed retrieved_chunks/sources, non-empty session_id). Schema
+  Compliance = all checks pass for an entry; Field Accuracy = fraction
+  of individual field checks passing across all entries.
+- Plan-Execution Consistency: whether the tool that actually executed
+  matches the planner's decided action (e.g. "retrieve" -> tool_used in
+  {retrieval, web_search}). Detects routing claiming one thing while the
+  pipeline does another.
+- Tool Success Rate (per tool): fraction of runs routed to each tool
+  that completed without an AppError. Failed runs are attributed to an
+  "error" bucket since which tool failed isn't known at this level.
+- Step Efficiency + Avg Steps: steps_taken vs the minimal expected step
+  count per action (see EXPECTED_MIN_STEPS) — how close each run was to
+  the leanest path; corrective-loop retries and web-search detours drive
+  it down.
+- Memory Recall Rate: for entries with `history` and
+  expected_memory_keywords, whether the answer used context that could
+  only have come from an earlier turn (not the current query).
 
 Requires a real GEMINI_API_KEY (this calls the live LLM) and at least one
 document already indexed in the backend's vector store — see
@@ -88,6 +112,14 @@ from pydantic import BaseModel  # noqa: E402
 logger = logging.getLogger(__name__)
 
 ACTIONS = ["conversational", "retrieve", "summarize"]
+
+
+def _dataset_version(filename: str) -> str:
+    """Derive a dataset version from its filename (dataset_v2.json -> "v2").
+    Keeps result JSONs self-describing about which dataset revision they
+    were produced against, complementing the filename itself."""
+    match = re.search(r"v(\d+)\.json$", filename)
+    return match.group(1) if match else filename
 
 
 class GroundednessJudgment(BaseModel):
@@ -189,6 +221,77 @@ def citation_supported(sources: list[SourceReference], keywords: list[str]) -> b
     actually see is exactly the kind of gap this is meant to catch, not
     paper over."""
     return any(contains_any_keyword(source.excerpt, keywords) for source in sources)
+
+
+def hit_at_k(chunks: list[RetrievedChunk], keywords: list[str], k: int) -> bool:
+    """Whether at least one relevant chunk appears in the top-k retrieved
+    chunks. This is the binary "found it at all" complement to MRR's
+    rank-weighted version — Hit Rate@K answers "did retrieval surface
+    anything relevant in the top k at all?", MRR answers "how high up was
+    the first one?"."""
+    return any(contains_any_keyword(chunk.text, keywords) for chunk in chunks[:k])
+
+
+# Expected minimal number of processing steps for each planner action,
+# from the step accounting in ChatService.handle_query (see rag_service.py):
+# every branch costs 1 for planning, plus per-branch increments.
+#   conversational: 1 (planning only)
+#   summarize:      1 + 1 (fetch chunks) + 1 (generation) = 3
+#   retrieve:       1 + 1 (retrieval) + 1 (grading) + 1 (generation) = 4
+# Step Efficiency below is min(expected / actual, 1.0): a run at exactly
+# the minimal step count scores 1.0, and every corrective-loop retry,
+# web-search detour, or reflection pass drives the ratio down.
+EXPECTED_MIN_STEPS = {
+    "conversational": 1,
+    "summarize": 3,
+    "retrieve": 4,
+}
+
+
+def step_efficiency(expected_action: str, steps_taken: int) -> float:
+    min_steps = EXPECTED_MIN_STEPS.get(expected_action)
+    if min_steps is None or not steps_taken:
+        return 1.0
+    return min(min_steps / steps_taken, 1.0)
+
+
+# Which tool_used value each planner action is expected to drive, for the
+# plan-execution consistency check (the "planning" item of agent
+# evaluation: did the decided action actually execute, or did routing
+# claim one thing and the pipeline do another?). "web_search" is valid
+# for retrieve/diagnose because a weak/insufficient grade can trigger the
+# web fallback even before generation (see rag_service.py).
+EXPECTED_TOOL_FOR_ACTION = {
+    "conversational": {"none"},
+    "summarize": {"summarization"},
+    "retrieve": {"retrieval", "web_search"},
+    "diagnose": {"diagnose", "web_search"},
+}
+
+# Every field ChatResponse must carry, with the value set it must draw
+# from — used for Schema Compliance Rate and Field Accuracy. This is the
+# runtime wire contract a caller sees, independent of Pydantic's own
+# validation (which guarantees construction, not that the values are
+# semantically populated).
+KNOWN_TOOL_USED = {"none", "retrieval", "summarization", "web_search", "diagnose"}
+KNOWN_ANSWER_SOURCES = {"documents", "web", "mixed"}
+
+
+def check_response_schema(response) -> tuple[bool, list[tuple[str, bool]]]:
+    """Validate that every required ChatResponse field is present and
+    populated with a semantically valid value. Returns (compliant,
+    per-field checks). Used for Schema Compliance Rate (all fields pass)
+    and Field Accuracy (fraction of field checks passing)."""
+    fields = [
+        ("answer", bool(getattr(response, "answer", None))),
+        ("retrieved_chunks", isinstance(getattr(response, "retrieved_chunks", None), list)),
+        ("sources", isinstance(getattr(response, "sources", None), list)),
+        ("tool_used", getattr(response, "tool_used", None) in KNOWN_TOOL_USED),
+        ("steps_taken", isinstance(getattr(response, "steps_taken", None), int) and response.steps_taken >= 1),
+        ("answer_source", getattr(response, "answer_source", None) in KNOWN_ANSWER_SOURCES),
+        ("session_id", bool(getattr(response, "session_id", None))),
+    ]
+    return all(ok for _, ok in fields), fields
 
 
 def build_groundedness_judge_prompt(query: str, chunks: list[RetrievedChunk], answer: str) -> str:
@@ -300,22 +403,25 @@ def confusion_matrix(y_true: list[str], y_pred: list[str]) -> dict[str, dict[str
 
 def classification_report(y_true: list[str], y_pred: list[str]) -> dict:
     per_class = {}
+    total = len(y_true)
     for label in ACTIONS:
         tp = sum(1 for t, p in zip(y_true, y_pred) if t == label and p == label)
         fp = sum(1 for t, p in zip(y_true, y_pred) if t != label and p == label)
         fn = sum(1 for t, p in zip(y_true, y_pred) if t == label and p != label)
+        tn = total - (tp + fp + fn)
         support = sum(1 for t in y_true if t == label)
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
+        specificity = tn / (tn + fp) if (tn + fp) else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
         per_class[label] = {
             "precision": round(precision, 4),
             "recall": round(recall, 4),
+            "specificity": round(specificity, 4),
             "f1": round(f1, 4),
             "support": support,
         }
 
-    total = len(y_true)
     accuracy = sum(1 for t, p in zip(y_true, y_pred) if t == p) / total if total else 0.0
     macro_f1 = sum(v["f1"] for v in per_class.values()) / len(per_class)
     weighted_f1 = (
@@ -380,7 +486,16 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     precision_flags: list[float] = []
     recall_flags: list[float] = []
     reciprocal_ranks: list[float] = []
+    hit_at_5_flags: list[bool] = []
     citation_accuracy_flags: list[bool] = []
+    schema_compliance_flags: list[bool] = []
+    field_checks_passed: int = 0
+    field_checks_total: int = 0
+    plan_execution_flags: list[bool] = []
+    step_efficiency_flags: list[float] = []
+    tool_attempts: Counter = Counter()
+    tool_successes: Counter = Counter()
+    memory_recall_flags: list[bool] = []
     entries_out = []
 
     delay_note = f", {delay:.1f}s delay between entries" if delay > 0 else ""
@@ -402,10 +517,18 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         keywords = entry.get("expected_keywords") or []
         expected_source = entry.get("expected_source")
         chunk_keywords = entry.get("expected_chunk_keywords") or []
+        history = entry.get("history")
+        memory_keywords = entry.get("expected_memory_keywords") or []
 
         plan = chat_service._plan(query, history=None)
         y_true.append(expected_action)
         y_pred.append(plan.action)
+
+        # Plan-execution consistency: does the action the planner decided
+        # on actually drive the tool the pipeline ended up using? Requires
+        # a real handle_query run, so it's computed in the try block below
+        # and appended after; the flag list stays in sync with the others.
+        plan_execution_consistent = None
 
         document_id_correct = None
         if expected_action == "summarize":
@@ -439,11 +562,47 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         error = None
 
         try:
-            response = chat_service.handle_query(query, history=None)
+            response = chat_service.handle_query(query, history=history)
             answer = response.answer
             tool_used = response.tool_used
             steps_taken = response.steps_taken
             answer_source = response.answer_source
+
+            tool_attempts[tool_used] += 1
+
+            # Schema compliance: every required ChatResponse field present
+            # and populated. AppError short-circuits below; an uncaught
+            # validation/attribute failure here is exactly what this check
+            # exists to catch, so it's wrapped and treated as non-compliant
+            # rather than letting it abort the whole run.
+            try:
+                schema_compliant, field_checks = check_response_schema(response)
+            except Exception:
+                schema_compliant, field_checks = False, [("response", False)]
+            schema_compliance_flags.append(schema_compliant)
+            field_checks_total += len(field_checks)
+            field_checks_passed += sum(1 for _, ok in field_checks if ok)
+
+            # Plan-execution consistency: the planner's action vs the tool
+            # that actually executed (see EXPECTED_TOOL_FOR_ACTION).
+            expected_tools = EXPECTED_TOOL_FOR_ACTION.get(plan.action)
+            plan_execution_consistent = bool(
+                expected_tools and tool_used in expected_tools
+            )
+            plan_execution_flags.append(plan_execution_consistent)
+
+            # Step efficiency: how close the run was to the minimal step
+            # count for its expected action (see EXPECTED_MIN_STEPS).
+            step_efficiency_flags.append(step_efficiency(expected_action, steps_taken))
+
+            if memory_keywords:
+                # Memory recall: an entry with `history` plus
+                # expected_memory_keywords — keywords that can only have
+                # come from an earlier turn, not the current query — checks
+                # whether the model actually remembered and used prior
+                # context. Works because handle_query receives history and
+                # builds it into the prompt (prompt_builder._format_history).
+                memory_recall_flags.append(contains_any_keyword(answer, memory_keywords))
 
             if keywords:
                 task_success = contains_any_keyword(answer, keywords)
@@ -483,6 +642,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
 
         except AppError as exc:
             error = str(exc)
+            tool_attempts["error"] += 1  # a failed run; which tool failed is unknown here
             if keywords:
                 task_success = False
             if case_type == "adversarial":
@@ -494,9 +654,17 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             if chunk_keywords:
                 precision, recall, rr = 0.0, 0.0, 0.0
                 citation_accurate = False
+            plan_execution_consistent = False
+            step_efficiency_flags.append(0.0)
+            schema_compliance_flags.append(False)
+            field_checks_total += 1
+            field_checks_passed += 0
 
         status = "OK" if error is None else f"ERROR: {error}"
         print(f"[{case_type:11s}] {expected_action:>13s} -> {plan.action:<13s} | {query[:70]!r} | {status}")
+
+        if error is None:
+            tool_successes[tool_used] += 1
 
         entries_out.append(
             {
@@ -507,12 +675,17 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "document_id_correct": document_id_correct,
                 "tool_used": tool_used,
                 "steps_taken": steps_taken,
+                "plan_execution_consistent": plan_execution_consistent,
+                "step_efficiency": step_efficiency(expected_action, steps_taken) if error is None else 0.0,
+                "schema_compliant": schema_compliance_flags[-1] if schema_compliance_flags else None,
+                "memory_recall": memory_recall_flags[-1] if memory_recall_flags and memory_keywords else None,
                 "answer": answer,
                 "answer_source": answer_source,
                 "expected_source": expected_source,
                 "source_correct": source_correct,
                 "precision_at_5": precision,
                 "recall_at_5": recall,
+                "hit_at_5": precision is not None and precision > 0.0,
                 "reciprocal_rank": rr,
                 "citation_accurate": citation_accurate,
                 "error": error,
@@ -546,6 +719,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             precision_flags.append(precision)
             recall_flags.append(recall)
             reciprocal_ranks.append(rr)
+            hit_at_5_flags.append(rr > 0.0)
             citation_accuracy_flags.append(citation_accurate)
 
     planner_report = classification_report(y_true, y_pred)
@@ -581,20 +755,61 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     precision_at_5 = sum(precision_flags) / len(precision_flags) if precision_flags else None
     recall_at_5 = sum(recall_flags) / len(recall_flags) if recall_flags else None
     mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else None
+    hit_rate_at_5 = sum(hit_at_5_flags) / len(hit_at_5_flags) if hit_at_5_flags else None
     citation_accuracy = (
         sum(citation_accuracy_flags) / len(citation_accuracy_flags)
         if citation_accuracy_flags
         else None
     )
+    schema_compliance_rate = (
+        sum(schema_compliance_flags) / len(schema_compliance_flags)
+        if schema_compliance_flags
+        else None
+    )
+    field_accuracy = (
+        field_checks_passed / field_checks_total if field_checks_total else None
+    )
+    plan_execution_consistency = (
+        sum(plan_execution_flags) / len(plan_execution_flags)
+        if plan_execution_flags
+        else None
+    )
+    avg_step_efficiency = (
+        sum(step_efficiency_flags) / len(step_efficiency_flags)
+        if step_efficiency_flags
+        else None
+    )
+    tool_success_rate = {
+        tool: round(tool_successes[tool] / attempts, 4)
+        for tool, attempts in tool_attempts.items()
+        if attempts
+    } if tool_attempts else {}
+    tool_attempts_summary = {
+        tool: {"attempts": attempts, "successes": tool_successes[tool]}
+        for tool, attempts in tool_attempts.items()
+    }
+    memory_recall_rate = (
+        sum(memory_recall_flags) / len(memory_recall_flags)
+        if memory_recall_flags
+        else None
+    )
 
     report = {
         "dataset": dataset_path.name,
+        "dataset_version": _dataset_version(dataset_path.name),
         "run_at": datetime.now(timezone.utc).isoformat(),
         "llm_provider": settings.llm_provider,
+        "llm_model_name": (
+            settings.gemini_model_name
+            if settings.llm_provider == "gemini"
+            else settings.groq_model_name
+        ),
         "fallback_llm_provider": settings.fallback_llm_provider,
         "prompt_version": PROMPT_VERSION,
         "hybrid_search_enabled": settings.hybrid_search_enabled,
         "reranking_enabled": settings.reranking_enabled,
+        "reranking_model_name": settings.reranking_model_name,
+        "embedding_model_name": settings.embedding_model_name,
         "document_id_used": document_id,
         "n_entries": len(dataset),
         "case_type_counts": dict(Counter(entry["case_type"] for entry in dataset)),
@@ -624,8 +839,22 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "recall_at_5_n": len(recall_flags),
         "mrr": round(mrr, 4) if mrr is not None else None,
         "mrr_n": len(reciprocal_ranks),
+        "hit_rate_at_5": round(hit_rate_at_5, 4) if hit_rate_at_5 is not None else None,
+        "hit_rate_at_5_n": len(hit_at_5_flags),
         "citation_accuracy": round(citation_accuracy, 4) if citation_accuracy is not None else None,
         "citation_accuracy_n": len(citation_accuracy_flags),
+        "schema_compliance_rate": round(schema_compliance_rate, 4) if schema_compliance_rate is not None else None,
+        "schema_compliance_n": len(schema_compliance_flags),
+        "field_accuracy": round(field_accuracy, 4) if field_accuracy is not None else None,
+        "plan_execution_consistency": round(plan_execution_consistency, 4) if plan_execution_consistency is not None else None,
+        "plan_execution_n": len(plan_execution_flags),
+        "avg_step_efficiency": round(avg_step_efficiency, 4) if avg_step_efficiency is not None else None,
+        "step_efficiency_n": len(step_efficiency_flags),
+        "avg_steps_taken": round(sum(e["steps_taken"] for e in entries_out) / len(entries_out), 4) if entries_out else None,
+        "tool_success_rate": tool_success_rate,
+        "tool_attempts": tool_attempts_summary,
+        "memory_recall_rate": round(memory_recall_rate, 4) if memory_recall_rate is not None else None,
+        "memory_recall_n": len(memory_recall_flags),
         "entries": entries_out,
     }
     return report
@@ -644,11 +873,11 @@ def print_report(report: dict) -> None:
     print("\n" + "=" * 70)
     print("PLANNER CLASSIFICATION METRICS")
     print("=" * 70)
-    print(f"{'class':>15s}{'precision':>12s}{'recall':>12s}{'f1':>12s}{'support':>10s}")
+    print(f"{'class':>15s}{'precision':>12s}{'recall':>12s}{'specificity':>13s}{'f1':>12s}{'support':>10s}")
     for label, metrics in report["planner"]["per_class"].items():
         print(
             f"{label:>15s}{metrics['precision']:>12.4f}{metrics['recall']:>12.4f}"
-            f"{metrics['f1']:>12.4f}{metrics['support']:>10d}"
+            f"{metrics['specificity']:>13.4f}{metrics['f1']:>12.4f}{metrics['support']:>10d}"
         )
     print(f"\naccuracy:     {report['planner']['accuracy']:.4f}")
     print(f"macro F1:     {report['planner']['macro_f1']:.4f}")
@@ -682,6 +911,22 @@ def print_report(report: dict) -> None:
         f"{fmt(report['data_leak_rate'], report['data_leak_rate_n'])}"
     )
     print(f"Source Accuracy:        {fmt(report['source_accuracy'], report['source_accuracy_n'])}")
+    print(f"Plan-execution consistency: {fmt(report.get('plan_execution_consistency'), report.get('plan_execution_n', 0))}")
+    print(f"Schema Compliance Rate: {fmt(report.get('schema_compliance_rate'), report.get('schema_compliance_n', 0))}")
+    print(f"Field Accuracy:         {fmt(report.get('field_accuracy'), report.get('schema_compliance_n', 0))}")
+    print(f"Avg Step Efficiency:    {fmt(report.get('avg_step_efficiency'), report.get('step_efficiency_n', 0))}")
+    print(f"Avg Steps Taken:        {fmt(report.get('avg_steps_taken'), len(report['entries']))}")
+    if report.get("memory_recall_n"):
+        print(f"Memory Recall Rate:     {fmt(report.get('memory_recall_rate'), report['memory_recall_n'])}")
+
+    tool_success = report.get("tool_success_rate") or {}
+    tool_attempts = report.get("tool_attempts") or {}
+    if tool_success:
+        print("\nTool Success Rate (successes/attempts per tool):")
+        for tool in sorted(tool_success):
+            attempts = tool_attempts.get(tool, {}).get("attempts", 0)
+            successes = tool_attempts.get(tool, {}).get("successes", 0)
+            print(f"  {tool:>14s}: {tool_success[tool]:.4f}  ({successes}/{attempts})")
 
     # Per-entry comparison: lexical groundedness proxy vs entailment judge
     # Only for retrieve-routed entries that had chunks (both metrics scored)
@@ -761,6 +1006,7 @@ def print_report(report: dict) -> None:
     print(f"Precision@5:            {fmt(report['precision_at_5'], report['precision_at_5_n'])}")
     print(f"Recall@5:               {fmt(report['recall_at_5'], report['recall_at_5_n'])}")
     print(f"MRR:                    {fmt(report['mrr'], report['mrr_n'])}")
+    print(f"Hit Rate@5:             {fmt(report['hit_rate_at_5'], report['hit_rate_at_5_n'])}")
     print(
         f"Citation Accuracy:      "
         f"{fmt(report['citation_accuracy'], report['citation_accuracy_n'])}"

@@ -50,6 +50,10 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY app ./app
+# Alembic migration files + config (used by app/core/database.py's
+# init_db() on startup to keep the schema current when DATABASE_URL is set).
+COPY alembic ./alembic
+COPY alembic.ini .
 # One small bundled PDF, auto-ingested on startup only if the vector store
 # is empty (app/services/demo_seed_service.py) — exists so a deployment
 # with an ephemeral filesystem (e.g. Render's free tier, which wipes local

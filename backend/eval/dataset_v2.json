@@ -117,5 +117,38 @@
     "expected_keywords": ["1969"],
     "expected_source": "web",
     "case_type": "normal"
+  },
+  {
+    "query": "What are the two traits I just listed for a project?",
+    "expected_action": "retrieve",
+    "expected_keywords": ["temporary", "unique"],
+    "history": [
+      {"role": "user", "content": "According to the document, what is a project?"},
+      {"role": "assistant", "content": "A project is a temporary endeavor undertaken to create a unique product, service, or result."}
+    ],
+    "expected_memory_keywords": ["temporary", "unique"],
+    "case_type": "normal"
+  },
+  {
+    "query": "Now, what was the name of the technique I asked about before?",
+    "expected_action": "retrieve",
+    "expected_keywords": ["earned value", "evm"],
+    "history": [
+      {"role": "user", "content": "What is Earned Value Management used for?"},
+      {"role": "assistant", "content": "Earned Value Management (EVM) is used for measuring, forecasting, and reporting project performance."}
+    ],
+    "expected_memory_keywords": ["earned value"],
+    "case_type": "normal"
+  },
+  {
+    "query": "Earlier I asked about constraints. Which three are classically called the triple constraint?",
+    "expected_action": "retrieve",
+    "expected_keywords": ["scope", "schedule", "cost"],
+    "history": [
+      {"role": "user", "content": "What are the main constraints on a project?"},
+      {"role": "assistant", "content": "The classic triple constraint is scope, schedule, and cost."}
+    ],
+    "expected_memory_keywords": ["scope", "schedule", "cost"],
+    "case_type": "normal"
   }
 ]

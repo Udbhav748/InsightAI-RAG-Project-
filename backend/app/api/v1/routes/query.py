@@ -56,30 +56,31 @@ def get_chat_service() -> ChatService:
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
+def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     # Constructed here rather than via Depends(): a Depends() dependency
     # runs before FastAPI validates the request body, so a missing vector
     # store would raise (404) before an invalid body could return its 422.
-    # Calling it here, after `request` is already validated, preserves 422s.
+    # Calling it here, after `payload` is already validated, preserves 422s.
     chat_service = get_chat_service()
     session_store = get_session_store()
+    tenant_id = getattr(request.state, "tenant_id", None)
 
     # Resolve session_id: use provided, or create new if none/not found
-    session_id = session_store.get_or_create_session(request.session_id)
+    session_id = session_store.get_or_create_session(payload.session_id, tenant_id=tenant_id)
 
     # Get server-side history (takes precedence over client-sent history)
     history = session_store.get_history(session_id)
     if history is None:
         # Fallback to client-provided history if session not found
-        history = request.history
+        history = payload.history
 
     logger.info(
         "chat_request_received",
         extra={
             "extra_fields": {
-                "query_length": len(request.query),
-                "top_k": request.top_k,
-                "min_score": request.min_score,
+                "query_length": len(payload.query),
+                "top_k": payload.top_k,
+                "min_score": payload.min_score,
                 "client": getattr(request.state, "client_name", "unknown"),
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
@@ -88,15 +89,17 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
 
     response = chat_service.handle_query(
-        request.query,
-        top_k=request.top_k,
-        min_score=request.min_score,
+        payload.query,
+        top_k=payload.top_k,
+        min_score=payload.min_score,
         history=history,
         session_id=session_id,
+        confirm_web_search=payload.confirm_web_search,
+        structured_response=payload.structured_response,
     )
 
     # Append this turn to server-side history
-    session_store.append_turn(session_id, "user", request.query)
+    session_store.append_turn(session_id, "user", payload.query)
     session_store.append_turn(session_id, "assistant", response.answer)
 
     logger.info(
@@ -125,37 +128,43 @@ def _sse_line(event: dict) -> str:
     plain JSON yet) — every other event type is already a plain dict.
     model_dump(mode="json") matches exactly what response_model=ChatResponse
     would have serialized on POST /chat, so a client parsing "done" gets
-    the identical shape either endpoint would give it.
+    the identical shape either endpoint would give it. If the caller has
+    already converted it to a dict (chat_stream injects session_id into the
+    done payload before this is called), leave it as-is.
     """
     if event.get("type") == "done":
-        event = {**event, "payload": event["payload"].model_dump(mode="json")}
+        payload = event["payload"]
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json")
+        event = {**event, "payload": payload}
     return f"data: {json.dumps(event)}\n\n"
 
 
 @router.post("/chat/stream")
-def chat_stream(request: ChatRequest) -> StreamingResponse:
+def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
     # Same auth (router-level Depends(require_api_key)) and request body
     # as POST /chat — this is the same pipeline, just fanning out its
     # progress as Server-Sent Events instead of returning one response at
     # the end. POST /chat itself is untouched; this is an additive route.
     chat_service = get_chat_service()
     session_store = get_session_store()
+    tenant_id = getattr(request.state, "tenant_id", None)
 
     # Resolve session_id: use provided, or create new if none/not found
-    session_id = session_store.get_or_create_session(request.session_id)
+    session_id = session_store.get_or_create_session(payload.session_id, tenant_id=tenant_id)
 
     # Get server-side history (takes precedence over client-sent history)
     history = session_store.get_history(session_id)
     if history is None:
-        history = request.history
+        history = payload.history
 
     logger.info(
         "chat_stream_request_received",
         extra={
             "extra_fields": {
-                "query_length": len(request.query),
-                "top_k": request.top_k,
-                "min_score": request.min_score,
+                "query_length": len(payload.query),
+                "top_k": payload.top_k,
+                "min_score": payload.min_score,
                 "client": getattr(request.state, "client_name", "unknown"),
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
@@ -167,11 +176,12 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
         full_answer_parts: list[str] = []
 
         for event in chat_service.stream_query(
-            request.query,
-            top_k=request.top_k,
-            min_score=request.min_score,
+            payload.query,
+            top_k=payload.top_k,
+            min_score=payload.min_score,
             history=history,
             session_id=session_id,
+            confirm_web_search=payload.confirm_web_search,
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
@@ -179,15 +189,15 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
             elif event.get("type") == "done":
                 # Stream completed — append this turn to server-side history
                 full_answer = "".join(full_answer_parts)
-                session_store.append_turn(session_id, "user", request.query)
+                session_store.append_turn(session_id, "user", payload.query)
                 session_store.append_turn(session_id, "assistant", full_answer)
 
                 # Inject session_id into the done payload
-                payload = event["payload"]
-                if hasattr(payload, "model_dump"):
-                    payload_data = payload.model_dump(mode="json")
+                done_payload = event["payload"]
+                if hasattr(done_payload, "model_dump"):
+                    payload_data = done_payload.model_dump(mode="json")
                 else:
-                    payload_data = payload
+                    payload_data = done_payload
                 payload_data["session_id"] = session_id
                 event = {**event, "payload": payload_data}
 
@@ -201,6 +211,7 @@ async def diagnose(
     image: UploadFile = File(...),
     query: str | None = Form(None),
     session_id: str | None = Form(None),
+    confirm_web_search: bool = Form(False),
 ) -> ChatResponse:
     # A separate multipart endpoint rather than an optional file param on
     # /chat: FastAPI resolves a whole request as either a JSON body or
@@ -230,6 +241,7 @@ async def diagnose(
         image.content_type or "application/octet-stream",
         query=query,
         session_id=session_id,
+        confirm_web_search=confirm_web_search,
     )
 
     logger.info(

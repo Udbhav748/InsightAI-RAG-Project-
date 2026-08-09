@@ -14,6 +14,36 @@ from app.models.document import RetrievedChunk, WebSearchResult
 # be correlated with the exact template that produced them.
 PROMPT_VERSION = "v1"
 
+# The agent's formal spec (CrewAI-style role/goal/backstory), kept here
+# so it's a single, documented source of truth rather than scattered in
+# prose. The planner + tools it refers to are described in
+# docs/ARCHITECTURE.md; _INSTRUCTIONS below is the executable rendering
+# of ROLE + GOAL at prompt time.
+AGENT_ROLE = (
+    "InsightAI, a grounded document Q&A assistant that answers questions "
+    "exclusively from evidence retrieved from the user's uploaded documents "
+    "(plus, on demand, web search), never from parametric memory."
+)
+AGENT_GOAL = (
+    "Answer every query correctly, helpfully, and concisely using only the "
+    "provided context; cite the source passages the answer draws on; decline "
+    "honestly when the context doesn't contain the answer rather than "
+    "hallucinating one."
+)
+AGENT_BACKSTORY = (
+    "InsightAI began as a single-user RAG demo and grew into a multi-tool "
+    "agent: it routes each query through a deterministic planner to one of "
+    "retrieval, summarization, or small-talk, grades retrieval quality, and "
+    "runs a bounded corrective loop (regenerate, then web search) when an "
+    "answer comes back ungrounded. It is deliberately framework-free plain "
+    "Python — see docs/ARCHITECTURE.md's 'Framework choice'."
+)
+AGENT_TOOLS = (
+    "retrieval (vector search over uploaded PDFs), summarization (per-document "
+    "summaries), web search (DuckDuckGo fallback, opt-in), and vision/diagnose "
+    "(LeafSense HTTP integration)."
+)
+
 # Matches the prompt's own "Sources:" heading (see _INSTRUCTIONS below),
 # so strip_sources_section can remove the model's raw-document-id citation
 # list from an answer. The app already returns document sources as
@@ -142,3 +172,68 @@ def strip_sources_section(answer: str) -> str:
     keeping the model's copy would just duplicate it in the answer text.
     """
     return _SOURCES_HEADING.sub("", answer).strip()
+
+
+# The JSON object shape requested in JSON-mode (structured-output) answers,
+# mirrored by app/models/schemas.py's StructuredAnswer. Kept in sync with
+# that model — change both when the shape changes.
+_STRUCTURED_OUTPUT_SCHEMA = (
+    '{"answer": "<your answer text>", "sources": ["<document_id>", ...]}'
+)
+
+
+def build_structured_prompt(
+    query: str,
+    chunks: list[RetrievedChunk],
+    history: list[dict] | None = None,
+    web_results: list[WebSearchResult] | None = None,
+) -> str:
+    """Build the JSON-mode counterpart of build_prompt: same context
+    assembly and trust boundary, but the model is told to emit ONLY a JSON
+    object matching StructuredAnswer (answer + optional sources), which the
+    caller parses and validates with Pydantic."""
+    if not query or not query.strip():
+        raise PromptGenerationError("Cannot build a prompt from an empty query.")
+
+    context_blocks = []
+    if chunks:
+        context_blocks.append(
+            "\n\n".join(
+                f"[Document {chunk.document_id}]\n"
+                "---BEGIN UNTRUSTED DOCUMENT EXCERPT---\n"
+                f"{chunk.text}\n"
+                "---END EXCERPT---"
+                for chunk in chunks
+            )
+        )
+    if web_results:
+        context_blocks.append(
+            "\n\n".join(
+                f"[Web result: {result.title}]\n"
+                "---BEGIN UNTRUSTED WEB RESULT---\n"
+                f"URL: {result.url}\n"
+                f"{result.snippet}\n"
+                "---END WEB RESULT---"
+                for result in web_results
+            )
+        )
+    context = "\n\n".join(context_blocks) if context_blocks else _NO_CONTEXT_NOTE
+
+    instructions = _INSTRUCTIONS
+    if web_results:
+        instructions = f"{instructions}\n\n{_WEB_RESULTS_INSTRUCTION}"
+    structured_instruction = (
+        "\n\nRespond with ONLY a single JSON object, no prose around it, "
+        "matching exactly this shape:\n"
+        f"{_STRUCTURED_OUTPUT_SCHEMA}\n"
+        "The answer must follow all the rules above. The sources array must "
+        'list only document_ids the answer actually draws on (empty if none).'
+    )
+
+    return (
+        f"{instructions}\n\n{structured_instruction}\n\n"
+        f"{_format_history(history)}"
+        f"Context:\n{context}\n\n"
+        f"Question: {query.strip()}\n\n"
+        "Answer (JSON only):"
+    )

@@ -24,11 +24,13 @@ from app.services.embedding_service import embed_query
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.hybrid_search import hybrid_search
 from app.services.reranking_service import rerank
+from app.services.tool_registry import track_tool
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
 
+@track_tool("retrieval")
 def retrieve(
     query: str,
     vector_store: VectorStore,

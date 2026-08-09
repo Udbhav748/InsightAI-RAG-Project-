@@ -21,6 +21,7 @@ from app.core.exceptions import (
     LLMEmptyResponseError,
     LLMTimeoutError,
 )
+from app.core.usage_tracking import record_usage
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,13 @@ class GeminiClient(LLMClient):
         total_tokens = prompt_tokens + completion_tokens
         estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
 
+        record_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
         logger.info(
             "llm_generation_completed",
             extra={
@@ -109,6 +117,81 @@ class GeminiClient(LLMClient):
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
                     "estimated_cost_usd": estimated_cost_usd,
+                }
+            },
+        )
+
+        return text
+
+    def generate_structured(self, prompt: str) -> str:
+        """JSON-mode generation: response_mime_type=application/json so the
+        model is constrained to emit a JSON object (the schema is enforced
+        by the prompt + parse step rather than a Gemini response_schema, to
+        stay provider-agnostic). Mirrors generate()'s error mapping, retry
+        policy, usage logging, and cost tracking."""
+        start = time.perf_counter()
+
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+            reraise=True,
+            before_sleep=_log_retry,
+        )
+        def _generate_json(prompt: str) -> tuple[str, object]:
+            try:
+                response = self._client.models.generate_content(
+                    model=settings.gemini_model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                    ),
+                )
+            except httpx.TimeoutException as exc:
+                raise LLMTimeoutError(
+                    f"Gemini request timed out after {settings.gemini_timeout_seconds}s: {exc}"
+                ) from exc
+            except genai_errors.APIError as exc:
+                raise LLMAPIError(f"Gemini API request failed: {exc}") from exc
+            except Exception as exc:
+                raise LLMAPIError(f"Unexpected error calling Gemini: {exc}") from exc
+
+            text = (response.text or "").strip()
+            if not text:
+                raise LLMEmptyResponseError("Gemini returned an empty response.")
+            return text, response
+
+        text, response = _generate_json(prompt)
+
+        processing_duration = time.perf_counter() - start
+
+        usage = getattr(response, "usage_metadata", None)
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or 0
+        completion_tokens = getattr(usage, "candidates_token_count", None) or 0
+        total_tokens = prompt_tokens + completion_tokens
+        estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
+
+        record_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
+        logger.info(
+            "llm_generation_completed",
+            extra={
+                "extra_fields": {
+                    "provider": "gemini",
+                    "model_name": settings.gemini_model_name,
+                    "prompt_length": len(prompt),
+                    "response_length": len(text),
+                    "processing_duration": round(processing_duration, 4),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "estimated_cost_usd": estimated_cost_usd,
+                    "structured": True,
                 }
             },
         )
@@ -164,6 +247,13 @@ class GeminiClient(LLMClient):
         completion_tokens = getattr(usage, "candidates_token_count", None) or 0
         total_tokens = prompt_tokens + completion_tokens
         estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
+
+        record_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
 
         logger.info(
             "llm_generation_completed",

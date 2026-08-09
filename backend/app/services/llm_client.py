@@ -14,6 +14,19 @@ class LLMClient(ABC):
     def generate(self, prompt: str) -> str:
         """Generate a text completion for the given prompt."""
 
+    def generate_structured(self, prompt: str) -> str:
+        """Generate a JSON-mode completion for the given prompt.
+
+        The prompt asks for a JSON object (see
+        prompt_builder.build_structured_prompt); providers that support a
+        JSON output mode (Gemini response_mime_type, Groq response_format)
+        request it here. Default implementation: plain generate() — a
+        client that doesn't implement JSON mode (or a test fake) just
+        returns whatever text the model gives, and the caller's parse step
+        decides whether it's usable.
+        """
+        return self.generate(prompt)
+
     def generate_stream(self, prompt: str) -> Iterator[str]:
         """Generate a text completion, yielding it in pieces as it's
         produced. Default implementation: no real streaming, just yields

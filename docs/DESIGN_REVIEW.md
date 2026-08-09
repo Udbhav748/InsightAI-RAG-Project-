@@ -190,7 +190,7 @@ by the eval script itself, never passing through
 - **Authentication**: `app/core/auth.py`'s `require_api_key` dependency
    gates the documents and chat routers behind an `X-API-Key` header,
    checked against a keys table (`Settings.api_key_table`) — a JSON map
-   of `client_name -> bcrypt_hash` loaded from `API_KEYS` (or a single
+   of `client_name -> sha256_hash` loaded from `API_KEYS` (or a single
    fallback `API_KEY` for backward compatibility). Keys are hashed at
    startup; only hashes are kept in memory. On success, the client's
    identifier is stored in `request.state.client_name` and included in all
@@ -305,7 +305,8 @@ constraints beyond it:
   
   There's no API to rotate keys without restart, no key expiration, and no way to revoke one client without updating the JSON and restarting. This is acceptable for the current single-user demo scale; a multi-user product would need a proper secrets manager and rotation API.
 - **Document history lives in browser localStorage, not the server.**
-  The backend has no document-listing endpoint, so
+  The backend's `GET /documents` endpoint is recent and the frontend
+  doesn't consume it yet, so
   `frontend/src/services/documentService.js` tracks what's been uploaded
   in the browser's `localStorage`. That means the Documents page only
   ever shows what *this browser* uploaded — a second device or a cleared
@@ -313,7 +314,7 @@ constraints beyond it:
   indexed server-side.
 - **Chat conversation history is now persisted server-side keyed by `session_id`.** `frontend/src/hooks/useChat.js` generates a UUID on first message, stores it in `localStorage`, and sends it on every `/chat` request. The backend (`app/services/session_store.py`) maintains an in-memory `session_id -> history` map and returns the full history when a known `session_id` arrives — so a page refresh no longer loses the conversation.
 
-  **Why in-memory, not a file or DB?** The live Render free-tier instance has an ephemeral filesystem — that's why the FAISS index already uses the auto-seeded demo-document workaround (see `docs/OPERATIONS.md` "The constraint that shapes everything below: an ephemeral filesystem"). A file-backed session store would face the exact same problem (wiped on every restart/redeploy), so it wouldn't actually buy more durability than an in-memory store on the current deployment — it would just add complexity for a durability guarantee this environment can't actually provide right now. Given that, an in-memory session store is the honest, proportionate choice today — same pattern as the per-client API keys decision. If/when the deployment moves to a platform with a real persistent volume or database, `session_store.py` is the single place to swap in a persistent backend (Redis, PostgreSQL, or a JSON file on a mounted disk).
+  **Why in-memory, not a file or DB?** The live Render free-tier instance has an ephemeral filesystem — that's why the FAISS index already uses the auto-seeded demo-document workaround (see `docs/OPERATIONS.md` "The constraint that shapes everything below: an ephemeral filesystem"). A file-backed session store would face the exact same problem (wiped on every restart/redeploy), so it wouldn't actually buy more durability than an in-memory store on the current deployment — it would just add complexity for a durability guarantee this environment can't actually provide right now. Given that, an in-memory session store is the honest, proportionate choice today — same pattern as the per-client API keys decision. The swap-in point has since been built: `session_store.py` now routes to a `PostgresSessionStore` whenever `DATABASE_URL` is configured (see `docs/ARCHITECTURE.md` "Persistence (PostgreSQL, optional)"), so a deployment with a managed database gets durable history behind the same interface — Redis remains the alternative if a multi-instance scale-out (below) calls for something more than Postgres.
 
   **Single-instance assumption (critical for correctness).** The Render free-tier web service runs as **exactly one instance** (the `render.yaml` specifies `plan: free` with no `numInstances` or autoscaling; Render defaults to 1 instance on the free tier). The in-memory session store is **only correct while the service runs as a single process**. If the deployment ever scales to more than one instance (e.g., upgrading to a paid Render plan with multiple instances, or adding a load balancer), a session created on instance A would be invisible to a request landing on instance B — an active correctness bug, not a durability trade-off. At that point, the session store must be replaced with a shared external store (Redis, PostgreSQL, etc.) before enabling multi-instance deployment. `session_store.py` is the single swap point.
 

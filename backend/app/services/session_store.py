@@ -81,10 +81,13 @@ class InMemorySessionStore:
                 extra={"extra_fields": {"session_id": lru_session_id, "max_sessions": self._max_sessions}},
             )
 
-    def create_session(self) -> str:
+    def create_session(self, tenant_id: int | None = None) -> str:
         """Create a new empty session and return its session_id.
         
-        Evicts LRU session if at capacity.
+        Evicts LRU session if at capacity. tenant_id is accepted for
+        interface parity with the PostgresSessionStore; the in-memory
+        store doesn't use it (memory is bounded by max_sessions, not
+        partitioned by tenant).
         """
         session_id = str(uuid.uuid4())
         with self._lock:
@@ -119,13 +122,16 @@ class InMemorySessionStore:
             session.last_accessed = time.time()
         return True
 
-    def get_or_create_session(self, session_id: str | None) -> str:
-        """If session_id is provided and exists, return it. Otherwise create new session."""
+    def get_or_create_session(self, session_id: str | None, tenant_id: int | None = None) -> str:
+        """If session_id is provided and exists, return it. Otherwise create new session.
+        
+        tenant_id is accepted for interface parity with the
+        PostgresSessionStore (see create_session)."""
         if session_id is not None:
             with self._lock:
                 if session_id in self._sessions:
                     return session_id
-        return self.create_session()
+        return self.create_session(tenant_id=tenant_id)
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session. Returns True if it existed."""
@@ -149,12 +155,27 @@ _session_store: InMemorySessionStore | None = None
 _session_store_lock = threading.Lock()
 
 
-def get_session_store() -> InMemorySessionStore:
+def get_session_store():
     """Return the global session store instance (created on first call).
-    
-    Thread-safe lazy initialization using double-checked locking.
+
+    Returns the PostgreSQL-backed store when the DB is enabled, else the
+    in-memory store — both implement the same interface (create_session,
+    get_history, append_turn, get_or_create_session, delete_session,
+    session_exists, get_session_count), so callers don't care which they
+    get. Thread-safe lazy initialization using double-checked locking.
     """
     global _session_store
+    from app.core.database import db_enabled
+
+    if db_enabled():
+        from app.services.postgres_session_store import PostgresSessionStore
+
+        if _session_store is None:
+            with _session_store_lock:
+                if _session_store is None:
+                    _session_store = PostgresSessionStore()
+        return _session_store
+
     if _session_store is None:
         with _session_store_lock:
             if _session_store is None:

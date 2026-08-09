@@ -14,6 +14,7 @@ from app.core.exceptions import DocumentNotFoundError
 from app.models.document import RetrievedChunk
 from app.services.llm_client import LLMClient
 from app.services.prompt_builder import PROMPT_VERSION
+from app.services.tool_registry import track_tool
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ _INSTRUCTIONS = (
 MAX_SUMMARY_INPUT_CHARS = 8000
 
 
+@track_tool("summarization")
 def summarize_document(
     document_id: str, vector_store: VectorStore, llm_client: LLMClient
 ) -> tuple[str, list[RetrievedChunk]]:

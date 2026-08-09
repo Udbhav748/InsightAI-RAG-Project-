@@ -1,11 +1,14 @@
 # Evaluation harness
 
-This directory has two independent tools:
+This directory has three tools:
 
 - `run_eval.py` — an offline eval for `ChatService` (see below): checks
   whether the planner (`_plan`) routes queries to the right tool, and
   whether the resulting answers are on-topic, grounded, and resistant to
   prompt injection.
+- `regression_check.py` — a CI gate that compares a fresh `run_eval.py`
+  result against a committed baseline and fails if any tracked metric
+  regressed beyond tolerance. Wired into `.github/workflows/eval.yml`.
 - `metrics_report.py` — parses the backend's own JSON logs (stdout) and
   prints latency percentiles, error rate by `taxonomy_category`, and total
   LLM token usage/cost. A stand-in for real observability — in production
@@ -284,7 +287,17 @@ Each entry in `dataset_vN.json` is an object:
 | `case_type` | yes | One of `"normal"`, `"edge"`, `"failure"`, `"adversarial"`. |
 | `injection_marker` | only for `case_type: "adversarial"` | String that would appear in the answer only if the injection succeeded. |
 | `expected_source` | no | `"documents"`, `"web"`, or `"mixed"` — expected `ChatResponse.answer_source`, checked for Source Accuracy. Omit for entries where the source doesn't matter. |
-| `expected_chunk_keywords` | no | Keywords for Precision@5/Recall@5/MRR — a retrieved chunk is "relevant" if it contains any of them. Omit (or leave `[]`) to exclude an entry from these metrics, e.g. for entries where no document chunk should ever be relevant (failure/adversarial/web-sourced entries). |
+| `expected_chunk_keywords` | no | Keywords for Precision@5/Recall@5/MRR/Hit Rate@5 — a retrieved chunk is "relevant" if it contains any of them. Omit (or leave `[]`) to exclude an entry from these metrics, e.g. for entries where no document chunk should ever be relevant (failure/adversarial/web-sourced entries). |
+| `history` | no | Prior conversation turns for a **memory-eval** entry, oldest first, shaped like `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`. Passed to `handle_query(query, history=...)`, so it feeds the prompt's conversation-history block (only the most recent 6 turns are used). |
+| `expected_memory_keywords` | only for entries with `history` | Keywords for Memory Recall Rate — terms the correct answer can only have come from an earlier turn in `history`, **not** from the current `query` (or else the metric can't distinguish memory from the query itself). |
+
+The memory-eval pattern: turn 1 asks a factual question about the corpus,
+turn 2 (the entry's `query`) asks a follow-up whose answer requires
+carrying over something stated in turn 1's assistant reply — e.g. turn 1
+"Define a project.", turn 2 "What are the two defining traits you just
+listed?" — with `expected_memory_keywords` being those traits. If the
+system remembers, the answer contains them; if the history were dropped,
+there'd be nothing in the current query pointing at them.
 
 ## Versioning datasets
 
@@ -310,3 +323,36 @@ it's v1 plus two new entries (`expected_source: "web"`) exercising the
 corrective RAG loop's web search fallback, not a retarget to different
 content. It's the template to follow for adding more entries of any kind
 going forward.
+
+## Regression gate
+
+`regression_check.py` fails CI when a metric regressed beyond tolerance:
+
+```bash
+python eval/regression_check.py --results eval/results/<new>.json \
+    --baseline eval/baselines/v2_groq.json --tol 0.05
+```
+
+- **Higher-is-better** metrics fail when they drop more than `--tol`:
+  `planner.accuracy/macro_f1/weighted_f1`, `task_success_rate`,
+  `groundedness_proxy`, `entailment_groundedness`, `injection_resistance`,
+  `source_accuracy`, `precision_at_5`, `recall_at_5`, `mrr`,
+  `hit_rate_at_5`, `citation_accuracy`, `tool_arg_accuracy`.
+- **Lower-is-better** metrics fail when they rise more than `--tol`:
+  `false_refusal_rate`, `data_leak_rate`.
+- Metrics missing from either file are skipped — so new metrics don't gate
+  until a baseline that includes them is committed.
+
+Baselines live in `eval/baselines/` (committed). Re-baselining: after a
+deliberate, human-reviewed change (new prompt version, model change), run
+a fresh eval and commit the resulting aggregates as a new baseline —
+intentionally, not as a way to paper over an unnoticed regression. The
+`eval.yml` workflow runs this gate after every manual eval run with the
+`baseline` input (default `eval/baselines/v2_groq.json`); set the input
+empty to skip the gate.
+
+Every `run_eval.py` result also records the model + dataset revision that
+produced it: `dataset_version`, `llm_model_name`, `reranking_model_name`,
+and `embedding_model_name` — along with the existing `llm_provider`,
+`fallback_llm_provider`, and `prompt_version` — so any two results can be
+compared only when those identifying fields agree.

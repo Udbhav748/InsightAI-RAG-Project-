@@ -31,6 +31,7 @@ from functools import lru_cache
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
+from app.core.usage_tracking import current_usage, reset_usage
 from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
 from app.services.llm_client import LLMClient
@@ -39,9 +40,11 @@ from app.services.prompt_builder import (
     PROMPT_VERSION,
     REFLECTION_INSTRUCTION,
     build_prompt,
+    build_structured_prompt,
     strip_sources_section,
 )
 from app.services.retrieval_service import retrieve
+from app.services.structured_output import parse_structured_answer
 from app.services.summarization_service import summarize_document
 from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
@@ -393,6 +396,52 @@ class ChatService:
 
         yield (True, strip_sources_section("".join(raw_parts)))
 
+    def _generate_structured(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        history: list[dict] | None,
+        web_results: list[WebSearchResult] | None = None,
+    ) -> str:
+        """Structured-output counterpart to _generate: same context assembly
+        via build_structured_prompt, but the provider is asked for a JSON
+        object (response_mime_type / response_format) which is parsed and
+        validated against StructuredAnswer. The validated `answer` field is
+        returned; on any parse failure the request degrades to the plain
+        free-text path (parse_structured_answer never raises) — structured
+        output is a win-when-it-works enhancement, never a new failure mode.
+        """
+        prompt = build_structured_prompt(query, chunks, history=history, web_results=web_results)
+        logger.info(
+            "generation_requested",
+            extra={
+                "extra_fields": {
+                    "prompt_version": PROMPT_VERSION,
+                    "chunk_count": len(chunks),
+                    "web_result_count": len(web_results) if web_results else 0,
+                    "structured": True,
+                }
+            },
+        )
+        raw = self._llm_client.generate_structured(prompt)
+        structured = parse_structured_answer(raw)
+        if structured is None:
+            logger.info(
+                "structured_output_fallback",
+                extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
+            )
+            return self._generate(query, chunks, history, web_results=web_results)
+        logger.info(
+            "structured_output_success",
+            extra={
+                "extra_fields": {
+                    "query_length": len(query),
+                    "source_count": len(structured.sources),
+                }
+            },
+        )
+        return structured.answer
+
     def _grade_retrieval(self, query: str, chunks: list[RetrievedChunk]) -> str:
         """Cheap heuristic grade of retrieval quality — no LLM call, a
         function of chunk count and top score alone. query is accepted for
@@ -421,11 +470,24 @@ class ChatService:
         )
         return grade
 
-    def _search_web(self, query: str) -> list[WebSearchResult]:
+    def _search_web(self, query: str, confirm_web_search: bool = False) -> list[WebSearchResult]:
         """Best-effort web search. A failure here degrades to an empty
         result list rather than failing the whole chat request — web
         search is an enhancement to the corrective loop, not a dependency
-        the request can't survive without."""
+        the request can't survive without.
+
+        The human-approval gate: when Settings.web_search_requires_approval
+        is on, web search is skipped unless the client explicitly sent
+        confirm_web_search=true (see ChatRequest). A skipped-but-requested
+        search is logged distinctly from a failed one, so the two are
+        distinguishable in monitoring.
+        """
+        if settings.web_search_requires_approval and not confirm_web_search:
+            logger.info(
+                "web_search_skipped_pending_approval",
+                extra={"extra_fields": {"query_length": len(query)}},
+            )
+            return []
         try:
             return search_web(query)
         except WebSearchError as exc:
@@ -454,6 +516,7 @@ class ChatService:
         web_search_attempted: bool,
         llm_calls: int,
         steps_taken: int,
+        confirm_web_search: bool = False,
     ) -> tuple[str, int, int, list[WebSearchResult], bool]:
         """Generalizes the old single-shot _reflect into the corrective
         RAG loop's regeneration stage.
@@ -506,7 +569,7 @@ class ChatService:
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
-        web_results = self._search_web(query)
+        web_results = self._search_web(query, confirm_web_search=confirm_web_search)
         web_search_attempted = True
         steps_taken += 1  # web search
 
@@ -532,6 +595,7 @@ class ChatService:
         web_search_attempted: bool,
         llm_calls: int,
         steps_taken: int,
+        confirm_web_search: bool = False,
     ) -> Iterator[dict]:
         """Streamed counterpart to _correct — mirrors its exact branches,
         conditions, and log lines (the two must be kept in sync; a
@@ -585,7 +649,7 @@ class ChatService:
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
-        web_results = self._search_web(query)
+        web_results = self._search_web(query, confirm_web_search=confirm_web_search)
         web_search_attempted = True
         steps_taken += 1  # web search
         yield _trace_event("web_search", {"result_count": len(web_results)})
@@ -615,9 +679,12 @@ class ChatService:
         min_score: float | None = None,
         history: list[dict] | None = None,
         session_id: str | None = None,
+        confirm_web_search: bool = False,
+        structured_response: bool = False,
     ) -> ChatResponse:
         start = time.perf_counter()
         steps_taken = 1  # planning
+        reset_usage()  # per-request LLM token/cost rollup
 
         plan = self._plan(query, history)
         logger.info(
@@ -679,16 +746,29 @@ class ChatService:
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
             if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(query)
+                web_results = self._search_web(query, confirm_web_search=confirm_web_search)
                 web_search_attempted = True
                 steps_taken += 1  # web search
 
-            answer = self._generate(query, chunks, recent_history, web_results=web_results)
+            if settings.structured_output_enabled and structured_response:
+                answer = self._generate_structured(
+                    query, chunks, recent_history, web_results=web_results
+                )
+            else:
+                answer = self._generate(query, chunks, recent_history, web_results=web_results)
             llm_calls = 1
             steps_taken += 1  # generation
 
             answer, llm_calls, steps_taken, web_results, web_search_attempted = self._correct(
-                query, chunks, answer, recent_history, web_results, web_search_attempted, llm_calls, steps_taken
+                query,
+                chunks,
+                answer,
+                recent_history,
+                web_results,
+                web_search_attempted,
+                llm_calls,
+                steps_taken,
+                confirm_web_search=confirm_web_search,
             )
         except AppError:
             # Already a well-formed domain exception from retrieval, prompt
@@ -724,6 +804,8 @@ class ChatService:
         min_score: float | None = None,
         history: list[dict] | None = None,
         session_id: str | None = None,
+        confirm_web_search: bool = False,
+        structured_response: bool = False,
     ) -> Iterator[dict]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
@@ -753,6 +835,7 @@ class ChatService:
         """
         start = time.perf_counter()
         steps_taken = 1  # planning
+        reset_usage()  # per-request LLM token/cost rollup
 
         plan = self._plan(query, history)
         logger.info(
@@ -826,7 +909,7 @@ class ChatService:
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
             if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(query)
+                web_results = self._search_web(query, confirm_web_search=confirm_web_search)
                 web_search_attempted = True
                 steps_taken += 1  # web search
                 yield _trace_event("web_search", {"result_count": len(web_results)})
@@ -842,7 +925,15 @@ class ChatService:
             steps_taken += 1  # generation
 
             answer, llm_calls, steps_taken, web_results, web_search_attempted = yield from self._correct_streamed(
-                query, chunks, answer, recent_history, web_results, web_search_attempted, llm_calls, steps_taken
+                query,
+                chunks,
+                answer,
+                recent_history,
+                web_results,
+                web_search_attempted,
+                llm_calls,
+                steps_taken,
+                confirm_web_search=confirm_web_search,
             )
         except AppError as exc:
             logger.info(
@@ -894,6 +985,7 @@ class ChatService:
         query: str | None = None,
         history: list[dict] | None = None,
         session_id: str | None = None,
+        confirm_web_search: bool = False,
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense, then run the predicted
         disease through the same corrective RAG loop handle_query uses —
@@ -915,6 +1007,7 @@ class ChatService:
         steps_taken = 1  # planning
 
         plan = PlanDecision(action="diagnose")
+        reset_usage()  # per-request LLM token/cost rollup
         logger.info(
             "plan_decided",
             extra={"extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}},
@@ -937,7 +1030,7 @@ class ChatService:
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
             if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(diagnosis_query)
+                web_results = self._search_web(diagnosis_query, confirm_web_search=confirm_web_search)
                 web_search_attempted = True
                 steps_taken += 1  # web search
 
@@ -954,6 +1047,7 @@ class ChatService:
                 web_search_attempted,
                 llm_calls,
                 steps_taken,
+                confirm_web_search=confirm_web_search,
             )
         except AppError:
             # Includes VisionServiceError from diagnose_image, alongside the
@@ -1001,6 +1095,10 @@ class ChatService:
         sources = _source_references(retrieved_chunks) + _web_source_references(web_results)
         answer_source = _answer_source(retrieved_chunks, web_results)
 
+        # Per-request LLM usage rollup (accumulated via usage_tracking
+        # ContextVar by the clients on each generate/generate_stream call).
+        usage = current_usage()
+
         log_fields = {
             "query_length": len(query),
             "query_type": query_type,
@@ -1010,6 +1108,9 @@ class ChatService:
             "web_result_count": len(web_results),
             "answer_source": answer_source,
             "processing_duration": round(processing_duration, 4),
+            "llm_calls": usage["llm_calls"],
+            "total_tokens": usage["total_tokens"],
+            "estimated_cost_usd": usage["estimated_cost_usd"],
         }
         if diagnosis is not None:
             log_fields.update(

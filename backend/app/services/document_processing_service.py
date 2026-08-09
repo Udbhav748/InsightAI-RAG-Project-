@@ -16,6 +16,7 @@ from app.core.exceptions import VectorStoreNotFoundError
 from app.models.document import ExtractedDocument
 from app.models.schemas import DocumentProcessingResponse
 from app.services.chunking_service import chunk_document
+from app.services.document_repository import persist_document
 from app.services.document_service import extract_text_from_pdf
 from app.services.embedding_service import generate_embeddings
 from app.services.pii_service import detect_pii
@@ -29,7 +30,7 @@ class DocumentProcessingService:
     def __init__(self, vector_store: VectorStore):
         self._vector_store = vector_store
 
-    async def process(self, file: UploadFile) -> DocumentProcessingResponse:
+    async def process(self, file: UploadFile, tenant_id: int | None = None) -> DocumentProcessingResponse:
         start = time.perf_counter()
 
         uploaded = await save_uploaded_file(file)
@@ -79,6 +80,21 @@ class DocumentProcessingService:
 
         self._log_stage(
             "vector_store", document_id, total_vectors=self._vector_store.total_vectors()
+        )
+
+        # Best-effort durable metadata record (PostgreSQL when configured).
+        # Runs after the vector store write so a DB failure can never lose
+        # the searchable document — it only loses the durable record.
+        persist_document(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            original_filename=uploaded["original_filename"],
+            stored_filename=uploaded["stored_filename"],
+            file_size=uploaded["file_size"],
+            total_pages=extracted["total_pages"],
+            total_chunks=len(chunks),
+            total_embeddings=len(embedded_chunks),
+            pages_ocred=extracted["pages_ocred"],
         )
 
         processing_duration = time.perf_counter() - start

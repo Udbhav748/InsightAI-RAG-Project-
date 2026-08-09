@@ -7,6 +7,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Optional. PostgreSQL connection string (e.g.
+    # postgresql+psycopg2://user:pass@host:5432/db). If set, the app uses
+    # PostgreSQL-backed persistence (documents, sessions, API keys, usage
+    # logs) via SQLAlchemy/Alembic — see app/core/database.py. If left
+    # empty, the app falls back to the legacy in-memory/file stores (an
+    # ephemeral deployment like Render's free tier that can't host a real
+    # DB keeps working exactly as before).
+    database_url: str = ""
+
     # Required. Google Gemini API key (used by the future RAG/generation pipeline).
     gemini_api_key: str
 
@@ -44,7 +53,7 @@ class Settings(BaseSettings):
     # Optional. JSON string mapping client identifiers to their API keys.
     # Example: '{"client-a": "key1", "client-b": "key2"}'
     # If provided, this supersedes api_key and enables per-client auth.
-    # Keys are hashed at startup (bcrypt); only hashes are kept in memory.
+    # Keys are hashed at startup (SHA-256); only hashes are kept in memory.
     api_keys: str = ""
 
     # Origin of the frontend app; used to configure CORS.
@@ -134,6 +143,21 @@ class Settings(BaseSettings):
     # behavior — and the lack of any outbound network call beyond Gemini —
     # is unchanged unless explicitly opted in.
     web_search_enabled: bool = False
+
+    # When True, the web-search tool is a human-in-the-loop action: it only
+    # fires when the client explicitly sends confirm_web_search=true on the
+    # /chat request (the "human approval" gate). Off by default — the
+    # approval requirement is a deployment policy, not a behavior the app
+    # should assume.
+    web_search_requires_approval: bool = False
+
+    # Enables JSON-mode structured output for the LLM: when True and the
+    # client sends structured_response=true, ChatService asks the provider
+    # for a strict JSON answer (via response_mime_type / response_format)
+    # and validates it against the StructuredAnswer schema, falling back to
+    # plain text if the model's output doesn't parse. Off by default so
+    # the standard free-text path is unchanged.
+    structured_output_enabled: bool = False
 
     # Number of web results fetched when the fallback fires.
     web_search_result_count: int = 3

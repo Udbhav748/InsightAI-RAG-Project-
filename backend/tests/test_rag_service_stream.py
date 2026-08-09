@@ -47,8 +47,13 @@ class FakeLLMClient:
 
 class FakeVectorStore:
     """stream_query never touches the vector store directly — retrieve()
-    is monkeypatched at the module level — only used to satisfy
-    ChatService.__init__."""
+    is monkeypatched at the module level — except for the response-cache
+    key, which calls total_vectors() as a proxy for the document set. That
+    must exist on the fake for stream_query to reach the patched
+    retrieve(); the value itself is irrelevant to these tests."""
+
+    def total_vectors(self):
+        return 1
 
 
 def make_service(llm_client=None):

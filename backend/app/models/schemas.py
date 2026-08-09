@@ -40,6 +40,17 @@ class ChatRequest(BaseModel):
         "a new session is created and its ID returned in the response. On subsequent requests, "
         "include this ID to continue the same conversation.",
     )
+    confirm_web_search: bool = Field(
+        False,
+        description="Human approval for the web-search tool. When Settings.web_search_requires_approval "
+        "is enabled, web search is skipped unless this is true — an explicit human-in-the-loop "
+        "gate on the agent's only outbound side-effect.",
+    )
+    structured_response: bool = Field(
+        False,
+        description="Request a JSON-mode structured answer. Only takes effect when "
+        "Settings.structured_output_enabled is true; otherwise ignored.",
+    )
 
 
 class SourceReference(BaseModel):
@@ -98,6 +109,21 @@ class FeedbackResponse(BaseModel):
     status: str
 
 
+class StructuredAnswer(BaseModel):
+    """Schema the LLM's JSON-mode output is validated against.
+
+    The prompt (see prompt_builder.build_structured_prompt) asks the model
+    to emit exactly this shape; anything else is a parse failure and the
+    caller falls back to the free-text path.
+    """
+
+    answer: str = Field(..., description="The final answer text.")
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Optional document ids the answer draws on, as given by the model.",
+    )
+
+
 class DocumentProcessingResponse(BaseModel):
     document_id: str
     original_filename: str
@@ -115,3 +141,20 @@ class DocumentDeleteResponse(BaseModel):
     document_id: str
     chunks_removed: int
     status: str
+
+
+class DocumentListItem(BaseModel):
+    document_id: str
+    original_filename: str
+    stored_filename: str
+    file_size: int
+    total_pages: int
+    total_chunks: int
+    total_embeddings: int
+    pages_ocred: int
+    upload_timestamp: datetime
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentListItem]
+    total: int

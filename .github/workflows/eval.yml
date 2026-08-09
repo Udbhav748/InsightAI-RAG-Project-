@@ -28,6 +28,16 @@ on:
         required: false
         default: "0"
         type: string
+      baseline:
+        description: "Baseline JSON to gate against (empty = skip regression gate)"
+        required: false
+        default: "eval/baselines/v2_groq.json"
+        type: string
+      regression_tol:
+        description: "Absolute regression tolerance on the 0-1 scale"
+        required: false
+        default: "0.05"
+        type: string
 
 jobs:
   eval:
@@ -68,6 +78,15 @@ jobs:
 
       - name: Run evaluation
         run: python eval/run_eval.py --dataset ${{ github.event.inputs.dataset }} --delay ${{ github.event.inputs.delay }}
+
+      - name: Regression gate
+        if: ${{ github.event.inputs.baseline != '' }}
+        run: |
+          NEWEST=$(ls -1t eval/results/*.json | head -1)
+          python eval/regression_check.py \
+            --results "$NEWEST" \
+            --baseline ${{ github.event.inputs.baseline }} \
+            --tol ${{ github.event.inputs.regression_tol }}
 
       - name: Upload evaluation results
         uses: actions/upload-artifact@v4

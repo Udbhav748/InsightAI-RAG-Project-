@@ -21,6 +21,7 @@ import httpx
 from app.core.config import settings
 from app.core.exceptions import VisionServiceError
 from app.models.document import VisionPrediction
+from app.services.tool_registry import track_tool
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ CLASS_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+@track_tool("diagnose")
 def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionPrediction:
     """POST an image to LeafSense and return its prediction, mapped to a
     plain-language crop/disease pair.

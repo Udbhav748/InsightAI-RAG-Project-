@@ -20,14 +20,36 @@ import time
 
 from duckduckgo_search import DDGS
 from duckduckgo_search.exceptions import DuckDuckGoSearchException
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from app.core.config import settings
 from app.core.exceptions import WebSearchError
 from app.models.document import WebSearchResult
+from app.services.tool_registry import track_tool
 
 logger = logging.getLogger(__name__)
 
 
+def _log_retry(retry_state) -> None:
+    logger.warning(
+        "web_search_retrying",
+        extra={
+            "extra_fields": {
+                "attempt": retry_state.attempt_number,
+                "exception": str(retry_state.outcome.exception()),
+            }
+        },
+    )
+
+
+@track_tool("web_search")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type(WebSearchError),
+    reraise=True,
+    before_sleep=_log_retry,
+)
 def search_web(query: str, max_results: int | None = None) -> list[WebSearchResult]:
     """Fetch top web results for query.
 

@@ -124,14 +124,18 @@ a shared axios instance that attaches the `X-API-Key` header
 (`VITE_API_KEY`) to every request. `hooks/useChat.js` owns chat state
 client-side and sends the running conversation as `history` on each
 `/chat` call; `services/documentService.js` tracks upload history in
-`localStorage`, since the backend exposes no document-listing endpoint.
+`localStorage` (the backend's `GET /documents` is a later addition the
+frontend doesn't consume yet).
 
 **Auth** (`app/core/auth.py`). A small keys table loaded from
-`Settings.api_key_table` — a JSON map of `client_name -> bcrypt_hash`
+`Settings.api_key_table` — a JSON map of `client_name -> sha256_hash`
 parsed from `API_KEYS` (with a single `API_KEY` fallback for backward
 compatibility). The `require_api_key` dependency checks the incoming
-`X-API-Key` header against the hashed table; on success, it sets
-`request.state.client_name` for downstream audit logging. It's applied at
+`X-API-Key` header against the hashed table; when the database is enabled
+it also checks `api_keys` for any key added directly in Postgres (the env
+table stays the fast path and is mirrored into `api_keys` at startup). On
+success, it sets `request.state.client_name` (and `request.state.tenant_id`
+when a tenant is known) for downstream audit logging. It's applied at
 the router level to the documents and chat routers (`/health` stays open).
 This is a per-client gate (not per-user — no JWT, tokens, sessions, or
 roles), the smallest real improvement over one shared secret that's
@@ -149,6 +153,13 @@ below). A fourth action, `diagnose`, exists but bypasses `_plan` entirely
 — image presence on `POST /chat/diagnose` is an unambiguous routing
 signal `ChatService.handle_diagnose` acts on directly, with no text to
 classify (see "Two-service architecture" below).
+
+**Agent spec.** The agent's CrewAI-style identity — role, goal, backstory,
+and tool list — is declared as documented constants in
+`app/services/prompt_builder.py` (`AGENT_ROLE`, `AGENT_GOAL`,
+`AGENT_BACKSTORY`, `AGENT_TOOLS`). `_INSTRUCTIONS` is the executable
+rendering of role + goal at prompt time; the backstory is historical
+context for humans reading the code, not text injected into the prompt.
 
 **Vision tool** (`app/services/vision_client.py`). Not a local model —
 an HTTP client for LeafSense, a separate FastAPI service with its own
@@ -279,6 +290,24 @@ carry a `taxonomy_category` (`app/core/exceptions.py`) logged on failure.
 percentiles, error rate by category, and token/cost totals — explicitly
 a local stand-in for real observability (see its own docstring and
 `docs/OPERATIONS.md`).
+
+**Persistence (PostgreSQL, optional)** (`app/core/database.py`,
+`app/models/db_models.py`, `app/services/{tenant_service,document_repository,postgres_session_store,usage_service}.py`).
+When `DATABASE_URL` is set, SQLAlchemy-backed tables hold durable metadata
+that the ephemeral filesystem can't: `tenants` (a workspace per client,
+resolved by auth from the API-key client name), `api_keys` (SHA-256 hashes
+mirrored from env at startup, plus any added directly to the DB),
+`documents` (per-tenant metadata for every processed PDF — the vector
+store keeps the chunks, this keeps the record of what produced them),
+`chat_sessions`/`chat_turns` (persistent conversation history replacing
+the in-memory store's contents, with the same LRU/turn bounds), and
+`usage_logs` (one row per request via a middleware in `main.py`). Every
+consumer checks `db_enabled()` first and falls back to the legacy
+in-memory/file behavior when `DATABASE_URL` is empty, so an ephemeral
+deployment keeps working unchanged; `db_enabled()` is False whenever the
+engine wasn't built. Schema is created automatically on startup
+(`init_db` → `create_all`) and tracked for real migrations via Alembic
+(`backend/alembic/`).
 
 ## Framework choice
 

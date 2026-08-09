@@ -1,0 +1,33 @@
+name: Uptime Monitor
+
+# Lightweight availability check for the deployed services, run on a
+# schedule. Render's free tier doesn't ship a hosted uptime monitor, so this
+# workflow polls the live /health + frontend via backend/monitoring/uptime_check.py
+# and fails the job if any target is unreachable (which surfaces as a red
+# commit / failure notification). Persisted trailing-availability is best
+# effort — the ephemeral Actions workspace resets per run, so treat the
+# per-run availability as a point-in-time probe, not a long-term SLO store.
+# See backend/monitoring/README.md and docs/CHECKLIST.md §10 for the full
+# monitoring story (log_aggregate.py does windowed alert thresholds on demand).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes
+  workflow_dispatch: {} # allow manual trigger
+
+jobs:
+  availability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Probe backend and frontend
+        run: python backend/monitoring/uptime_check.py --json
+        env:
+          # Use the real deployed endpoints (defaults are localhost).
+          BACKEND_URL: https://insightai-rag-backend.onrender.com
+          FRONTEND_URL: https://insight-ai-rag-project.vercel.app
