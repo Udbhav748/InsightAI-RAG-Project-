@@ -24,8 +24,10 @@ GeminiClient); those are constructed elsewhere and handed in.
 import logging
 import re
 import time
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import lru_cache
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
@@ -271,6 +273,40 @@ class ChatService:
     def __init__(self, vector_store: VectorStore, llm_client: LLMClient):
         self._vector_store = vector_store
         self._llm_client = llm_client
+        # Response cache: keyed by (normalized_query, session_id, doc_set_hash)
+        # Only caches final responses after corrective loop completes.
+        # Max 256 entries, LRU eviction.
+        self._response_cache: dict[str, ChatResponse] = {}
+        self._cache_keys: list[str] = []
+        self._max_cache_size = 256
+
+    def _make_cache_key(self, query: str, session_id: str | None, vector_store: VectorStore) -> str:
+        """Create a cache key from normalized query, session_id, and document set hash."""
+        normalized = _normalize(query)
+        doc_hash = str(vector_store.total_vectors())  # simple proxy for document set
+        session = session_id or "no-session"
+        key_str = f"{normalized}|{session}|{doc_hash}"
+        return hashlib.sha256(key_str.encode()).hexdigest()[:32]
+
+    def _get_cached_response(self, cache_key: str) -> ChatResponse | None:
+        """Get cached response if exists, move to front (LRU)."""
+        if cache_key in self._response_cache:
+            # Move to front (most recently used)
+            self._cache_keys.remove(cache_key)
+            self._cache_keys.insert(0, cache_key)
+            return self._response_cache[cache_key]
+        return None
+
+    def _cache_response(self, cache_key: str, response: ChatResponse) -> None:
+        """Cache response with LRU eviction."""
+        if cache_key in self._response_cache:
+            self._cache_keys.remove(cache_key)
+        elif len(self._cache_keys) >= self._max_cache_size:
+            # Evict LRU
+            lru_key = self._cache_keys.pop()
+            self._response_cache.pop(lru_key, None)
+        self._cache_keys.insert(0, cache_key)
+        self._response_cache[cache_key] = response
 
     def _plan(self, query: str, history: list[dict] | None = None) -> PlanDecision:
         """Decide which tool this query needs.
@@ -622,6 +658,13 @@ class ChatService:
                 )
 
             # plan.action == "retrieve" — the corrective RAG loop.
+            # Check cache first (only cache final responses after corrective loop)
+            cache_key = self._make_cache_key(query, session_id, self._vector_store)
+            cached = self._get_cached_response(cache_key)
+            if cached is not None:
+                logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
+                return cached
+
             steps_taken += 1  # retrieval
             chunks = retrieve(query, self._vector_store, top_k=top_k, min_score=min_score)
 
@@ -659,7 +702,7 @@ class ChatService:
         # a generation call (see _correct) — a search that was attempted
         # but came back empty leaves this "retrieval", not "web_search".
         tool_used = "web_search" if web_results else "retrieval"
-        return self._respond(
+        response = self._respond(
             answer=answer,
             retrieved_chunks=chunks,
             query=query,
@@ -670,6 +713,9 @@ class ChatService:
             web_results=web_results,
             session_id=session_id,
         )
+        # Cache the final response (only for retrieve action)
+        self._cache_response(cache_key, response)
+        return response
 
     def stream_query(
         self,
@@ -761,6 +807,14 @@ class ChatService:
                 return
 
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
+            # Check cache first (only cache final responses after corrective loop)
+            cache_key = self._make_cache_key(query, session_id, self._vector_store)
+            cached = self._get_cached_response(cache_key)
+            if cached is not None:
+                logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
+                yield {"type": "done", "payload": cached}
+                return
+
             steps_taken += 1  # retrieval
             chunks = retrieve(query, self._vector_store, top_k=top_k, min_score=min_score)
             yield _trace_event("retrieval", {"chunk_count": len(chunks)})
@@ -828,6 +882,8 @@ class ChatService:
             web_results=web_results,
             session_id=session_id,
         )
+        # Cache the final response
+        self._cache_response(cache_key, response)
         yield {"type": "done", "payload": response}
 
     def handle_diagnose(
