@@ -126,13 +126,17 @@ client-side and sends the running conversation as `history` on each
 `/chat` call; `services/documentService.js` tracks upload history in
 `localStorage`, since the backend exposes no document-listing endpoint.
 
-**Auth** (`app/core/auth.py`). A single FastAPI dependency,
-`require_api_key`, checks the `X-API-Key` request header against
-`Settings.api_key` and raises `UnauthorizedError` (401) on mismatch. It's
-applied at the router level to the documents and chat routers (`/health`
-stays open). This is a shared-secret gate on the API as a whole, not
-per-user identity — see `docs/NOT_APPLICABLE.md` for what that doesn't
-cover (JWT, RBAC).
+**Auth** (`app/core/auth.py`). A small keys table loaded from
+`Settings.api_key_table` — a JSON map of `client_name -> bcrypt_hash`
+parsed from `API_KEYS` (with a single `API_KEY` fallback for backward
+compatibility). The `require_api_key` dependency checks the incoming
+`X-API-Key` header against the hashed table; on success, it sets
+`request.state.client_name` for downstream audit logging. It's applied at
+the router level to the documents and chat routers (`/health` stays open).
+This is a per-client gate (not per-user — no JWT, tokens, sessions, or
+roles), the smallest real improvement over one shared secret that's
+demonstrably per-client. See `docs/NOT_APPLICABLE.md` for why JWT/RBAC
+isn't the next step at this scale.
 
 **Planner** (`app/services/rag_service.py`, `ChatService._plan`). Pure
 keyword/regex routing — no LLM call. It returns one of three actions:

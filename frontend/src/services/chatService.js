@@ -10,14 +10,15 @@ const API_KEY = import.meta.env.VITE_API_KEY
 /**
  * Send a chat query to the RAG pipeline.
  * @param {string} query
- * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[] }} [options]
- * @returns {Promise<{answer: string, retrieved_chunks: object[], sources: {document_id: string, chunk_id: string, excerpt: string}[], processing_time: number, tool_used: string, steps_taken: number}>}
+ * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string }} [options]
+ * @returns {Promise<{answer: string, retrieved_chunks: object[], sources: {document_id: string, chunk_id: string, excerpt: string}[], processing_time: number, tool_used: string, steps_taken: number, session_id: string}>}
  */
 function buildChatPayload(query, options) {
   const payload = { query }
   if (options.topK != null) payload.top_k = options.topK
   if (options.minScore != null) payload.min_score = options.minScore
   if (options.history?.length) payload.history = options.history
+  if (options.sessionId) payload.session_id = options.sessionId
   return payload
 }
 
@@ -37,7 +38,7 @@ export async function sendChatMessage(query, options = {}) {
  * this endpoint needs POST (a query body) plus the X-API-Key header.
  *
  * @param {string} query
- * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[] }} [options]
+ * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string }} [options]
  * @param {{
  *   onTrace?: (stage: string, detail: object) => void,
  *   onChunk?: (text: string) => void,
@@ -97,4 +98,28 @@ export async function streamChatMessage(query, options = {}, callbacks = {}) {
       boundary = buffer.indexOf('\n\n')
     }
   }
+}
+
+/**
+ * Delete the server-side chat session.
+ * @param {string} sessionId
+ * @returns {Promise<{status: string, session_id: string}>}
+ */
+export async function deleteChatSession(sessionId) {
+  const response = await fetch(`${API_BASE_URL}/chat/session`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': API_KEY,
+    },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+
+  if (!response.ok) {
+    const error = new Error(`Request failed with status ${response.status}`)
+    error.response = { status: response.status, data: await response.json().catch(() => null) }
+    throw error
+  }
+
+  return response.json()
 }

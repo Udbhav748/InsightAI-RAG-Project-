@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { MessageCircle } from 'lucide-react'
+import { MessageCircle, Plus } from 'lucide-react'
 import ChatBubble from '../components/chat/ChatBubble'
 import ChatInput from '../components/chat/ChatInput'
 import EmptyState from '../components/ui/EmptyState'
@@ -13,7 +13,7 @@ const SUGGESTIONS = [
 ]
 
 export default function Chat() {
-  const { messages, isSending, ask, regenerate } = useChat()
+  const { messages, isSending, ask, regenerate, clearSession } = useChat()
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -61,7 +61,19 @@ export default function Chat() {
       </div>
 
       <div className="sticky bottom-0 pt-2">
-        <ChatInput onSend={ask} disabled={isSending} />
+        <div className="flex items-center justify-between mb-2 px-1 sm:px-3">
+          <ChatInput onSend={ask} disabled={isSending} />
+          <button
+            type="button"
+            onClick={clearSession}
+            disabled={isSending || messages.length === 0}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-100 dark:text-ink-muted dark:hover:bg-white/[0.05] disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Start a new conversation"
+          >
+            <Plus size={14} strokeWidth={2} />
+            <span className="hidden sm:inline">New chat</span>
+          </button>
+        </div>
         <p className="mt-2 text-center text-[11px] text-slate-400 dark:text-ink-muted">
           InsightAI can make mistakes. Verify important information.
         </p>

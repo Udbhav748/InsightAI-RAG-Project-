@@ -21,13 +21,13 @@ offline, sequentially, using the eval harness:
 
 2. **Change one variant at a time:**
    - **Model variant**: change `GEMINI_MODEL_NAME` in `backend/.env`
-     (e.g. try a different Gemini model) and restart the backend.
+      (e.g. try a different Gemini model) and restart the backend.
    - **Prompt variant**: edit `app/services/prompt_builder.py` and bump
-     `PROMPT_VERSION` (e.g. `"v1"` → `"v2"`) alongside whatever prompt
-     text changed, then restart the backend. Versioning it is what makes
-     the change traceable in logs (`generation_requested`/
-     `llm_generation_completed` both log `prompt_version`) — bump it for
-     *any* prompt change, not just wording tweaks.
+      `PROMPT_VERSION` (e.g. `"v1"` → `"v2"`) alongside whatever prompt
+      text changed, then restart the backend. Versioning it is what makes
+      the change traceable in logs (`generation_requested`/
+      `llm_generation_completed` both log `prompt_version`) — bump it for
+      *any* prompt change, not just wording tweaks.
 
 3. **Re-run the eval**: `python eval/run_eval.py` again against the
    changed backend. This writes a second, separate
@@ -52,6 +52,73 @@ document (`eval/README.md`'s preconditions), it isn't run in CI
 (`.github/workflows/ci.yml` has a TODO noting exactly this) — A/B
 comparisons are a manual, deliberate step, not something that runs on
 every push.
+
+### Running the eval via GitHub Actions (CI/CD)
+
+A separate manual workflow, `.github/workflows/eval.yml`, automates the
+same local procedure on GitHub-hosted runners. It is **only triggered by
+`workflow_dispatch` (manual run)** — never on push — because it calls the
+real LLM API and consumes real quota.
+
+**Prerequisites (one-time setup):**
+1. In the GitHub repo settings → **Secrets and variables → Actions → New repository secret**, add:
+   - `EVAL_GEMINI_API_KEY` — your real Google Gemini API key
+   - `EVAL_GROQ_API_KEY` — your real Groq API key
+   (These are *different* secret names from the dummy `ci-test-key` used
+   by the CI workflow (`ci.yml`), so the two workflows' secret requirements
+   never collide. CI uses a dummy key because its tests stub the LLM
+   client; this workflow needs real keys.)
+
+**To run:**
+1. Go to the **Actions** tab → select **"Eval (Manual)"** on the left →
+   click **Run workflow** (top right).
+2. Choose inputs:
+   - `dataset`: `dataset_v1.json` (default) or `dataset_v2.json`
+   - `llm_provider`: `groq` (default, cheaper/higher free tier) or `gemini`
+   - `delay`: seconds between entries (e.g. `15` for free-tier rate limits)
+3. Click **Run workflow**.
+
+The workflow will:
+1. Check out the repo
+2. Install Python + dependencies + tesseract
+3. Seed the vector store with the bundled demo corpus (`backend/demo_corpus/pmp_key_concepts.pdf`) via `scripts/ingest_corpus.py`
+4. Run `python eval/run_eval.py` with your chosen inputs
+5. Upload the resulting `eval/results/<timestamp>.json` as a **workflow artifact** (retention: 30 days)
+
+**To download the artifact:** After the run completes, open the workflow
+run page → scroll to **Artifacts** → click the `eval-results-...` zip.
+
+### Regression Rate check against the last committed baseline
+
+Each run produces a timestamped JSON in `eval/results/`. The repo already
+commits a baseline result file from a known-good run (e.g.
+`eval/results/20260807T215538Z.json` for the v0.1.0 tag — see the
+"Rollback plan" section). To use the workflow artifact as a regression
+check:
+
+1. **Download the artifact** from the workflow run (as above).
+2. **Compare the new run's key metrics against the baseline file** —
+   focus on the headline numbers that should *not* regress:
+   - `planner.accuracy` (should stay at 1.0)
+   - `planner.macro_f1` (should stay at 1.0)
+   - `task_success_rate` (should stay ≥ baseline)
+   - `injection_resistance` (should stay at 1.0)
+   - `false_refusal_rate` (should stay at 0.0)
+   - `data_leak_rate` (should stay at 0.0)
+   - `precision_at_5` / `recall_at_5` / `mrr` (retrieval quality)
+   - `citation_accuracy` (citation surface quality)
+3. **Optional: commit the new run as the new baseline** if it represents
+   an intentional improvement (e.g. after a prompt/model change that
+   you're keeping). Rename or copy the downloaded JSON to
+   `eval/results/<new-baseline-timestamp>.json`, commit it, and update
+   the reference timestamp in this document's "Rollback plan" section.
+   If the run shows a regression (any headline metric materially worse
+   than baseline), do *not* commit it — investigate and revert the change
+   instead.
+
+The workflow artifact is the *evidence* for that decision; it exists
+independently of the repo so you can inspect it without committing
+anything automatically.
 
 ## Retrieval ablation
 
@@ -491,9 +558,4 @@ free-tier cap (20 requests/day) mid-eval-run — why `render.yaml` defaults
 it back in the dashboard; either way this is a config decision already
 supported today, not new engineering.
 
-**This is not yet deployed anywhere.** The pieces above (`Dockerfile`,
-`render.yaml`, `demo_seed_service.py`) are ready to run, but no Render
-service has actually been created from this repo yet — there's no live URL.
-Deploying is a manual step the project owner runs with their own Render
-account; see `docs/DESIGN_REVIEW.md` Q9/Q10 for what's still a known
-limitation regardless (single global index, no per-tenant isolation).
+**This is deployed and live.** The backend runs at `https://insightai-rag-backend.onrender.com` (Render free tier, Docker) and the frontend at `https://insight-ai-rag-project.vercel.app` (Vercel). The pieces above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`) are running in production.

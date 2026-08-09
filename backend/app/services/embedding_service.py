@@ -81,17 +81,17 @@ def _embed_query_cached(normalized_query: str) -> tuple[float, ...]:
     return tuple(vector.tolist())
 
 
-# Scoped to LLMTimeoutError/LLMAPIError per spec, matching GeminiClient.generate.
-# In practice this function's own failures raise EmbeddingGenerationError /
-# EmbeddingModelLoadError instead, so today this decorator only retries if a
-# future implementation surfaces one of those two LLM-specific error types.
+# Scoped to the exceptions this function actually raises: EmbeddingGenerationError
+# (from model.encode failures) and EmbeddingModelLoadError (from get_embedding_model
+# failures). The earlier version incorrectly caught LLMTimeoutError/LLMAPIError
+# which this function never raises — so the retry was effectively dead code.
 # lru_cache doesn't cache exceptions, so a failed call retries the real
 # model.encode() on the next attempt rather than retrying against a cached
 # failure.
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+    retry=retry_if_exception_type((EmbeddingGenerationError, EmbeddingModelLoadError)),
     reraise=True,
     before_sleep=_log_retry,
 )

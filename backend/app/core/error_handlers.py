@@ -3,6 +3,13 @@
 Domain errors (AppError and subclasses) are translated into their mapped
 HTTP status code. Anything else is logged and returned as a generic 500,
 so unexpected exceptions never leak internals to the client.
+
+Response shape includes structured error code for frontend handling:
+{
+  "detail": "Human-readable message",
+  "error_code": "STABLE_ERROR_CODE",
+  "taxonomy_category": "auth|validation|tool|llm|rate_limit|..."
+}
 """
 
 import logging
@@ -29,7 +36,14 @@ def register_exception_handlers(app: FastAPI) -> None:
                 }
             },
         )
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": exc.detail,
+                "error_code": exc.error_code,
+                "taxonomy_category": exc.taxonomy_category,
+            }
+        )
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
@@ -39,5 +53,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             extra={"extra_fields": {"path": request.url.path}},
         )
         return JSONResponse(
-            status_code=500, content={"detail": "Internal server error."}
+            status_code=500,
+            content={
+                "detail": "Internal server error.",
+                "error_code": "INTERNAL_ERROR",
+                "taxonomy_category": "internal",
+            }
         )

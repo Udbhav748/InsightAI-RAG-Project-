@@ -105,6 +105,12 @@ def client(monkeypatch, seeded_vector_store, tmp_path):
     # sentence-transformers model via the hybrid path.
     monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: FAKE_EMBEDDING)
 
+    # Patch session store to use a fresh in-memory instance per test
+    from app.services.session_store import InMemorySessionStore
+    test_session_store = InMemorySessionStore()
+    monkeypatch.setattr("app.api.v1.routes.query.get_session_store", lambda: test_session_store)
+    monkeypatch.setattr("app.services.session_store.get_session_store", lambda: test_session_store)
+
     # Feedback events go to a tmp_path file, never the real
     # backend/feedback/feedback.jsonl. record_feedback() looks these up as
     # module globals at call time, so patching them here (rather than

@@ -131,6 +131,37 @@ This is explicitly a **proxy**, not a faithfulness or entailment check:
 Treat this metric as "did the model at least engage with the retrieved
 text," not "was the answer accurate."
 
+### Entailment groundedness (LLM-as-judge)
+
+For every `retrieve`-routed answer that actually got chunks back, this
+makes a **second, cheap LLM call** (the "judge") to evaluate whether the
+answer is actually *logically supported* by the retrieved context — not
+just whether it shares vocabulary.
+
+The judge prompt:
+- Wraps each retrieved chunk in the same `---BEGIN UNTRUSTED DOCUMENT EXCERPT--- / ---END EXCERPT---` delimiters used by `prompt_builder.py`, so the judge knows the context is untrusted data.
+- Asks the LLM to respond with structured JSON: `{"supported": true/false, "reason": "..."}` — validated against a Pydantic schema (`GroundednessJudgment`), not free-text parsing.
+- Reuses the **same LLM provider** that generated the original answer (controlled by `LLM_PROVIDER` in `backend/.env`), so the run stays self-consistent (e.g. Groq answers judged by Groq, not a mix of providers).
+
+This metric answers a genuinely different question from the other two groundedness-related metrics:
+
+| Metric | What it checks | Method |
+|---|---|---|
+| **Groundedness proxy** (lexical) | Does the answer share non-trivial vocabulary with *any* retrieved chunk? | Word-overlap heuristic (deterministic, no LLM call) |
+| **Citation Accuracy** | Does at least one *cited source excerpt* (the ~200-char slice a caller sees) contain keyword evidence for the claim? | Keyword-support heuristic on `ChatResponse.sources.excerpt` |
+| **Entailment groundedness** (this metric) | Is the answer *actually supported by* the retrieved context — i.e., does every factual claim trace to the context? | LLM-as-judge with structured yes/no output |
+
+Key distinctions:
+- **vs. Groundedness proxy**: The proxy can be fooled by vocabulary overlap alone (e.g. answer repeats a key term but misstates the fact). The judge checks *logical entailment*, not just word presence.
+- **vs. Citation Accuracy**: Citation Accuracy checks whether the *citations shown to the user* support the claim. Entailment groundedness checks whether the *answer itself* follows from the *full retrieved context* — even if a supporting chunk wasn't among the top-5 cited sources, or if the answer synthesizes across multiple chunks.
+
+Because this doubles LLM calls for every scored `retrieve` entry, it respects the same quota pacing:
+- Use `--delay` (e.g. `--delay 15` for free-tier rate limits) to space both the answer and judge calls.
+- Set `LLM_PROVIDER=groq` in `backend/.env` for the cheaper/higher-quota provider — the judge uses the same provider automatically.
+- The `--delay` is applied between the answer call and the judge call as well, so two calls per entry are paced correctly.
+
+Entries that error out, return `FALLBACK_REPLY`, or have no retrieved chunks are scored as `entailment_grounded: false` (conservative default) and excluded from the denominator appropriately.
+
 ### Injection Resistance
 
 For `case_type: "adversarial"` entries only. Each adversarial entry

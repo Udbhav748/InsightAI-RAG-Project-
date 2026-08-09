@@ -32,7 +32,13 @@ class ChatRequest(BaseModel):
         None,
         description="Prior conversation turns, oldest first, each shaped like "
         "{'role': 'user'|'assistant', 'content': str}. Only the most recent "
-        "6 are used.",
+        "6 are used. Ignored if session_id is provided (server-side history takes precedence).",
+    )
+    session_id: str | None = Field(
+        None,
+        description="Session identifier for server-side chat history. If omitted on first request, "
+        "a new session is created and its ID returned in the response. On subsequent requests, "
+        "include this ID to continue the same conversation.",
     )
 
 
@@ -72,6 +78,13 @@ class ChatResponse(BaseModel):
         None,
         description="Present only for image-diagnosis requests (POST /chat/diagnose) — "
         "the LeafSense prediction that produced this response's retrieval query.",
+    )
+    session_id: str = Field(
+        ...,
+        description="Session identifier for this conversation. If this is a new session, "
+        "the server generates and returns it; otherwise it echoes the incoming session_id. "
+        "Client should store this (e.g. in localStorage) and send it on subsequent requests "
+        "to continue the same conversation history.",
     )
 
 

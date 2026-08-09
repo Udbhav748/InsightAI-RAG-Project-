@@ -16,6 +16,7 @@ from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
+from app.services.session_store import get_session_store
 from app.services.validation_service import validate_image_upload
 from app.services.vector_store import VectorStore
 
@@ -61,6 +62,16 @@ def chat(request: ChatRequest) -> ChatResponse:
     # store would raise (404) before an invalid body could return its 422.
     # Calling it here, after `request` is already validated, preserves 422s.
     chat_service = get_chat_service()
+    session_store = get_session_store()
+
+    # Resolve session_id: use provided, or create new if none/not found
+    session_id = session_store.get_or_create_session(request.session_id)
+
+    # Get server-side history (takes precedence over client-sent history)
+    history = session_store.get_history(session_id)
+    if history is None:
+        # Fallback to client-provided history if session not found
+        history = request.history
 
     logger.info(
         "chat_request_received",
@@ -69,6 +80,9 @@ def chat(request: ChatRequest) -> ChatResponse:
                 "query_length": len(request.query),
                 "top_k": request.top_k,
                 "min_score": request.min_score,
+                "client": getattr(request.state, "client_name", "unknown"),
+                "session_id": session_id,
+                "history_turns": len(history) if history else 0,
             }
         },
     )
@@ -77,8 +91,12 @@ def chat(request: ChatRequest) -> ChatResponse:
         request.query,
         top_k=request.top_k,
         min_score=request.min_score,
-        history=request.history,
+        history=history,
     )
+
+    # Append this turn to server-side history
+    session_store.append_turn(session_id, "user", request.query)
+    session_store.append_turn(session_id, "assistant", response.answer)
 
     logger.info(
         "chat_response_sent",
@@ -87,11 +105,16 @@ def chat(request: ChatRequest) -> ChatResponse:
                 "answer_length": len(response.answer),
                 "retrieved_chunk_count": len(response.retrieved_chunks),
                 "processing_time": response.processing_time,
+                "client": getattr(request.state, "client_name", "unknown"),
+                "session_id": session_id,
             }
         },
     )
 
-    return response
+    # Attach session_id to response (Pydantic model allows extra fields via model_dump)
+    response_data = response.model_dump()
+    response_data["session_id"] = session_id
+    return ChatResponse(**response_data)
 
 
 def _sse_line(event: dict) -> str:
@@ -115,6 +138,15 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
     # progress as Server-Sent Events instead of returning one response at
     # the end. POST /chat itself is untouched; this is an additive route.
     chat_service = get_chat_service()
+    session_store = get_session_store()
+
+    # Resolve session_id: use provided, or create new if none/not found
+    session_id = session_store.get_or_create_session(request.session_id)
+
+    # Get server-side history (takes precedence over client-sent history)
+    history = session_store.get_history(session_id)
+    if history is None:
+        history = request.history
 
     logger.info(
         "chat_stream_request_received",
@@ -123,17 +155,40 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
                 "query_length": len(request.query),
                 "top_k": request.top_k,
                 "min_score": request.min_score,
+                "client": getattr(request.state, "client_name", "unknown"),
+                "session_id": session_id,
+                "history_turns": len(history) if history else 0,
             }
         },
     )
 
     def event_source() -> Iterator[str]:
+        full_answer_parts: list[str] = []
+
         for event in chat_service.stream_query(
             request.query,
             top_k=request.top_k,
             min_score=request.min_score,
-            history=request.history,
+            history=history,
         ):
+            # Capture answer chunks to append to history after stream completes
+            if event.get("type") == "answer_chunk":
+                full_answer_parts.append(event["text"])
+            elif event.get("type") == "done":
+                # Stream completed — append this turn to server-side history
+                full_answer = "".join(full_answer_parts)
+                session_store.append_turn(session_id, "user", request.query)
+                session_store.append_turn(session_id, "assistant", full_answer)
+
+                # Inject session_id into the done payload
+                payload = event["payload"]
+                if hasattr(payload, "model_dump"):
+                    payload_data = payload.model_dump(mode="json")
+                else:
+                    payload_data = payload
+                payload_data["session_id"] = session_id
+                event = {**event, "payload": payload_data}
+
             yield _sse_line(event)
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
@@ -180,6 +235,7 @@ async def diagnose(
                 "answer_length": len(response.answer),
                 "retrieved_chunk_count": len(response.retrieved_chunks),
                 "processing_time": response.processing_time,
+                "client": getattr(request.state, "client_name", "unknown"),
             }
         },
     )
@@ -199,8 +255,47 @@ def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResp
                 "path": request.url.path,
                 "message_id": feedback.message_id,
                 "rating": feedback.rating,
+                "client": getattr(request.state, "client_name", "unknown"),
             }
         },
     )
 
     return FeedbackResponse(status="recorded")
+
+
+@router.delete("/chat/session")
+def delete_chat_session(request: Request) -> dict:
+    """Delete the current chat session (server-side history).
+    
+    Called when user clicks "New chat" to clear server-side session.
+    Session ID is read from request body (JSON) or header.
+    """
+    session_store = get_session_store()
+    
+    # Try to get session_id from request body (JSON) or header
+    import json
+    session_id = None
+    try:
+        body = request.headers.get("X-Session-ID")
+        if body:
+            session_id = body
+    except Exception:
+        pass
+    
+    if session_id:
+        deleted = session_store.delete_session(session_id)
+        if deleted:
+            logger.info(
+                "audit_event",
+                extra={
+                    "extra_fields": {
+                        "event": "session_deleted",
+                        "path": request.url.path,
+                        "session_id": session_id,
+                        "client": getattr(request.state, "client_name", "unknown"),
+                    }
+                },
+            )
+            return {"status": "deleted", "session_id": session_id}
+    
+    return {"status": "not_found", "session_id": session_id}

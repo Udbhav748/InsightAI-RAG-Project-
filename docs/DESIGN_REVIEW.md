@@ -188,12 +188,20 @@ by the eval script itself, never passing through
 ## 7. How will user data and secrets be protected?
 
 - **Authentication**: `app/core/auth.py`'s `require_api_key` dependency
-  gates the documents and chat routers behind a shared `X-API-Key`
-  header, checked against `Settings.api_key`. Failed attempts are logged
-  as `audit_event`/`auth_failed`. This is a single static secret, not
-  per-user identity — see Q9 and
-  [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) for what that doesn't
-  cover.
+   gates the documents and chat routers behind an `X-API-Key` header,
+   checked against a keys table (`Settings.api_key_table`) — a JSON map
+   of `client_name -> bcrypt_hash` loaded from `API_KEYS` (or a single
+   fallback `API_KEY` for backward compatibility). Keys are hashed at
+   startup; only hashes are kept in memory. On success, the client's
+   identifier is stored in `request.state.client_name` and included in all
+   downstream `audit_event` logs (`auth_failed`, `document_uploaded`,
+   `document_deleted`, `chat_request_received`, `chat_response_sent`,
+   `diagnose_response_sent`, `feedback_submitted`). This is the smallest
+   real improvement over one shared secret that's demonstrably per-client
+   — not per-user (no JWT, tokens, sessions, or roles) — proportionate to
+   this project's actual single-user demo scale. See
+   [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) for why JWT/RBAC isn't
+   the next step here.
 - **Destructive-action confirmation**: `DELETE /documents/{id}` requires
   `?confirm=true` or returns `ConfirmationRequiredError` (400) — a
   human-in-the-loop gate against accidental deletion, not a security
@@ -213,7 +221,16 @@ by the eval script itself, never passing through
 - **Audit logging**: uploads, deletes, and failed auth attempts are all
   logged as structured `audit_event` entries with `path` and a
   `request_id`, giving a paper trail for who did what.
-- **Not implemented**: encryption at rest, JWT/RBAC, rate limiting,
+- **Basic rate limiting**: 60 req/min per client key, in-memory sliding window
+  (`app/core/auth.py`). Resets on restart; sufficient for free-tier demo.
+- **Structured error codes surfaced to frontend**: all `AppError` responses
+  include `error_code` (e.g. `UNAUTHORIZED`, `RATE_LIMITED`) and
+  `taxonomy_category` (e.g. `input`, `tool`, `rate_limit`); frontend
+  `getErrorInfo()` extracts these for programmatic handling.
+- **Not implemented**: application-level encryption at rest (Render provides
+  infrastructure-level AES-256 disk encryption; customer-managed keys /
+  field-level encryption remain future work), JWT/RBAC, advanced rate
+  limiting (token bucket, persistence, distributed enforcement),
   per-user document isolation. All explicitly listed as future work in
   `docs/NOT_APPLICABLE.md` and the README's Known Limitations section.
 
@@ -279,9 +296,14 @@ constraints beyond it:
   `load`) aren't locked, so a read concurrent with a write can still
   observe a mid-rebuild index — a narrower gap than the unguarded-writes
   one, but still open.
-- **Single API key.** One shared secret for the whole API — no per-user
-  keys, no key rotation, no rate limiting, no way to revoke one client
-  without rotating the key for everyone.
+- **Single API key (per-client, not per-user).** `app/core/auth.py` checks the `X-API-Key` header against a keys table (`Settings.api_key_table`) loaded from `API_KEYS` (JSON map of `client_name -> key`) or a single fallback `API_KEY`. Keys are hashed with SHA-256 at startup; only hashes are kept in memory. 
+
+  **No built-in key rotation or revocation.** To rotate a compromised key:
+  1. Generate a new key for the client
+  2. Update `API_KEYS` in `backend/.env` (e.g., `{"frontend": "new-key", "admin-script": "key2"}`)
+  2. Restart the backend service (Render: redeploy or manual restart)
+  
+  There's no API to rotate keys without restart, no key expiration, and no way to revoke one client without updating the JSON and restarting. This is acceptable for the current single-user demo scale; a multi-user product would need a proper secrets manager and rotation API.
 - **Document history lives in browser localStorage, not the server.**
   The backend has no document-listing endpoint, so
   `frontend/src/services/documentService.js` tracks what's been uploaded
@@ -289,15 +311,14 @@ constraints beyond it:
   ever shows what *this browser* uploaded — a second device or a cleared
   browser profile sees nothing, even though the documents are still
   indexed server-side.
-- **Chat conversation history isn't persisted at all**, server- or
-  client-side beyond memory. `useChat.js` keeps it in React component
-  state and sends up to the last 6 turns per request
-  (`ChatRequest.history`, capped in `rag_service.py`'s
-  `_MAX_HISTORY_TURNS`); a page refresh loses the conversation entirely.
-- **No deployment yet** — see [`docs/OPERATIONS.md`](OPERATIONS.md).
-  Everything above is a single-process, single-machine design; there's
-  no load balancer, no autoscaling, and no infrastructure-as-code in
-  this repo today.
+- **Chat conversation history is now persisted server-side keyed by `session_id`.** `frontend/src/hooks/useChat.js` generates a UUID on first message, stores it in `localStorage`, and sends it on every `/chat` request. The backend (`app/services/session_store.py`) maintains an in-memory `session_id -> history` map and returns the full history when a known `session_id` arrives — so a page refresh no longer loses the conversation.
+
+  **Why in-memory, not a file or DB?** The live Render free-tier instance has an ephemeral filesystem — that's why the FAISS index already uses the auto-seeded demo-document workaround (see `docs/OPERATIONS.md` "The constraint that shapes everything below: an ephemeral filesystem"). A file-backed session store would face the exact same problem (wiped on every restart/redeploy), so it wouldn't actually buy more durability than an in-memory store on the current deployment — it would just add complexity for a durability guarantee this environment can't actually provide right now. Given that, an in-memory session store is the honest, proportionate choice today — same pattern as the per-client API keys decision. If/when the deployment moves to a platform with a real persistent volume or database, `session_store.py` is the single place to swap in a persistent backend (Redis, PostgreSQL, or a JSON file on a mounted disk).
+
+  **Single-instance assumption (critical for correctness).** The Render free-tier web service runs as **exactly one instance** (the `render.yaml` specifies `plan: free` with no `numInstances` or autoscaling; Render defaults to 1 instance on the free tier). The in-memory session store is **only correct while the service runs as a single process**. If the deployment ever scales to more than one instance (e.g., upgrading to a paid Render plan with multiple instances, or adding a load balancer), a session created on instance A would be invisible to a request landing on instance B — an active correctness bug, not a durability trade-off. At that point, the session store must be replaced with a shared external store (Redis, PostgreSQL, etc.) before enabling multi-instance deployment. `session_store.py` is the single swap point.
+
+  **Retention:** bounded by `max_sessions=1000` with LRU eviction (see `session_store.py`). No TTL — session count is capped to prevent OOM on the 512MB free tier. A production multi-instance deployment would need Redis with TTL instead.
+- **Deployed and live** — see [`docs/OPERATIONS.md`](OPERATIONS.md). The backend runs as a single Render free-tier instance (1 instance, no autoscaling). Everything above remains a single-process, single-machine design; there's no load balancer, no autoscaling, and no infrastructure-as-code beyond `render.yaml` in this repo today.
 
 ## 10. Would you trust the system as a customer?
 

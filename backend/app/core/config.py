@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # reach the documents/query routers. See core/auth.py.
     api_key: str
 
+    # Optional. JSON string mapping client identifiers to their API keys.
+    # Example: '{"client-a": "key1", "client-b": "key2"}'
+    # If provided, this supersedes api_key and enables per-client auth.
+    # Keys are hashed at startup (bcrypt); only hashes are kept in memory.
+    api_keys: str = ""
+
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"
 
@@ -203,6 +209,32 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def api_key_table(self) -> dict[str, str]:
+        """Return a dict of sha256_hash -> client_name for all configured keys.
+
+        If api_keys (JSON) is set, use that. Otherwise fall back to the single
+        api_key with a default client name "default". Keys are hashed with SHA-256
+        so plaintext keys are never stored in memory beyond initial parsing.
+        The dict is keyed by hash for O(1) lookup, avoiding a linear scan.
+        """
+        import hashlib
+        import json
+
+        if self.api_keys:
+            try:
+                raw = json.loads(self.api_keys)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"API_KEYS must be valid JSON: {exc}") from exc
+            if not isinstance(raw, dict):
+                raise ValueError("API_KEYS must be a JSON object mapping client_name -> key")
+            return {
+                hashlib.sha256(key.encode()).hexdigest(): client
+                for client, key in raw.items()
+            }
+        # Backward compatibility: single api_key becomes "default" client
+        return {hashlib.sha256(self.api_key.encode()).hexdigest(): "default"}
 
 
 settings = Settings()

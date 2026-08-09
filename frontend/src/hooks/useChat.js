@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamChatMessage } from '../services/chatService'
+import { streamChatMessage, deleteChatSession } from '../services/chatService'
 import getErrorMessage from '../utils/errorMessage'
 
 let idCounter = 0
 const nextId = () => `msg-${++idCounter}-${Date.now()}`
+
+const SESSION_KEY = 'insightai_session_id'
 
 // Backend only wants role/content pairs (see ChatRequest.history) — strip
 // UI-only fields, and drop error/in-progress bubbles since they aren't
@@ -28,11 +30,26 @@ function historyBeforeQuery(messages, query) {
   return toHistory(messages.slice(0, cutoff))
 }
 
+function getOrCreateSessionId() {
+  let sessionId = localStorage.getItem(SESSION_KEY)
+  if (!sessionId) {
+    sessionId = crypto.randomUUID()
+    localStorage.setItem(SESSION_KEY, sessionId)
+  }
+  return sessionId
+}
+
 export default function useChat() {
   const [messages, setMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
   const lastQueryRef = useRef('')
   const messagesRef = useRef([])
+  const sessionIdRef = useRef(null)
+
+  // Initialize session_id from localStorage on mount
+  useEffect(() => {
+    sessionIdRef.current = getOrCreateSessionId()
+  }, [])
 
   useEffect(() => {
     messagesRef.current = messages
@@ -54,7 +71,7 @@ export default function useChat() {
       try {
         await streamChatMessage(
           query,
-          { history },
+          { history, sessionId: sessionIdRef.current },
           {
             onTrace: (stage, detail) => {
               updateMessage(assistantId, (message) => ({
@@ -72,6 +89,11 @@ export default function useChat() {
               updateMessage(assistantId, (message) => ({ ...message, content: message.content + text }))
             },
             onDone: (payload) => {
+              // Persist session_id returned by server (new or echoed)
+              if (payload.session_id) {
+                sessionIdRef.current = payload.session_id
+                localStorage.setItem(SESSION_KEY, payload.session_id)
+              }
               updateMessage(assistantId, (message) => ({
                 ...message,
                 content: payload.answer,
@@ -129,5 +151,21 @@ export default function useChat() {
     fetchAnswer(lastQueryRef.current, history)
   }, [fetchAnswer, isSending])
 
-  return { messages, isSending, ask, regenerate }
+  // Clear session (start fresh conversation)
+  const clearSession = useCallback(async () => {
+    const oldSessionId = sessionIdRef.current
+    if (oldSessionId) {
+      try {
+        await deleteChatSession(oldSessionId)
+      } catch (err) {
+        // Log but don't block UI — server-side cleanup is best-effort
+        console.warn('Failed to delete server-side session:', err)
+      }
+    }
+    localStorage.removeItem(SESSION_KEY)
+    sessionIdRef.current = getOrCreateSessionId()
+    setMessages([])
+  }, [])
+
+  return { messages, isSending, ask, regenerate, clearSession }
 }

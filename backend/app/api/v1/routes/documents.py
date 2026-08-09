@@ -42,6 +42,7 @@ async def upload_document(
                 "event": "document_uploaded",
                 "path": request.url.path,
                 "document_id": response.document_id,
+                "client": getattr(request.state, "client_name", "unknown"),
             }
         },
     )
@@ -80,6 +81,7 @@ def delete_document(
                 "path": request.url.path,
                 "document_id": document_id,
                 "chunks_removed": removed_count,
+                "client": getattr(request.state, "client_name", "unknown"),
             }
         },
     )

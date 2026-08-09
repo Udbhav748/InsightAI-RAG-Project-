@@ -475,16 +475,20 @@ InsightAI-RAG/
 
 - **Single, unsharded FAISS index.** One `backend/vector_store/index.faiss`
   file serves every document, loaded as a single process-wide instance —
-  no per-tenant isolation, and no locking around concurrent writes.
-- **Single shared API key.** No per-user credentials, key rotation, or
-  rate limiting.
+  no per-tenant isolation. Concurrent writes are guarded by a `threading.Lock`
+  in `FAISSVectorStore` (covers both async `/upload` and sync `DELETE` routes),
+  so index/metadata corruption from concurrent writers is prevented.
+- **Per-client API keys, not per-user.** No key rotation API, no expiration,
+  no revocation without `.env` edit + restart. Basic rate limiting added
+  (60 req/min per key, in-memory sliding window).
 - **Document history is per-browser, not server-side.** There's no
   document-listing endpoint; the Documents page reads `localStorage`, so
   a different browser or device shows nothing even though the documents
   are indexed server-side.
-- **Chat history isn't persisted at all.** Kept only in React state
-  client-side and sent per-request (last 6 turns); a page refresh loses
-  the conversation.
+- **Chat history is server-side per `session_id`, bounded by LRU.**
+  In-memory store capped at 1000 sessions with LRU eviction; each session's
+  history capped at 50 turns. No TTL. A page refresh no longer loses the
+  conversation, but server restart wipes all sessions.
 - **OCR is a best-effort fallback, not equivalent to real text.** It only
   runs on pages with no extractable text layer at all — it doesn't
   improve or re-check pages PyMuPDF already got text from. Accuracy
@@ -511,9 +515,6 @@ InsightAI-RAG/
   web results" and falls through to the normal fallback reply, so this
   degrades gracefully rather than erroring — but it means the fallback
   can be quietly unavailable depending on where the backend runs.
-- **`embed_query`'s retry decorator is currently inert** — it's scoped to
-  `LLMTimeoutError`/`LLMAPIError`, but `embed_query`'s own failures raise
-  different exception types.
 - **Groundedness is measured by a lexical-overlap proxy**, not a real
   faithfulness check (see `backend/eval/README.md`).
 - **Provider fallback is single-hop.** `FallbackLLMClient` tries the
