@@ -92,6 +92,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         top_k=request.top_k,
         min_score=request.min_score,
         history=history,
+        session_id=session_id,
     )
 
     # Append this turn to server-side history
@@ -170,6 +171,7 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
             top_k=request.top_k,
             min_score=request.min_score,
             history=history,
+            session_id=session_id,
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
@@ -198,6 +200,7 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
 async def diagnose(
     image: UploadFile = File(...),
     query: str | None = Form(None),
+    session_id: str | None = Form(None),
 ) -> ChatResponse:
     # A separate multipart endpoint rather than an optional file param on
     # /chat: FastAPI resolves a whole request as either a JSON body or
@@ -226,6 +229,7 @@ async def diagnose(
         image.filename or "upload",
         image.content_type or "application/octet-stream",
         query=query,
+        session_id=session_id,
     )
 
     logger.info(

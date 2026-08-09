@@ -224,6 +224,7 @@ def build_groundedness_judge_prompt(query: str, chunks: list[RetrievedChunk], an
         "Respond with a JSON object containing exactly two fields:\n"
         "  - \"supported\": true or false\n"
         "  - \"reason\": brief explanation of your judgment\n\n"
+        "Output ONLY the JSON object. No other text, no markdown, no explanation.\n\n"
         f"Context:\n{context}\n\n"
         f"Question: {query}\n\n"
         f"Answer: {answer}\n\n"

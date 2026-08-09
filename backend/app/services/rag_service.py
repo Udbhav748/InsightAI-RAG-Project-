@@ -578,6 +578,7 @@ class ChatService:
         top_k: int | None = None,
         min_score: float | None = None,
         history: list[dict] | None = None,
+        session_id: str | None = None,
     ) -> ChatResponse:
         start = time.perf_counter()
         steps_taken = 1  # planning
@@ -597,6 +598,7 @@ class ChatService:
                 tool_used="none",
                 steps_taken=steps_taken,
                 start=start,
+                session_id=session_id,
             )
 
         recent_history = history[-_MAX_HISTORY_TURNS:] if history else None
@@ -616,6 +618,7 @@ class ChatService:
                     tool_used="summarization",
                     steps_taken=steps_taken,
                     start=start,
+                    session_id=session_id,
                 )
 
             # plan.action == "retrieve" — the corrective RAG loop.
@@ -665,6 +668,7 @@ class ChatService:
             steps_taken=steps_taken,
             start=start,
             web_results=web_results,
+            session_id=session_id,
         )
 
     def stream_query(
@@ -673,6 +677,7 @@ class ChatService:
         top_k: int | None = None,
         min_score: float | None = None,
         history: list[dict] | None = None,
+        session_id: str | None = None,
     ) -> Iterator[dict]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
@@ -721,6 +726,7 @@ class ChatService:
                 tool_used="none",
                 steps_taken=steps_taken,
                 start=start,
+                session_id=session_id,
             )
             yield {"type": "done", "payload": response}
             return
@@ -749,6 +755,7 @@ class ChatService:
                     tool_used="summarization",
                     steps_taken=steps_taken,
                     start=start,
+                    session_id=session_id,
                 )
                 yield {"type": "done", "payload": response}
                 return
@@ -819,6 +826,7 @@ class ChatService:
             steps_taken=steps_taken,
             start=start,
             web_results=web_results,
+            session_id=session_id,
         )
         yield {"type": "done", "payload": response}
 
@@ -829,6 +837,7 @@ class ChatService:
         content_type: str,
         query: str | None = None,
         history: list[dict] | None = None,
+        session_id: str | None = None,
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense, then run the predicted
         disease through the same corrective RAG loop handle_query uses —
@@ -914,6 +923,7 @@ class ChatService:
                 confidence=prediction.confidence,
                 low_confidence=prediction.low_confidence,
             ),
+            session_id=session_id,
         )
 
     def _respond(
@@ -928,6 +938,7 @@ class ChatService:
         start,
         web_results: list[WebSearchResult] | None = None,
         diagnosis: DiagnosisInfo | None = None,
+        session_id: str | None = None,
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
         web_results = web_results or []
@@ -964,4 +975,5 @@ class ChatService:
             steps_taken=steps_taken,
             answer_source=answer_source,
             diagnosis=diagnosis,
+            session_id=session_id or "",
         )
