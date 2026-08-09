@@ -89,10 +89,17 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
     rather than guess at a diagnosis.
     """
     start = time.perf_counter()
+    headers = {}
+    if settings.vision_service_api_key:
+        # Same X-API-Key convention this app's own inbound auth uses, so a
+        # single shared secret style can protect both directions. Empty by
+        # default (local LeafSense needs no auth) — see Settings.
+        headers["X-API-Key"] = settings.vision_service_api_key
     try:
         response = httpx.post(
             f"{settings.vision_service_url}/predict/{_MODEL_ID}",
             files={"file": (filename, contents, content_type)},
+            headers=headers,
             timeout=settings.vision_service_timeout_seconds,
         )
         response.raise_for_status()

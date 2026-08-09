@@ -60,6 +60,33 @@ logger = logging.getLogger(__name__)
 # is expected to hit; hitting it logs "loop_capped".
 _MAX_LLM_CALLS = 3
 
+
+def _capture_prompt(prompt: str, *, variant: str) -> None:
+    """Log the exact prompt when Settings.log_prompt_content is on.
+
+    Off by default — prompts embed retrieved document text, so capturing
+    them is an explicit data-retention decision (Settings.log_prompt_max_chars
+    caps what's logged; the capture is a truncated prefix with a marker,
+    never silently cut). This is what closes the "prompt recorded but not
+    captured" debugging gap in the checklist.
+    """
+    if not settings.log_prompt_content:
+        return
+    max_chars = settings.log_prompt_max_chars
+    captured = prompt if len(prompt) <= max_chars else prompt[:max_chars] + "...[truncated]"
+    logger.info(
+        "prompt_captured",
+        extra={
+            "extra_fields": {
+                "prompt_version": PROMPT_VERSION,
+                "variant": variant,
+                "prompt_length": len(prompt),
+                "captured_length": len(captured),
+                "prompt": captured,
+            }
+        },
+    )
+
 # Each entry is (normalized exact phrases, canned response). Checked in
 # order; the query must match one of the phrases entirely (after
 # normalization) — a real question that merely contains a word like
@@ -339,6 +366,7 @@ class ChatService:
         prompt = build_prompt(
             query, chunks, history=history, extra_instruction=extra_instruction, web_results=web_results
         )
+        _capture_prompt(prompt, variant="reflection" if extra_instruction else "standard")
         logger.info(
             "generation_requested",
             extra={
@@ -371,6 +399,7 @@ class ChatService:
         prompt = build_prompt(
             query, chunks, history=history, extra_instruction=extra_instruction, web_results=web_results
         )
+        _capture_prompt(prompt, variant="streamed")
         logger.info(
             "generation_requested",
             extra={
@@ -412,6 +441,7 @@ class ChatService:
         output is a win-when-it-works enhancement, never a new failure mode.
         """
         prompt = build_structured_prompt(query, chunks, history=history, web_results=web_results)
+        _capture_prompt(prompt, variant="structured")
         logger.info(
             "generation_requested",
             extra={

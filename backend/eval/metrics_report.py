@@ -29,6 +29,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 # Mirrors Settings.feedback_dir_name / feedback_filename's defaults
@@ -157,6 +158,82 @@ def report_loop_count_and_avg_steps(records: list[dict]) -> None:
     print()
 
 
+def report_retry_success_rate(records: list[dict]) -> None:
+    """Retry Success Rate, from two events the LLM clients already emit:
+
+    - llm_generation_retrying (GeminiClient/GroqClient._log_retry,
+      tenacity's before_sleep) — logged once per retry attempt.
+    - llm_generation_completed — logged on a successful generation.
+
+    A "retry event" is correlated to its eventual outcome by request_id
+    (set by the request middleware on every log line). A request that
+    logged >=1 retry and >=1 completed generation counts as a retry
+    success; a request that retried and produced no completed generation
+    counts as a retry failure. Records without a request_id (off-request
+    calls) are correlated by a time-window fallback: a completed
+    generation within RETRY_WINDOW_SECONDS of a retry counts as the
+    retry's outcome.
+
+    The checklist's Retry Success Rate: the fraction of retried requests
+    whose retries ended in a successful generation.
+    """
+    retries = [record for record in records if record.get("message") == "llm_generation_retrying"]
+    completed = [record for record in records if record.get("message") == "llm_generation_completed"]
+
+    print("=== Retry Success Rate ===")
+    if not retries:
+        print("No llm_generation_retrying entries found in the logs.\n")
+        return
+
+    completed_ids = {record.get("request_id") for record in completed if record.get("request_id")}
+    success_ids: set[str] = set()
+    failure_ids: set[str] = set()
+
+    for record in retries:
+        request_id = record.get("request_id")
+        if request_id:
+            (success_ids if request_id in completed_ids else failure_ids).add(request_id)
+        else:
+            # No request_id context (e.g. a call outside a request): fall
+            # back to a time window — the retry "succeeded" if any
+            # completed generation appears within RETRY_WINDOW_SECONDS.
+            retry_time = record.get("timestamp")
+            completed_time = next(
+                (c.get("timestamp") for c in completed if _within_window(retry_time, c.get("timestamp"))),
+                None,
+            )
+            (success_ids if completed_time else failure_ids).add(f"unid:{retry_time or 'unknown'}")
+
+    total = len(success_ids) + len(failure_ids)
+    success_rate = len(success_ids) / total if total else 0.0
+
+    print(f"  retry events:             {len(retries)}")
+    print(f"  retried requests:         {total}")
+    print(f"  retry successes:          {len(success_ids)}")
+    print(f"  retry failures:           {len(failure_ids)}")
+    print(f"  Retry Success Rate:       {success_rate:.4f} ({success_rate * 100:.1f}%)")
+    print()
+
+
+RETRY_WINDOW_SECONDS = 60.0
+
+
+def _within_window(a: str | None, b: str | None) -> bool:
+    """True if ISO timestamps a and b are within RETRY_WINDOW_SECONDS.
+
+    String comparison is unsafe across offsets, so parse both to epoch
+    seconds. Any parse failure returns False (conservative: no match).
+    """
+    if not a or not b:
+        return False
+    try:
+        a_ts = datetime.fromisoformat(a.replace("Z", "+00:00")).timestamp()
+        b_ts = datetime.fromisoformat(b.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return False
+    return abs(a_ts - b_ts) <= RETRY_WINDOW_SECONDS
+
+
 def report_tokens_and_cost(records: list[dict]) -> None:
     generations = [
         record for record in records if record.get("message") == "llm_generation_completed"
@@ -238,6 +315,7 @@ def main() -> None:
     report_latency(records)
     report_error_rate_by_category(records)
     report_loop_count_and_avg_steps(records)
+    report_retry_success_rate(records)
     report_tokens_and_cost(records)
     report_acceptance_rate(Path(args.feedback_file))
 

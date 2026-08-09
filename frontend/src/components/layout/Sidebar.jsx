@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FileText, MessageSquarePlus, Settings, Sparkles, UploadCloud, X } from 'lucide-react'
+import { Camera, FileText, MessageSquarePlus, Settings, Sparkles, UploadCloud, X } from 'lucide-react'
 import ThemeToggle from '../ui/ThemeToggle'
 
 const NAV_ITEMS = [
   { to: '/chat', label: 'New Chat', icon: MessageSquarePlus },
+  { to: '/diagnose', label: 'Leaf Diagnosis', icon: Camera },
   { to: '/upload', label: 'Upload Document', icon: UploadCloud },
   { to: '/documents', label: 'Documents', icon: FileText },
 ]

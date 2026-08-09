@@ -8,6 +8,7 @@ import ToastProvider from './contexts/ToastContext'
 
 const Home = lazy(() => import('./pages/Home'))
 const Chat = lazy(() => import('./pages/Chat'))
+const Diagnose = lazy(() => import('./pages/Diagnose'))
 const Upload = lazy(() => import('./pages/Upload'))
 const Documents = lazy(() => import('./pages/Documents'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -65,6 +66,14 @@ function AnimatedRoutes() {
             element={
               <Page>
                 <Upload />
+              </Page>
+            }
+          />
+          <Route
+            path="diagnose"
+            element={
+              <Page>
+                <Diagnose />
               </Page>
             }
           />

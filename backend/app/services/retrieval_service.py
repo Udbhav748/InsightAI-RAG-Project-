@@ -16,6 +16,7 @@ for how to A/B them against each other):
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
@@ -28,6 +29,56 @@ from app.services.tool_registry import track_tool
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+
+def _search_with_timeout(
+    query: str,
+    vector_store: VectorStore,
+    fetch_k: int,
+    resolved_top_k: int,
+) -> list[RetrievedChunk]:
+    """Run the retrieval search block (hybrid or plain semantic) under a
+    configurable wall-clock timeout.
+
+    The search + optional reranking is CPU-bound in-process work, so the
+    only portable way to bound it is a worker thread whose result is
+    waited on with a timeout. If the timeout fires, the search thread keeps
+    running (Python threads can't be killed) but this request degrades to
+    an empty result list instead of hanging — which flows through the
+    existing retrieval-grading path as "insufficient" and, if enabled, the
+    web-search fallback, so a pathological index never wedges a request.
+
+    With settings.retrieval_timeout_seconds == 0 (the default), the search
+    runs inline with no thread overhead at all — behavior unchanged.
+    """
+    def _do_search() -> list[RetrievedChunk]:
+        if settings.hybrid_search_enabled and isinstance(vector_store, FAISSVectorStore):
+            return hybrid_search(query, vector_store, top_k=fetch_k)
+        query_vector = embed_query(query)
+        return vector_store.search(query_vector, fetch_k)
+
+    timeout = settings.retrieval_timeout_seconds
+    if timeout <= 0:
+        return _do_search()
+
+    # No `with` block here: ThreadPoolExecutor.__exit__ calls
+    # shutdown(wait=True), which would block until the hung worker thread
+    # finishes — exactly what the timeout exists to avoid. shutdown
+    # (wait=False) lets the orphaned thread drain in the background while
+    # this request already moved on.
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_do_search)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError:
+            logger.warning(
+                "retrieval_timed_out",
+                extra={"extra_fields": {"timeout_seconds": timeout, "top_k": resolved_top_k}},
+            )
+            return []
+    finally:
+        executor.shutdown(wait=False)
 
 
 @track_tool("retrieval")
@@ -55,11 +106,7 @@ def retrieve(
     # before fusing down to this number.
     fetch_k = settings.retrieval_candidate_k if settings.reranking_enabled else resolved_top_k
 
-    if settings.hybrid_search_enabled and isinstance(vector_store, FAISSVectorStore):
-        results = hybrid_search(query, vector_store, top_k=fetch_k)
-    else:
-        query_vector = embed_query(query)
-        results = vector_store.search(query_vector, fetch_k)
+    results = _search_with_timeout(query, vector_store, fetch_k, resolved_top_k)
 
     reranked = False
     if settings.reranking_enabled:

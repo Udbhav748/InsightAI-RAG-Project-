@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     # Default number of chunks to return from retrieval.
     retrieval_top_k: int = 5
 
+    # When True, ChatService logs the exact prompt sent to the LLM on every
+    # generation (see prompt_builder.build_prompt), not just its version —
+    # closing the "prompt content not captured" debugging gap. Off by
+    # default: prompts can embed retrieved document text, so capturing them
+    # is a data-retention decision the deployment must make explicitly.
+    log_prompt_content: bool = False
+
+    # Upper bound on characters of the prompt logged when
+    # log_prompt_content is True. Truncated with a marker, not silently
+    # cut mid-word, so what's captured is unambiguously a prefix.
+    log_prompt_max_chars: int = 2000
+
     # Default minimum similarity score a chunk must meet to be returned.
     # Chunks from a genuinely relevant match typically score ~0.45-0.55 with
     # all-MiniLM-L6-v2; 0.3 let weakly-related chunks through for off-topic/
@@ -200,6 +212,13 @@ class Settings(BaseSettings):
     # to work with instead of just re-ordering an already-narrow shortlist.
     retrieval_candidate_k: int = 20
 
+    # Timeout, in seconds, for a single retrieval call (search + optional
+    # reranking). A hung vector search or cross-encoder inference otherwise
+    # blocks the whole request indefinitely, so this is the "prevent
+    # indefinite waiting" timeout the tool checklist asks for. 0 = no
+    # timeout (unchanged legacy behavior).
+    retrieval_timeout_seconds: float = 0.0
+
     # Gemini model used for text generation.
     gemini_model_name: str = "gemini-3.5-flash"
 
@@ -222,6 +241,13 @@ class Settings(BaseSettings):
 
     # Timeout, in seconds, for calls to the vision service.
     vision_service_timeout_seconds: int = 15
+
+    # Optional shared secret for authenticating to the LeafSense vision
+    # service. When set, diagnose_image() sends it as an "X-API-Key" header
+    # on every call (mirroring this app's own inbound auth convention).
+    # When empty, calls are unauthenticated — fine for local dev, a
+    # deployment gap if LeafSense is publicly reachable.
+    vision_service_api_key: str = ""
 
     # Below this confidence, diagnose_image() still returns its prediction
     # but flags it low_confidence=True (see models.document.VisionPrediction)

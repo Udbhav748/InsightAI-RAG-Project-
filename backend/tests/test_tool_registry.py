@@ -48,6 +48,7 @@ class TestTrackToolSuccess:
         assert fields["success"] is True
         assert "latency_ms" in fields
         assert fields["input"]["query"] == "question here"
+        assert fields["output"] == {"count": 3, "ids": []}
 
 
 class TestTrackToolValidation:
@@ -79,6 +80,32 @@ class TestTrackToolInputSummarization:
         fields = caplog.records[-1].extra_fields
         assert fields["input"]["contents"] == "<5000 bytes>"
         assert fields["input"]["filename"] == "leaf.jpg"
+        assert fields["output"] == "ok"
+
+
+class TestTrackToolOutputSummarization:
+    def test_long_string_output_truncated(self, caplog):
+        @track_tool("summarization")
+        def _fake_summarize(document_id):
+            return "A" * 500
+
+        with caplog.at_level("INFO", logger="app.services.tool_registry"):
+            _fake_summarize("doc-1")
+        fields = caplog.records[-1].extra_fields
+        assert fields["output"].startswith("A" * 120)
+        assert fields["output"].endswith("...")
+
+    def test_list_output_returns_count_and_ids(self, caplog):
+        from types import SimpleNamespace
+
+        @track_tool("retrieval")
+        def _fake_retrieve_with_ids(query, top_k=None, min_score=None):
+            return [SimpleNamespace(chunk_id="c1"), SimpleNamespace(chunk_id="c2")]
+
+        with caplog.at_level("INFO", logger="app.services.tool_registry"):
+            _fake_retrieve_with_ids("query")
+        fields = caplog.records[-1].extra_fields
+        assert fields["output"] == {"count": 2, "ids": ["c1", "c2"]}
 
 
 class TestUsageTracking:

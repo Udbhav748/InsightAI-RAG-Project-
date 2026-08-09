@@ -119,7 +119,7 @@ framework rewrite (justified in `docs/ARCHITECTURE.md` "Framework choice").
 | Metric | Status |
 |---|---|
 | API Success Rate | ⚠️ | Implicit in error taxonomy; per-tool success rate now logged via `tool_invocation` events |
-| Retry Success Rate | ❌ | Not measured |
+| Retry Success Rate | ✅ | `report_retry_success_rate`, `metrics_report.py:104-156` — correlates `llm_generation_retrying` events to `llm_generation_completed` by `request_id` (with a time-window fallback), reports successes/retried-requests/rate. |
 | Timeout Rate | ⚠️ | Timeouts logged; no rate aggregated |
 | Argument Accuracy | ⚠️ | Summarize `document_id` only (`run_eval.py:410-420`) |
 
@@ -226,7 +226,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | Trace (every step of one request) | ✅ | SSE `trace` events (`rag_service.py:720-887`) + `trace_event_emitted` logs (`235-243`) |
 | Prompt recorded (exact + version) | ⚠️ | `prompt_version` logged (`rag_service.py:339-349`); prompt **content not captured** |
-| Tool logs (names, args, outputs, failures) | ⚠️ | Tool names ✅ (`tool_used`); args/outputs ❌ |
+| Tool logs (names, args, outputs, failures) | ✅ | `tool_invocation` events carry tool name, input summary, success/failure + error type, and output summary (`tool_registry.py:133-179`); inputs/outputs are shape-bounded summaries, not full content. |
 | Token logs | ✅ | `llm_generation_completed` fields, `gemini_client.py:93-114` |
 | Error logs | ✅ | `request_failed`/`unhandled_exception`, `error_handlers.py` |
 | Stack trace | ✅ | `exc_info` on unhandled, `error_handlers.py:50-53` |
@@ -249,9 +249,9 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Logging | ✅ | Structured JSON stdout |
 | Metrics | ⚠️ | Offline `metrics_report.py` + `monitoring/log_aggregate.py` rollup; no live metrics |
 | Alerts | ⚠️ | Threshold breaches via `log_aggregate.py` exit code; no push/webhook |
-| Dashboards | ❌ | None |
+| Dashboards | ✅ | Text dashboard `monitoring/dashboard.py` (availability, latency, loop/tool rates, retry activity, requests/min, per-endpoint breakdown, tokens/cost; `--json` for machine consumers). A dependency-free stand-in for a hosted Grafana-style stack, sharing `log_aggregate.aggregate` so rollups can't drift. |
 | Prompt logs | ⚠️ | Version only, not content |
-| Tool logs | ✅ | Names + latency |
+| Tool logs | ✅ | Names, latency, and input/output summaries — success `tool_invocation` events now carry a bounded `output` shape (`_summarize_output`, `tool_registry.py:201-225`), so what each tool produced is visible at a glance. |
 | Token usage | ✅ | Per generation |
 | Latency | ✅ | P50/P95/P99 in `metrics_report.py:67-94`; live probe latency in `monitoring/uptime_check.py` |
 | Errors | ✅ | By taxonomy category |

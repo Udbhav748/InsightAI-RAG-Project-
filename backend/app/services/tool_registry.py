@@ -8,9 +8,9 @@ and returns (used by the agent spec in prompt_builder.py and the eval
 harness).
 
 @track_tool wraps a tool function and emits a structured "tool_invocation"
-log event on every call — name, input summary, success/failure flag, error
-type, and latency — which is what Tool Success Rate is computed from at
-runtime (see eval/ and monitoring/).
+log event on every call — name, input summary, output summary, success/
+failure flag, error type, and latency — which is what Tool Success Rate is
+computed from at runtime (see eval/ and monitoring/).
 
 Inputs are validated against the schema *before* the wrapped call runs; a
 validation failure raises ToolInputError (an AppError, 422) rather than
@@ -172,6 +172,7 @@ def track_tool(name: str):
                         "tool": name,
                         "success": True,
                         "input": input_summary,
+                        "output": _summarize_output(result),
                         "latency_ms": round(latency_ms, 2),
                     }
                 },
@@ -195,3 +196,30 @@ def _summarize_input(data: dict) -> dict:
         else:
             summary[key] = value
     return summary
+
+
+def _summarize_output(result: Any) -> Any:
+    """Trim a tool's return value to a short, loggable shape.
+
+    Mirrors _summarize_input's philosophy (shape over content, bounded
+    size) for the success case — the checklist's "tool outputs visible"
+    gap. Handles the shapes the registry's tools actually return:
+    - list[RetrievedChunk] / list[WebSearchResult] → count + chunk ids
+      (what the tool produced, not its full text)
+    - str (summarization) → truncated text
+    - dict (diagnose's VisionPrediction.model_dump via other paths) →
+      truncated fields
+    """
+    if result is None:
+        return None
+    if isinstance(result, list):
+        items = [getattr(item, "chunk_id", None) for item in result[:10]]
+        items = [item for item in items if item is not None]
+        return {"count": len(result), "ids": items[:10]}
+    if isinstance(result, str):
+        return result[:120] + "..." if len(result) > 120 else result
+    if isinstance(result, dict):
+        return _summarize_input(result)
+    if hasattr(result, "model_dump"):
+        return _summarize_input(result.model_dump())
+    return str(result)[:120]
