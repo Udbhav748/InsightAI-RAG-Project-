@@ -26,6 +26,12 @@ backend/eval/results/*.json
 !backend/eval/results/20260806T093248Z.json
 !backend/eval/results/20260806T093526Z.json
 !backend/eval/results/20260806T093845Z.json
+!backend/eval/results/20260807T215538Z.json
+!backend/eval/results/20260807T233553Z.json
+!backend/eval/results/20260809T120316Z.json
+!backend/eval/results/20260809T122325Z.json
+!backend/eval/results/_full_capture_entries.json
+!backend/eval/results/_gemini_summarize_entries.json
 
 # Chat feedback events (local append-only log, not for GitHub)
 backend/feedback/*.jsonl
