@@ -5,11 +5,13 @@ ChatService._plan (for planner classification) and ChatService.handle_query
 (for the actual answer), then reports:
 
 - a confusion matrix + accuracy/precision/recall/F1 for planner routing
-- Tool-argument accuracy: for expected_action == "summarize" entries, did
-  the planner extract the right document_id from the query, not just
-  pick the right action? Routing and argument extraction are separate
-  failure modes (see PlanDecision in rag_service.py) and the confusion
-  matrix above only covers the former.
+- Tool-argument accuracy: checked on every entry, not just
+  expected_action == "summarize" — did the planner extract the right
+  document_id from the query when it should (a summarize entry), and
+  correctly leave it absent when it shouldn't (every other entry)?
+  Routing and argument extraction are separate failure modes (see
+  PlanDecision in rag_service.py) and the confusion matrix above only
+  covers the former.
 - Task Success Rate: does the answer contain an expected keyword?
 - Groundedness proxy (lexical): for retrieval answers, do they share vocabulary with
   the chunks that were actually retrieved? (Word-overlap heuristic, NOT a faithfulness check)
@@ -530,17 +532,26 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         # and appended after; the flag list stays in sync with the others.
         plan_execution_consistent = None
 
-        document_id_correct = None
-        if expected_action == "summarize":
-            # Routing accuracy (did the planner pick "summarize" at all) is
-            # already captured by the confusion matrix above — this checks
-            # the tool *argument*: did it extract the right document_id from
-            # the query, not just the right action? plan.document_id is
-            # None whenever plan.action != "summarize" (see PlanDecision),
-            # which correctly fails this check too — getting the argument
-            # right is moot if the action itself was misrouted.
-            document_id_correct = plan.document_id == document_id
-            tool_arg_accuracy_flags.append(document_id_correct)
+        # Routing accuracy (did the planner pick "summarize" at all) is
+        # already captured by the confusion matrix above — this checks the
+        # tool *argument*: did it extract the right document_id from the
+        # query, not just the right action?
+        #
+        # Checked on every entry, not just expected_action == "summarize":
+        # for a summarize entry, the argument must equal the uploaded
+        # document's real id (getting the action right but the argument
+        # wrong is still a failure). For every other entry, the argument
+        # must be absent — _plan()'s document_id extraction only runs
+        # inside its "summarize" branch (see rag_service._plan), so under
+        # the current implementation this half is structurally guaranteed
+        # to pass; its value is as a regression check, not a live gap
+        # today — a future change to _plan()/RouterAgent that spuriously
+        # attached a document_id to e.g. a retrieve decision would be a
+        # real argument-construction bug, and this is what would catch it.
+        document_id_correct = (
+            plan.document_id == document_id if expected_action == "summarize" else plan.document_id is None
+        )
+        tool_arg_accuracy_flags.append(document_id_correct)
 
         task_success = None
         grounded = None
@@ -889,7 +900,7 @@ def print_report(report: dict) -> None:
         return f"{value:.4f} (n={n})" if value is not None else f"n/a (n={n})"
 
     print(
-        f"\nTool-argument accuracy (summarize's document_id): "
+        f"\nTool-argument accuracy (document_id: present+correct for summarize, absent otherwise): "
         f"{fmt(report['tool_arg_accuracy'], report['tool_arg_accuracy_n'])}"
     )
 
