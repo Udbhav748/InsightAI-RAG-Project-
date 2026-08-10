@@ -194,25 +194,40 @@ def _excerpt(text: str) -> str:
     return stripped[:_EXCERPT_LENGTH].rstrip() + "…"
 
 
-def _source_references(chunks: list[RetrievedChunk]) -> list[SourceReference]:
+def _source_references(chunks: list[RetrievedChunk], start: int = 1) -> list[SourceReference]:
     """One SourceReference per retrieved chunk — chunk-level, not deduped
     by document, so a citation always points at the specific passage the
-    answer actually drew from."""
+    answer actually drew from.
+
+    number starts at `start` and counts up in list order — this must
+    match the [N] labels prompt_builder.build_prompt() puts on these same
+    chunks (same order, same starting point), since that's what the
+    model's inline citation markers refer back to.
+    """
     return [
-        SourceReference(document_id=chunk.document_id, chunk_id=chunk.chunk_id, excerpt=_excerpt(chunk.text))
-        for chunk in chunks
+        SourceReference(
+            number=i, document_id=chunk.document_id, chunk_id=chunk.chunk_id, excerpt=_excerpt(chunk.text)
+        )
+        for i, chunk in enumerate(chunks, start=start)
     ]
 
 
-def _web_source_references(results: list[WebSearchResult]) -> list[SourceReference]:
+def _web_source_references(results: list[WebSearchResult], start: int = 1) -> list[SourceReference]:
     """One SourceReference per web result, using the same shape as document
     citations: document_id='web' marks it as non-document, chunk_id is the
     URL itself (a web result has no chunk id, but the URL is a stable,
     unique-enough identifier), and url carries the link for the frontend to
-    render out."""
+    render out.
+
+    number continues from `start` (see _source_references) — web results
+    are always numbered after document chunks, matching
+    prompt_builder.build_prompt()'s context ordering (documents first).
+    """
     return [
-        SourceReference(document_id="web", chunk_id=result.url, excerpt=_excerpt(result.snippet), url=result.url)
-        for result in results
+        SourceReference(
+            number=i, document_id="web", chunk_id=result.url, excerpt=_excerpt(result.snippet), url=result.url
+        )
+        for i, result in enumerate(results, start=start)
     ]
 
 
@@ -1292,7 +1307,9 @@ class ChatService:
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
         web_results = web_results or []
-        sources = _source_references(retrieved_chunks) + _web_source_references(web_results)
+        chunk_sources = _source_references(retrieved_chunks)
+        web_sources = _web_source_references(web_results, start=len(chunk_sources) + 1)
+        sources = chunk_sources + web_sources
         answer_source = _answer_source(retrieved_chunks, web_results)
 
         # Per-request LLM usage rollup (accumulated via usage_tracking

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
 import AgentTraceStrip from './AgentTraceStrip'
-import SourceReferences from './SourceReferences'
+import CitedAnswer from './CitedAnswer'
 import { sendFeedback } from '../../services/feedbackService'
 import useToast from '../../hooks/useToast'
 import getErrorMessage from '../../utils/errorMessage'
@@ -60,13 +60,16 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
           }
         >
           {!isUser && <AgentTraceStrip trace={message.trace} isStreaming={message.isStreaming} />}
-          <p className="whitespace-pre-wrap leading-relaxed">
-            {message.content}
-            {message.isStreaming && (
-              <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-slate-400 align-middle dark:bg-ink-muted" />
-            )}
-          </p>
-          {!isUser && !message.isStreaming && <SourceReferences sources={message.sources} />}
+          {!isUser && !message.isStreaming ? (
+            <CitedAnswer text={message.content} sources={message.sources} />
+          ) : (
+            <p className="whitespace-pre-wrap leading-relaxed">
+              {message.content}
+              {message.isStreaming && (
+                <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-slate-400 align-middle dark:bg-ink-muted" />
+              )}
+            </p>
+          )}
         </div>
 
         {!isUser && !message.isStreaming && (

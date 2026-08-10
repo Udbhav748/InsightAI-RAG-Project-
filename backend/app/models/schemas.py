@@ -54,6 +54,12 @@ class ChatRequest(BaseModel):
 
 
 class SourceReference(BaseModel):
+    number: int = Field(
+        ...,
+        description="The [N] bracket marker this source corresponds to in `answer`'s inline "
+        "citations — 1-indexed, documents first then web results, matching the order the "
+        "model was shown them in (see prompt_builder.build_prompt).",
+    )
     document_id: str
     chunk_id: str
     excerpt: str = Field(..., description="First ~200 characters of the cited chunk's text.")

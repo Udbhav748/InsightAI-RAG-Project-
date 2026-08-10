@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { AlertTriangle, Leaf, Sparkles } from 'lucide-react'
-import SourceReferences from '../chat/SourceReferences'
+import CitedAnswer from '../chat/CitedAnswer'
 import Button from '../ui/Button'
 
 function confidenceColor(confidence) {
@@ -78,10 +78,9 @@ export default function DiagnosisResult({ result, onReset }) {
             Diagnosis explained
           </h3>
         </div>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-ink-secondary">
-          {answer}
-        </p>
-        <SourceReferences sources={sources} />
+        <div className="text-sm text-slate-700 dark:text-ink-secondary">
+          <CitedAnswer text={answer} sources={sources} />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-3">

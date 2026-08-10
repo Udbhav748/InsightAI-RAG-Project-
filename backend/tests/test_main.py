@@ -182,6 +182,7 @@ class TestChat:
         assert payload["answer_source"] == "documents"
         assert payload["sources"] == [
             {
+                "number": 1,
                 "document_id": SEEDED_DOCUMENT_ID,
                 "chunk_id": "chunk-1",
                 "excerpt": SEEDED_CHUNK_TEXT,
@@ -233,6 +234,7 @@ class TestChatStream:
         assert done_payload["answer_source"] == "documents"
         assert done_payload["sources"] == [
             {
+                "number": 1,
                 "document_id": SEEDED_DOCUMENT_ID,
                 "chunk_id": "chunk-1",
                 "excerpt": SEEDED_CHUNK_TEXT,
