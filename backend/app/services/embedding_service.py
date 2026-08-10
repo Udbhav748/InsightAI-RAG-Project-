@@ -6,6 +6,7 @@ text into embedding vectors.
 
 import logging
 import time
+import uuid
 from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer
@@ -21,6 +22,12 @@ from app.core.exceptions import (
 from app.models.document import DocumentChunk, EmbeddedChunk
 
 logger = logging.getLogger(__name__)
+
+# Tokens reserved for the [CLS]/[SEP] special tokens SentenceTransformer
+# adds around the content when it actually encodes — model.max_seq_length
+# is the *total* budget including those, so content tokens get this much
+# less room than the raw max_seq_length.
+_SPECIAL_TOKEN_BUDGET = 2
 
 
 def _log_retry(retry_state) -> None:
@@ -110,8 +117,77 @@ def embed_query(query: str) -> list[float]:
     return list(_embed_query_cached(normalized_query))
 
 
+def _split_oversized_chunk(chunk: DocumentChunk, model: SentenceTransformer) -> list[DocumentChunk]:
+    """Split chunk.text into token-safe pieces if it would exceed the
+    embedding model's max_seq_length.
+
+    chunk_size (chars) was chosen without regard to the model's *token*
+    budget — chunking_service is deliberately independent of the
+    embedding model (see its module docstring). Ordinary prose at 1000
+    chars stays well under all-MiniLM-L6-v2's 256-token limit, but dense
+    technical text (chemical names, measurements, symptom lists — the
+    shape of this app's own crop-disease content) can exceed it by 50%+.
+    SentenceTransformer.encode() truncates silently past that limit, no
+    error, no warning — so without this, the tail of an overlong chunk
+    would just never make it into its embedding vector at all, even
+    though the full text still reaches the LLM prompt unchanged.
+
+    Uses the tokenizer's own offset mapping to find exact character
+    cutoffs, so pieces are token-exact rather than a guessed character
+    count. Returns [chunk] unchanged when it's already within budget —
+    the overwhelmingly common case.
+    """
+    budget = model.max_seq_length - _SPECIAL_TOKEN_BUDGET
+    encoding = model.tokenizer(chunk.text, add_special_tokens=False, return_offsets_mapping=True)
+    token_count = len(encoding["input_ids"])
+    if token_count <= budget:
+        return [chunk]
+
+    offsets = encoding["offset_mapping"]
+    piece_texts = []
+    for start_idx in range(0, token_count, budget):
+        token_slice = offsets[start_idx : start_idx + budget]
+        char_start, char_end = token_slice[0][0], token_slice[-1][1]
+        piece_texts.append(chunk.text[char_start:char_end])
+
+    logger.info(
+        "chunk_split_for_token_budget",
+        extra={
+            "extra_fields": {
+                "document_id": chunk.document_id,
+                "chunk_id": chunk.chunk_id,
+                "token_count": token_count,
+                "token_budget": budget,
+                "pieces": len(piece_texts),
+            }
+        },
+    )
+
+    return [
+        DocumentChunk(
+            # A fresh id per piece — chunk_id must be unique per vector
+            # store row (see faiss_vector_store.py), and reusing the
+            # original for one piece while suffixing the rest would be an
+            # arbitrary asymmetry for no benefit.
+            chunk_id=str(uuid.uuid4()),
+            document_id=chunk.document_id,
+            chunk_index=chunk.chunk_index,
+            text=piece_text,
+            metadata={**chunk.metadata, "split_part": i, "split_of": len(piece_texts)},
+        )
+        for i, piece_text in enumerate(piece_texts)
+    ]
+
+
 def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
-    """Generate one embedding per chunk, preserving chunk_id, document_id, and metadata."""
+    """Generate one embedding per chunk, preserving chunk_id, document_id, and metadata.
+
+    A chunk whose token count exceeds the embedding model's max_seq_length
+    is split into multiple token-safe pieces first (see
+    _split_oversized_chunk), so the output can have *more* entries than
+    the input — the same shape DocumentProcessingResponse already expects
+    (total_chunks vs total_embeddings are tracked as separate fields).
+    """
     if not chunks:
         return []
 
@@ -119,9 +195,11 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
     document_id = chunks[0].document_id
     start = time.perf_counter()
 
+    safe_chunks = [piece for chunk in chunks for piece in _split_oversized_chunk(chunk, model)]
+
     try:
         vectors = model.encode(
-            [chunk.text for chunk in chunks],
+            [chunk.text for chunk in safe_chunks],
             normalize_embeddings=True,
             batch_size=settings.embedding_batch_size,
         )
@@ -140,7 +218,7 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
             # EmbeddedChunk itself.
             metadata={**chunk.metadata, "text": chunk.text},
         )
-        for chunk, vector in zip(chunks, vectors)
+        for chunk, vector in zip(safe_chunks, vectors)
     ]
 
     processing_duration = time.perf_counter() - start
@@ -153,6 +231,7 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
                 "document_id": document_id,
                 "embedding_model": settings.embedding_model_name,
                 "total_chunks": len(chunks),
+                "total_embeddings": len(embedded_chunks),
                 "embedding_dimension": embedding_dimension,
                 "processing_duration": round(processing_duration, 4),
             }
