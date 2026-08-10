@@ -114,7 +114,13 @@ def embed_query(query: str) -> list[float]:
     have encoded itself.
     """
     normalized_query = query.strip()
-    return list(_embed_query_cached(normalized_query))
+    vector = list(_embed_query_cached(normalized_query))
+    # embed_query had no success-path log line at all before this — its
+    # retry events (embed_query_retrying, above) had nothing to correlate
+    # against, so its retry outcomes were invisible to Retry Success Rate
+    # (see monitoring/log_aggregate.py, eval/metrics_report.py).
+    logger.info("embed_query_completed", extra={"extra_fields": {"query_length": len(query)}})
+    return vector
 
 
 def _split_oversized_chunk(chunk: DocumentChunk, model: SentenceTransformer) -> list[DocumentChunk]:

@@ -1,7 +1,8 @@
 """Parses the backend's JSON logs and prints a lightweight metrics report:
 latency percentiles, error rate by taxonomy_category, corrective-RAG Loop
-Count and Average Steps, total LLM token usage/cost, and Acceptance Rate
-from chat feedback.
+Count and Average Steps, Retry Success Rate and Timeout Rate across every
+retry-capable call, total LLM token usage/cost, and Acceptance Rate from
+chat feedback.
 
 This is a stand-in for real observability, not a replacement for it — in
 production you'd ship these same structured log lines to something like
@@ -158,32 +159,37 @@ def report_loop_count_and_avg_steps(records: list[dict]) -> None:
     print()
 
 
-def report_retry_success_rate(records: list[dict]) -> None:
-    """Retry Success Rate, from two events the LLM clients already emit:
+# Every retry-capable call this app makes: (retry event, its matching
+# completion event, a human label). Each retries via tenacity and logs a
+# `<name>_retrying` event (before_sleep) plus a `<name>_completed` event
+# on eventual success. LLM generation was the only family tracked here
+# for a while; web search, query embedding, and vision/diagnose all
+# gained their own retry+completion events since (see
+# web_search_service.py, embedding_service.py, vision_client.py) but
+# weren't wired into this report until now.
+_RETRY_EVENT_FAMILIES = [
+    ("llm_generation_retrying", "llm_generation_completed", "LLM generation"),
+    ("web_search_retrying", "web_search_completed", "web search"),
+    ("embed_query_retrying", "embed_query_completed", "query embedding"),
+    ("vision_request_retrying", "vision_diagnosis_completed", "vision/diagnose"),
+]
 
-    - llm_generation_retrying (GeminiClient/GroqClient._log_retry,
-      tenacity's before_sleep) — logged once per retry attempt.
-    - llm_generation_completed — logged on a successful generation.
 
-    A "retry event" is correlated to its eventual outcome by request_id
-    (set by the request middleware on every log line). A request that
-    logged >=1 retry and >=1 completed generation counts as a retry
-    success; a request that retried and produced no completed generation
-    counts as a retry failure. Records without a request_id (off-request
-    calls) are correlated by a time-window fallback: a completed
-    generation within RETRY_WINDOW_SECONDS of a retry counts as the
-    retry's outcome.
-
-    The checklist's Retry Success Rate: the fraction of retried requests
-    whose retries ended in a successful generation.
+def _correlate_retry_outcomes(
+    records: list[dict], retry_message: str, completed_message: str
+) -> tuple[set[str], set[str], int]:
+    """Correlate one call family's retry events to their eventual outcome
+    by request_id (set by the request middleware on every log line). A
+    call that logged >=1 retry and >=1 matching completion counts as a
+    retry success; retried with no completion counts as a retry failure.
+    Records without a request_id (off-request calls) fall back to a time
+    window — a completion within RETRY_WINDOW_SECONDS of the retry counts
+    as its outcome. Returns (success_ids, failure_ids, retry_event_count).
     """
-    retries = [record for record in records if record.get("message") == "llm_generation_retrying"]
-    completed = [record for record in records if record.get("message") == "llm_generation_completed"]
-
-    print("=== Retry Success Rate ===")
+    retries = [record for record in records if record.get("message") == retry_message]
+    completed = [record for record in records if record.get("message") == completed_message]
     if not retries:
-        print("No llm_generation_retrying entries found in the logs.\n")
-        return
+        return set(), set(), 0
 
     completed_ids = {record.get("request_id") for record in completed if record.get("request_id")}
     success_ids: set[str] = set()
@@ -194,9 +200,6 @@ def report_retry_success_rate(records: list[dict]) -> None:
         if request_id:
             (success_ids if request_id in completed_ids else failure_ids).add(request_id)
         else:
-            # No request_id context (e.g. a call outside a request): fall
-            # back to a time window — the retry "succeeded" if any
-            # completed generation appears within RETRY_WINDOW_SECONDS.
             retry_time = record.get("timestamp")
             completed_time = next(
                 (c.get("timestamp") for c in completed if _within_window(retry_time, c.get("timestamp"))),
@@ -204,13 +207,53 @@ def report_retry_success_rate(records: list[dict]) -> None:
             )
             (success_ids if completed_time else failure_ids).add(f"unid:{retry_time or 'unknown'}")
 
-    total = len(success_ids) + len(failure_ids)
-    success_rate = len(success_ids) / total if total else 0.0
+    return success_ids, failure_ids, len(retries)
 
-    print(f"  retry events:             {len(retries)}")
-    print(f"  retried requests:         {total}")
-    print(f"  retry successes:          {len(success_ids)}")
-    print(f"  retry failures:           {len(failure_ids)}")
+
+def report_retry_success_rate(records: list[dict]) -> None:
+    """Retry Success Rate across every retry-capable call this app makes
+    (see _RETRY_EVENT_FAMILIES) — both overall and broken down per call
+    type, since a family with a much lower rate than the others is
+    exactly what the breakdown is for catching.
+
+    The checklist's Retry Success Rate: the fraction of retried calls
+    that eventually succeeded.
+    """
+    print("=== Retry Success Rate ===")
+
+    all_success: set[str] = set()
+    all_failure: set[str] = set()
+    total_retry_events = 0
+    any_retries = False
+
+    for retry_message, completed_message, label in _RETRY_EVENT_FAMILIES:
+        success_ids, failure_ids, retry_count = _correlate_retry_outcomes(
+            records, retry_message, completed_message
+        )
+        total_retry_events += retry_count
+        if retry_count == 0:
+            continue
+        any_retries = True
+        # Namespaced by family before merging into the overall totals — a
+        # single request can retry more than one kind of call, so the
+        # same request_id could otherwise collide across families.
+        all_success |= {f"{retry_message}:{rid}" for rid in success_ids}
+        all_failure |= {f"{retry_message}:{rid}" for rid in failure_ids}
+        family_total = len(success_ids) + len(failure_ids)
+        family_rate = len(success_ids) / family_total if family_total else 0.0
+        print(
+            f"  {label:<15s}: {retry_count} retry events, {family_total} retried calls, "
+            f"rate {family_rate:.4f} ({len(success_ids)}/{family_total})"
+        )
+
+    if not any_retries:
+        print("No retry events found in the logs.\n")
+        return
+
+    total = len(all_success) + len(all_failure)
+    success_rate = len(all_success) / total if total else 0.0
+    print(f"  total retry events:       {total_retry_events}")
+    print(f"  total retried calls:      {total}")
     print(f"  Retry Success Rate:       {success_rate:.4f} ({success_rate * 100:.1f}%)")
     print()
 
@@ -232,6 +275,52 @@ def _within_window(a: str | None, b: str | None) -> bool:
     except (ValueError, AttributeError):
         return False
     return abs(a_ts - b_ts) <= RETRY_WINDOW_SECONDS
+
+
+def report_timeout_rate(records: list[dict]) -> None:
+    """Timeout Rate = Timed-Out Calls / Total Calls, over the same
+    tool_invocation event stream Tool/API Success Rate is computed from
+    (see tool_registry.track_tool).
+
+    Two signal sources, since a timeout doesn't always mean the call
+    failed:
+    - tool_invocation records with timed_out=True (see
+      tool_registry._looks_like_timeout) — a tool call that raised, and
+      the underlying error looks like a timeout.
+    - retrieval_timed_out events — retrieve()'s own timeout
+      (retrieval_service._search_with_timeout) degrades to an empty
+      result list rather than raising, so it's still a *successful*
+      tool_invocation and wouldn't otherwise be counted; this is the only
+      way that case is visible at all.
+
+    Total Calls is every tool_invocation, matching the denominator
+    Tool/API Success Rate already uses, so the two rates stay comparable.
+    """
+    tool_calls = [record for record in records if record.get("message") == "tool_invocation"]
+    retrieval_timeouts = [record for record in records if record.get("message") == "retrieval_timed_out"]
+
+    print("=== Timeout Rate ===")
+    if not tool_calls:
+        print("No tool_invocation entries found in the logs.\n")
+        return
+
+    timed_out_tool_calls = sum(1 for record in tool_calls if record.get("timed_out") is True)
+    timed_out_calls = timed_out_tool_calls + len(retrieval_timeouts)
+    total_calls = len(tool_calls)
+    timeout_rate = timed_out_calls / total_calls if total_calls else 0.0
+
+    by_tool: dict[str, int] = defaultdict(int)
+    for record in tool_calls:
+        if record.get("timed_out") is True:
+            by_tool[record.get("tool", "unknown")] += 1
+    if retrieval_timeouts:
+        by_tool["retrieval"] += len(retrieval_timeouts)
+
+    print(f"  total calls:              {total_calls}")
+    print(f"  timed-out calls:          {timed_out_calls}")
+    print(f"  by tool:                  {dict(by_tool) or 'none'}")
+    print(f"  Timeout Rate:             {timeout_rate:.4f} ({timeout_rate * 100:.1f}%)")
+    print()
 
 
 def report_tokens_and_cost(records: list[dict]) -> None:
@@ -316,6 +405,7 @@ def main() -> None:
     report_error_rate_by_category(records)
     report_loop_count_and_avg_steps(records)
     report_retry_success_rate(records)
+    report_timeout_rate(records)
     report_tokens_and_cost(records)
     report_acceptance_rate(Path(args.feedback_file))
 

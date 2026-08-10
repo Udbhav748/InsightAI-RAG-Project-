@@ -957,12 +957,12 @@ def print_report(report: dict) -> None:
             agree = lexical == entail
             if agree:
                 agree_count += 1
-                agree_str = "✓"
+                agree_str = "agree"
             else:
                 disagree_count += 1
-                agree_str = "✗"
-            
-            query_short = e["query"][:70] + ("…" if len(e["query"]) > 70 else "")
+                agree_str = "differ"
+
+            query_short = e["query"][:70] + ("..." if len(e["query"]) > 70 else "")
             print(f"{idx:>3}  {str(lexical):>7}  {str(entail):>7}  {agree_str:>6}  {query_short}")
         
         print("-" * 100)
@@ -977,7 +977,7 @@ def print_report(report: dict) -> None:
             for idx, e in enumerate(disagreements, 1):
                 print(f"\n[{idx}] Query: {e['query']}")
                 print(f"    Lexical proxy: {e['grounded']}  |  Entailment judge: {e['entailment_grounded']}")
-                print(f"    Answer: {e['answer'][:200]}{'…' if len(e['answer']) > 200 else ''}")
+                print(f"    Answer: {e['answer'][:200]}{'...' if len(e['answer']) > 200 else ''}")
                 reason = e.get("judge_reason", "")
                 if reason:
                     print(f"    Judge reason: {reason}")

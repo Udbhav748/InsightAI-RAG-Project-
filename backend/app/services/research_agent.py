@@ -138,6 +138,11 @@ class ResearchAgent:
                 "research_degraded_web_disabled",
                 extra={"extra_fields": {"query_length": len(query)}},
             )
+            # Every log_agent_started needs a matching log_agent_completed —
+            # an unpaired start would corrupt Node Success Rate and Agent
+            # Idle Time (see monitoring/log_aggregate.py), both of which
+            # assume the two always come in pairs.
+            log_agent_completed("research", query, start, outcome="disabled")
             return ResearchFindings(answer="")
 
         if settings.web_search_requires_approval and not confirm_web_search:
@@ -145,6 +150,7 @@ class ResearchAgent:
                 "research_skipped_pending_approval",
                 extra={"extra_fields": {"query_length": len(query)}},
             )
+            log_agent_completed("research", query, start, outcome="pending_approval")
             return ResearchFindings(answer="")
 
         findings = ResearchFindings()

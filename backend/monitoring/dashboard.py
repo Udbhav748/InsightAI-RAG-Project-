@@ -91,17 +91,51 @@ def _endpoint_breakdown(records: list[dict]) -> dict[str, int]:
     return dict(counters)
 
 
+# Every retry-capable call this app makes: (retry event, its matching
+# completion event). Mirrors eval/metrics_report.py's
+# _RETRY_EVENT_FAMILIES — kept as its own copy rather than importing
+# across the eval/monitoring boundary, consistent with how these two
+# scripts already duplicate rather than share their small helpers.
+_RETRY_EVENT_FAMILIES = [
+    ("llm_generation_retrying", "llm_generation_completed"),
+    ("web_search_retrying", "web_search_completed"),
+    ("embed_query_retrying", "embed_query_completed"),
+    ("vision_request_retrying", "vision_diagnosis_completed"),
+]
+
+
 def _retry_activity(records: list[dict]) -> dict:
-    retries = [r for r in records if r.get("message") == "llm_generation_retrying"]
-    completed = [r for r in records if r.get("message") == "llm_generation_completed"]
-    completed_ids = {r.get("request_id") for r in completed if r.get("request_id")}
-    retried_ids = {r.get("request_id") for r in retries if r.get("request_id")}
-    success = retried_ids & completed_ids
+    retried_ids: set[str] = set()
+    success_ids: set[str] = set()
+    retry_events = 0
+    providers: Counter = Counter()
+
+    for retry_message, completed_message in _RETRY_EVENT_FAMILIES:
+        retries = [r for r in records if r.get("message") == retry_message]
+        if not retries:
+            continue
+        completed_ids = {
+            r.get("request_id") for r in records if r.get("message") == completed_message and r.get("request_id")
+        }
+        retry_events += len(retries)
+        providers.update(r.get("provider", "unknown") for r in retries)
+        for r in retries:
+            request_id = r.get("request_id")
+            if not request_id:
+                continue
+            # Namespaced by family — one request can retry more than one
+            # kind of call, so the same request_id could otherwise
+            # collide across families.
+            namespaced_id = f"{retry_message}:{request_id}"
+            retried_ids.add(namespaced_id)
+            if request_id in completed_ids:
+                success_ids.add(namespaced_id)
+
     return {
-        "retry_events": len(retries),
+        "retry_events": retry_events,
         "retried_requests": len(retried_ids),
-        "retry_success_rate": round(len(success) / len(retried_ids), 4) if retried_ids else 0.0,
-        "providers": dict(Counter(r.get("provider", "unknown") for r in retries)),
+        "retry_success_rate": round(len(success_ids) / len(retried_ids), 4) if retried_ids else 0.0,
+        "providers": dict(providers),
     }
 
 
@@ -114,27 +148,33 @@ def _print_dashboard(records: list[dict], agg: dict, window_min: float) -> None:
 
     window_label = f" (last {window_min:.0f}m)" if window_min > 0 else ""
     print("=" * 64)
-    print("InsightAI-RAG — text dashboard")
+    print("InsightAI-RAG - text dashboard")
     print("=" * 64)
     print(f"records scanned : {agg['records_scanned']}{window_label}")
-    print(f"window         : {first_ts}  →  {last_ts}")
+    print(f"window         : {first_ts}  ->  {last_ts}")
     print(f"throughput     : ~{requests_per_min:.2f} requests/min")
     print()
-    print("── Availability ──")
+    print("-- Availability --")
     print(f"requests       : {agg['requests']}")
     print(f"failures       : {agg['failures']}")
     print(f"error rate     : {agg['error_rate']:.4f}")
+    print(f"workflow complete: {agg['workflow_completion_rate']:.4f}")
     print(f"by category    : {agg['error_rate_by_category'] or 'none'}")
     print(f"endpoints      : {endpoints or 'none'}")
     print()
-    print("── Latency (processing_duration, ms) ──")
+    print("-- Latency (processing_duration, ms) --")
     print(f"p50={agg['p50_latency_ms']}  p95={agg['p95_latency_ms']}  p99={agg['p99_latency_ms']}")
     print()
-    print("── Agent / loop ──")
+    print("-- Agent / loop --")
     print(f"loop capped rate : {agg['loop_capped_rate']:.4f}")
     print(f"tool success rate: {agg['tool_success_rate'] or 'no tool events'}")
+    print(f"timeout rate     : {agg['timeout_rate']:.4f}  ({agg['timed_out_calls']} timed-out calls)")
+    print(f"node success rate: {agg['node_success_rate']:.4f}  ({agg['agent_completions']} agent + {agg['tool_calls']} tool executions)")
+    print(f"node latency (ms): avg={agg['avg_node_latency_ms']}  agent_avg={agg['avg_agent_latency_ms']}  tool_avg={agg['avg_tool_latency_ms']}")
+    print(f"handoff accuracy : {agg['agent_handoff_accuracy']:.4f}  ({agg['correct_handoffs']}/{agg['handoffs']} handoffs)")
+    print(f"agent idle time  : avg={agg['agent_idle_time_ms']}ms over {agg['agent_idle_gaps']} gaps")
     print()
-    print("── LLM / retries ──")
+    print("-- LLM / retries --")
     print(f"retry events     : {retry['retry_events']}  (providers: {retry['providers'] or 'none'})")
     print(f"retried requests : {retry['retried_requests']}")
     print(f"retry success    : {retry['retry_success_rate']:.4f}")

@@ -171,6 +171,8 @@ def track_tool(name: str):
                             "tool": name,
                             "success": False,
                             "error_type": type(exc).__name__,
+                            "error_message": str(exc)[:200],
+                            "timed_out": _looks_like_timeout(exc),
                             "input": input_summary,
                             "latency_ms": round(latency_ms, 2),
                         }
@@ -186,6 +188,8 @@ def track_tool(name: str):
                             "tool": name,
                             "success": False,
                             "error_type": type(exc).__name__,
+                            "error_message": str(exc)[:200],
+                            "timed_out": _looks_like_timeout(exc),
                             "input": input_summary,
                             "latency_ms": round(latency_ms, 2),
                         }
@@ -229,6 +233,21 @@ def track_tool(name: str):
         return wrapper
 
     return decorator
+
+
+def _looks_like_timeout(exc: Exception) -> bool:
+    """Best-effort timeout detection for the Timeout Rate metric (see
+    monitoring/log_aggregate.py, eval/metrics_report.py).
+
+    Each tool wraps heterogeneous underlying errors (httpx, DDGS, thread
+    futures) into one broad AppError subclass — e.g. VisionServiceError
+    covers a LeafSense timeout, a bad status, and a malformed response
+    alike — so there's no single exception *type* that means "this was a
+    timeout" the way there would be if each failure mode got its own
+    exception class. The type name and message are what's actually
+    distinctive instead.
+    """
+    return "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
 
 
 def _summarize_input(data: dict) -> dict:
