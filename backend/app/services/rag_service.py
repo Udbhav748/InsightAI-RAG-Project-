@@ -49,6 +49,9 @@ from app.services.summarization_service import summarize_document
 from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
 from app.services.web_search_service import search_web
+from app.services.agent_events import log_agent_handoff
+from app.services.research_agent import ResearchAgent, ResearchFindings
+from app.services.router_agent import RouterAgent
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +306,17 @@ class ChatService:
     def __init__(self, vector_store: VectorStore, llm_client: LLMClient):
         self._vector_store = vector_store
         self._llm_client = llm_client
+        # Multi-agent layer (config-gated; construction is cheap — no LLM
+        # calls happen until decide()/run() are actually invoked):
+        #   - the router agent upgrades the keyword planner with LLM intent
+        #     classification ("research" is an action the regex planner
+        #     can't express);
+        #   - the research agent owns the weak/insufficient-retrieval path
+        #     with a plan→search→read→synthesize loop.
+        # Both degrade to the existing deterministic paths when disabled or
+        # when they fail, so enabling them is strictly additive.
+        self._router_agent = RouterAgent(llm_client, fallback_planner=self._plan)
+        self._research_agent = ResearchAgent(llm_client)
         # Response cache: keyed by (normalized_query, session_id, doc_set_hash)
         # Only caches final responses after corrective loop completes.
         # Max 256 entries, LRU eviction.
@@ -354,6 +368,47 @@ class ChatService:
                 return PlanDecision(action="summarize", document_id=match.group(0))
 
         return PlanDecision(action="retrieve")
+
+    def _route(self, query: str, history: list[dict] | None = None) -> PlanDecision:
+        """Decide the query's action: the keyword planner, upgraded by the
+        LLM router agent when Settings.agent_routing_enabled.
+
+        The router can return "research" — the one action the regex
+        planner can't express — and degrades to the planner's decision on
+        any failure, so routing is additive, never a new failure mode.
+        """
+        plan = self._plan(query, history)
+        if not settings.agent_routing_enabled:
+            return plan
+        routed = self._router_agent.decide(query, history)
+        if routed.action != plan.action or routed.document_id != plan.document_id:
+            logger.info(
+                "router_decision",
+                extra={
+                    "extra_fields": {
+                        "planner_action": plan.action,
+                        "routed_action": routed.action,
+                        "document_id": routed.document_id,
+                        "query_length": len(query),
+                    }
+                },
+            )
+        return PlanDecision(action=routed.action, document_id=routed.document_id)
+
+    def _research_handoff(
+        self, query: str, confirm_web_search: bool, *, reason: str
+    ) -> ResearchFindings:
+        """Hand the query to the Research agent (the handoff event is what
+        the checklist's Agent Handoff Accuracy is computed from). reason is
+        the trigger — "planned" (router chose research) or "weak_grade"
+        (retrieval graded weak/insufficient)."""
+        log_agent_handoff("router" if reason == "planned" else "retrieval_grader", "research", query, reason=reason)
+        return self._research_agent.run(query, confirm_web_search=confirm_web_search)
+
+    def _research_steps(self, findings: ResearchFindings) -> int:
+        """How many of ChatResponse.steps_taken a research pass accounts
+        for: the handoff plus one per sub-step the agent actually took."""
+        return 1 + len(findings.steps)
 
     def _generate(
         self,
@@ -716,7 +771,7 @@ class ChatService:
         steps_taken = 1  # planning
         reset_usage()  # per-request LLM token/cost rollup
 
-        plan = self._plan(query, history)
+        plan = self._route(query, history)
         logger.info(
             "plan_decided",
             extra={"extra_fields": {"action": plan.action, "query_length": len(query)}},
@@ -754,8 +809,10 @@ class ChatService:
                     session_id=session_id,
                 )
 
-            # plan.action == "retrieve" — the corrective RAG loop.
-            # Check cache first (only cache final responses after corrective loop)
+            # plan.action in ("retrieve", "research") — the corrective RAG
+            # loop. Check cache first (only cache final responses after
+            # corrective loop, and only for plain retrieve — a research
+            # answer depends on live web state, so it's never cached).
             cache_key = self._make_cache_key(query, session_id, self._vector_store)
             cached = self._get_cached_response(cache_key)
             if cached is not None:
@@ -768,17 +825,47 @@ class ChatService:
             steps_taken += 1  # grading
             grade = self._grade_retrieval(query, chunks)
 
-            # A weak/insufficient grade pulls in web results *before* the
-            # first generation attempt, so the model has them alongside
-            # whatever chunks did come back (this is the "corrective" part
-            # of corrective RAG — augment instead of just hoping reflection
-            # fixes it later).
+            # A weak/insufficient grade pulls in web context *before* the
+            # first generation attempt, so the model has it alongside
+            # whatever chunks did come back (the "corrective" part of
+            # corrective RAG). With the research agent enabled, that web
+            # pass is a full plan→search→read→synthesize agent handoff
+            # instead of a single search_web() call; if the research agent
+            # comes back empty (or is disabled), fall back to the plain
+            # web-search fallback as before.
+            #
+            # plan.action == "research" forces this block even when the
+            # grade came back "good": the router only assigns "research"
+            # when it judged the query outside the corpus entirely, and
+            # gating that purely on the retrieval-score heuristic would let
+            # a coincidentally-high-scoring but wrong chunk silently
+            # override the router's explicit decision.
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
-            if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(query, confirm_web_search=confirm_web_search)
-                web_search_attempted = True
-                steps_taken += 1  # web search
+            research_attempted = False
+            if grade != "good" or plan.action == "research":
+                if settings.research_agent_enabled and settings.web_search_enabled:
+                    research_attempted = True
+                    findings = self._research_handoff(
+                        query, confirm_web_search, reason="planned" if plan.action == "research" else "weak_grade"
+                    )
+                    if findings.answer:
+                        steps_taken += self._research_steps(findings)
+                        return self._respond(
+                            answer=findings.answer,
+                            retrieved_chunks=chunks,
+                            query=query,
+                            query_type="document_query",
+                            tool_used="research_agent",
+                            steps_taken=steps_taken,
+                            start=start,
+                            web_results=findings.results,
+                            session_id=session_id,
+                        )
+                if settings.web_search_enabled and not research_attempted:
+                    web_results = self._search_web(query, confirm_web_search=confirm_web_search)
+                    web_search_attempted = True
+                    steps_taken += 1  # web search
 
             if settings.structured_output_enabled and structured_response:
                 answer = self._generate_structured(
@@ -823,8 +910,11 @@ class ChatService:
             web_results=web_results,
             session_id=session_id,
         )
-        # Cache the final response (only for retrieve action)
-        self._cache_response(cache_key, response)
+        # Cache the final response (retrieve action only — a "research"
+        # answer returns early, before this point, since live web state
+        # must never be cached).
+        if plan.action == "retrieve":
+            self._cache_response(cache_key, response)
         return response
 
     def stream_query(
@@ -867,7 +957,7 @@ class ChatService:
         steps_taken = 1  # planning
         reset_usage()  # per-request LLM token/cost rollup
 
-        plan = self._plan(query, history)
+        plan = self._route(query, history)
         logger.info(
             "plan_decided",
             extra={"extra_fields": {"action": plan.action, "query_length": len(query)}},
@@ -936,13 +1026,44 @@ class ChatService:
             grade = self._grade_retrieval(query, chunks)
             yield _trace_event("grading", {"grade": grade})
 
+            # See handle_query for why plan.action == "research" forces
+            # this block regardless of grade.
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
-            if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(query, confirm_web_search=confirm_web_search)
-                web_search_attempted = True
-                steps_taken += 1  # web search
-                yield _trace_event("web_search", {"result_count": len(web_results)})
+            research_attempted = False
+            if grade != "good" or plan.action == "research":
+                if settings.research_agent_enabled and settings.web_search_enabled:
+                    research_attempted = True
+                    yield _trace_event(
+                        "research_handoff",
+                        {"reason": "planned" if plan.action == "research" else "weak_grade"},
+                    )
+                    findings = self._research_handoff(
+                        query, confirm_web_search, reason="planned" if plan.action == "research" else "weak_grade"
+                    )
+                    for step in findings.steps:
+                        yield _trace_event(f"research_{step['stage']}", step)
+                    if findings.answer:
+                        steps_taken += self._research_steps(findings)
+                        yield {"type": "answer_chunk", "text": findings.answer}
+                        response = self._respond(
+                            answer=findings.answer,
+                            retrieved_chunks=chunks,
+                            query=query,
+                            query_type="document_query",
+                            tool_used="research_agent",
+                            steps_taken=steps_taken,
+                            start=start,
+                            web_results=findings.results,
+                            session_id=session_id,
+                        )
+                        yield {"type": "done", "payload": response}
+                        return
+                if settings.web_search_enabled and not research_attempted:
+                    web_results = self._search_web(query, confirm_web_search=confirm_web_search)
+                    web_search_attempted = True
+                    steps_taken += 1  # web search
+                    yield _trace_event("web_search", {"result_count": len(web_results)})
 
             yield _trace_event("generating", {})
             answer = ""
@@ -1003,8 +1124,10 @@ class ChatService:
             web_results=web_results,
             session_id=session_id,
         )
-        # Cache the final response
-        self._cache_response(cache_key, response)
+        # Cache the final response (retrieve action only — a "research"
+        # answer returns early, above, since live web state is never cached).
+        if plan.action == "retrieve":
+            self._cache_response(cache_key, response)
         yield {"type": "done", "payload": response}
 
     def handle_diagnose(
@@ -1059,10 +1182,35 @@ class ChatService:
 
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
-            if grade != "good" and settings.web_search_enabled:
-                web_results = self._search_web(diagnosis_query, confirm_web_search=confirm_web_search)
-                web_search_attempted = True
-                steps_taken += 1  # web search
+            research_attempted = False
+            if grade != "good":
+                if settings.research_agent_enabled and settings.web_search_enabled:
+                    research_attempted = True
+                    findings = self._research_handoff(diagnosis_query, confirm_web_search, reason="diagnose_weak_grade")
+                    if findings.answer:
+                        steps_taken += self._research_steps(findings)
+                        return self._respond(
+                            answer=findings.answer,
+                            retrieved_chunks=chunks,
+                            query=diagnosis_query,
+                            query_type="diagnose",
+                            tool_used="research_agent",
+                            steps_taken=steps_taken,
+                            start=start,
+                            web_results=findings.results,
+                            diagnosis=DiagnosisInfo(
+                                raw_class=prediction.raw_class,
+                                crop=prediction.crop,
+                                disease=prediction.disease,
+                                confidence=prediction.confidence,
+                                low_confidence=prediction.low_confidence,
+                            ),
+                            session_id=session_id,
+                        )
+                if settings.web_search_enabled and not research_attempted:
+                    web_results = self._search_web(diagnosis_query, confirm_web_search=confirm_web_search)
+                    web_search_attempted = True
+                    steps_taken += 1  # web search
 
             answer = self._generate(diagnosis_query, chunks, recent_history, web_results=web_results)
             llm_calls = 1

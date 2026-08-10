@@ -171,6 +171,44 @@ class Settings(BaseSettings):
     # the standard free-text path is unchanged.
     structured_output_enabled: bool = False
 
+    # --- Multi-agent features (off by default) -------------------------
+    # When True, intent classification uses an LLM router agent
+    # (services/router_agent.py) instead of the deterministic keyword
+    # planner — it can route a query to "research" (multi-step web
+    # research) that the regex planner can't recognize. Deterministic
+    # fast paths (small talk, "summarize <uuid>") still short-circuit
+    # without an LLM call; a router failure degrades to the keyword
+    # planner, so routing is a quality improvement, never a new failure
+    # mode. Off by default: unchanged behavior + no extra LLM call.
+    agent_routing_enabled: bool = False
+
+    # When True, a second agent — the Research agent
+    # (services/research_agent.py) — owns the weak/insufficient-retrieval
+    # path: it plans search queries, runs them, reads the top pages, and
+    # synthesizes a grounded answer, instead of the corrective loop's
+    # single search_web() call. Only effective when WEB_SEARCH_ENABLED is
+    # also true (research needs the web-search tool); otherwise it
+    # degrades to the normal retrieve path. Together with the router this
+    # makes the app genuinely multi-agent (planner hands off to a
+    # specialist), which is what the checklist's collaboration/handoff
+    # rows measure. Off by default.
+    research_agent_enabled: bool = False
+
+    # Max sub-queries the Research agent's planning step may emit for one
+    # user query.
+    research_max_subqueries: int = 3
+
+    # How many of the top web results' pages the Research agent actually
+    # fetches and reads (its "read" step). The rest are used as snippets
+    # only. Bounded so a research pass can't balloon into an unbounded
+    # scrape.
+    research_read_limit: int = 2
+
+    # Per-page character cap for content the Research agent's read step
+    # pulls into context, and per-page-fetch timeout in seconds.
+    research_page_max_chars: int = 1500
+    research_page_timeout_seconds: int = 15
+
     # Number of web results fetched when the fallback fires.
     web_search_result_count: int = 3
 

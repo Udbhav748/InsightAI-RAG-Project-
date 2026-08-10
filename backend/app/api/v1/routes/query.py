@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_api_key
@@ -208,6 +209,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
 
 @router.post("/chat/diagnose", response_model=ChatResponse)
 async def diagnose(
+    request: Request,
     image: UploadFile = File(...),
     query: str | None = Form(None),
     session_id: str | None = Form(None),
@@ -235,7 +237,14 @@ async def diagnose(
         },
     )
 
-    response = chat_service.handle_diagnose(
+    # handle_diagnose is fully synchronous (vision inference, retrieval,
+    # LLM generation, and — with the research agent enabled — blocking
+    # HTTP page fetches). Unlike /chat and /chat/stream, this route is
+    # `async def` (required for the multipart file read above), so without
+    # run_in_threadpool that synchronous work would run directly on the
+    # event loop and stall every other in-flight request for its duration.
+    response = await run_in_threadpool(
+        chat_service.handle_diagnose,
         contents,
         image.filename or "upload",
         image.content_type or "application/octet-stream",
