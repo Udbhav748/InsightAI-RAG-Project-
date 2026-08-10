@@ -1,0 +1,59 @@
+name: Deploy Backend
+
+# Builds and pushes the backend image to ECR, then forces the ECS service
+# to pick it up. Replaces Render's git-push auto-deploy (autoDeployTrigger:
+# commit in the now-removed render.yaml) — AWS has no equivalent built-in
+# webhook, so this workflow is the deploy mechanism itself.
+#
+# The running task always references the ":latest" tag (see infra/ecs.tf's
+# comment on why); this workflow pushes both ":latest" and ":<git-sha>" so a
+# bad deploy can be rolled back by retagging a known-good sha — see
+# infra/README.md's Rollback section.
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**"]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # required for OIDC — see infra/github_oidc.tf
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build \
+            -t "$REGISTRY/insightai-rag-backend:${{ github.sha }}" \
+            -t "$REGISTRY/insightai-rag-backend:latest" \
+            backend/
+          docker push "$REGISTRY/insightai-rag-backend:${{ github.sha }}"
+          docker push "$REGISTRY/insightai-rag-backend:latest"
+
+      - name: Force new ECS deployment
+        run: |
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --service "${{ vars.ECS_SERVICE_NAME }}" \
+            --force-new-deployment
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER_NAME }}" \
+            --services "${{ vars.ECS_SERVICE_NAME }}"

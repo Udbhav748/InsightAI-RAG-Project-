@@ -217,7 +217,7 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 |---|---|---|
 | `GEMINI_API_KEY` | — | **Required.** Your Google Gemini API key. |
 | `API_KEY` | — | **Required.** Shared secret clients must send in the `X-API-Key` header to reach the documents/chat routers. |
-| `DATABASE_URL` | — | Optional PostgreSQL connection string (e.g. `postgresql://user:pass@host:5432/db`). When set, document metadata, tenants, API keys, chat sessions, and usage logs are persisted in Postgres (tables auto-created at startup; Alembic migrations in `backend/alembic/`). When empty, the app falls back to the legacy in-memory/file stores — safe to leave unset on the ephemeral-filesystem Render free tier. |
+| `DATABASE_URL` | — | Optional PostgreSQL connection string (e.g. `postgresql://user:pass@host:5432/db`). When set, document metadata, tenants, API keys, chat sessions, and usage logs are persisted in Postgres (tables auto-created at startup; Alembic migrations in `backend/alembic/`). When empty, the app falls back to the legacy in-memory/file stores — those are backed by an EFS-persisted volume on the AWS deployment (see `docs/OPERATIONS.md`), but still bound to a single ECS task for correctness (in-memory sessions) and safe concurrent writes (FAISS) — set this if `autoscaling_max_capacity` is ever raised above 1. |
 | `FRONTEND_URL` | `http://localhost:5173` | Origin allowed by CORS. |
 | `MAX_UPLOAD_SIZE_MB` | `20` | Maximum accepted PDF size. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Characters per chunk / overlap between chunks. |
@@ -531,14 +531,17 @@ InsightAI-RAG/
   primary provider (with its own internal retries), then the fallback
   provider once — if both are down, the request fails. There's no
   health-based routing or automatic recovery back to the primary.
-- **Live but ephemeral** — the backend runs on Render's free tier
-  (`insightai-rag-backend.onrender.com`) and the frontend on Vercel
-  (`insight-ai-rag-project.vercel.app`). The free tier has an ephemeral
-  filesystem and spins down when idle, so uploaded documents and the
-  FAISS index are lost on restart/redeploy — the auto-seeded demo
-  document is the workaround for that (see `docs/OPERATIONS.md`). If a
-  `DATABASE_URL` is configured, document metadata, sessions, and usage
-  logs persist, but the vector index itself remains filesystem-bound.
+- **Deployed on AWS** (backend: ECS/Fargate behind CloudFront; frontend:
+  S3 + CloudFront — see `docs/OPERATIONS.md` "Deploying to AWS"). Uploaded
+  documents, the FAISS index, and feedback events persist across task
+  restarts/redeploys via an EFS-backed volume (`infra/efs.tf`), replacing
+  the auto-seed-on-empty-store workaround the earlier Render deployment
+  needed for its ephemeral disk (that workaround, `demo_seed_service.py`,
+  still runs — it's just a no-op once the store has real data). One caveat
+  this introduces: FAISS index writes are only safe from a single ECS task
+  at a time — see `infra/autoscaling.tf`'s header comment before setting
+  `autoscaling_max_capacity` above 1. If a `DATABASE_URL` is configured,
+  document metadata, sessions, and usage logs also persist in Postgres.
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
@@ -552,9 +555,8 @@ dashboards) and why.
 - [ ] Multi-document collections / workspaces
 - [ ] Support for additional file types beyond PDF (currently PDF-only; scanned/image-only PDFs are handled via OCR, see Features)
 - [ ] Per-user authentication (JWT/RBAC) in place of the single shared API key
-- [ ] Encryption at rest for the vector store and uploaded files
-- [ ] A multi-tenant / shardable vector store, replacing the single FAISS file
-- [ ] Persistent storage on Render beyond the auto-seeded demo document (paid tier's persistent Disk, or an external store) so real uploads survive the free tier's 15-minute idle spin-down
+- [x] Encryption at rest for the vector store and uploaded files — EFS + SSM `SecureString` + S3 default SSE on AWS (see `docs/CHECKLIST.md` §13); application-level/field-level encryption remains open
+- [ ] A multi-tenant / shardable vector store, replacing the single FAISS file (would also remove the multi-task write-concurrency caveat in `infra/autoscaling.tf`)
 - [ ] Human-in-the-loop approval for protected actions (e.g. document deletion)
 
 ## License

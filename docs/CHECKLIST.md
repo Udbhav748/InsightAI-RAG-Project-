@@ -287,18 +287,18 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | FastAPI | ✅ | `app/main.py` |
 | Docker | ✅ | `backend/Dockerfile` |
-| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | N/A | Render + Vercel, `NOT_APPLICABLE.md` |
-| HTTPS | ✅ | Platform-provided (Render/Vercel) |
-| Secrets | ✅ | Env vars, gitignored `.env`, `.env.example` template |
-| Load balancer | ❌ | Single instance, no LB |
-| Autoscaling | ❌ | None (free tier) |
-| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts, `monitoring.yml` uptime schedule |
-| Centralized logging | ⚠️ | Stdout JSON only; `log_aggregate.py` rolls up captured logs on demand |
+| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ✅ | ECS on Fargate, Terraform-provisioned (`infra/*.tf`); see `docs/OPERATIONS.md` "Deploying to AWS" |
+| HTTPS | ✅ | CloudFront default certificate, no custom domain needed (`infra/cloudfront_backend.tf`, `infra/cloudfront_frontend.tf`) |
+| Secrets | ✅ | SSM Parameter Store `SecureString`, injected via the ECS task definition's `secrets` field, never plain `environment` (`infra/ssm.tf`) |
+| Load balancer | ✅ | ALB in front of ECS (`infra/alb.tf`) |
+| Autoscaling | ⚠️ | ECS service autoscaling configured (`infra/autoscaling.tf`, min 1 / max 2 tasks by default) — but see that file's header comment: FAISS writes and in-memory sessions aren't safe across >1 task unless `database_url` is also set |
+| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts, `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/ecs.tf`) |
+| Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/ecs.tf`); `log_aggregate.py` remains the offline rollup tool |
 | Requests per second | ⚠️ | Not measured |
 | Latency | ✅ | P50/P95/P99 offline |
 | Availability | ⚠️ | `monitoring/uptime_check.py` probes + scheduled `monitoring.yml`; point-in-time |
-| Cost per hour | ⚠️ | Not measured |
-| CPU/GPU/Memory utilisation | ❌ | Not measured |
+| Cost per hour | ⚠️ | Not measured live; static estimate in `infra/README.md`'s cost table (~$30-45/month) |
+| CPU/GPU/Memory utilisation | ❌ | Not measured; ECS Container Insights available but disabled by default for cost (`infra/ecs.tf`) |
 
 ---
 
@@ -309,7 +309,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | PII | ✅ | Regex detection (email/phone/id), flag-and-continue, `pii_service.py`; recall evals |
 | GDPR / DPDP / HIPAA | ⚠️ | No formal compliance assessment doc |
 | RBAC | ❌ | Per-client keys only; no roles/users |
-| Encryption | ⚠️ | Transport HTTPS platform-level; at-rest platform disk encryption only |
+| Encryption | ✅ | Transport: CloudFront HTTPS. At-rest: EFS `encrypted = true`, SSM `SecureString` (KMS), S3 default SSE (`infra/efs.tf`, `infra/ssm.tf`, `infra/s3_frontend.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
 | Consent | ❌ | No consent mechanism |
 | Secrets | ✅ | Env vars, gitignored |
 | Prompt injection | ✅ | Untrusted-excerpt markers + eval resistance metrics |

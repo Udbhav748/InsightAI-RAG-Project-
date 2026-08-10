@@ -424,7 +424,13 @@ canary) — this is a manual procedure, appropriate for the current
 single-instance, not-yet-deployed scale (see next section and Q9 in
 `docs/DESIGN_REVIEW.md`).
 
-## Deploying to Render
+## Deploying to Render (historical)
+
+Superseded by [Deploying to AWS](#deploying-to-aws-ecs-fargate--terraform)
+below — kept as-is as a historical record of the constraints that shaped
+the app early on (the 512MB OOM incident in particular is referenced
+elsewhere in the docs and shouldn't be deleted out from under those
+references).
 
 **Backend → Render (Docker). Frontend → a static host (Vercel or
 Cloudflare Pages), not a container.** `backend/Dockerfile` already builds
@@ -558,4 +564,99 @@ free-tier cap (20 requests/day) mid-eval-run — why `render.yaml` defaults
 it back in the dashboard; either way this is a config decision already
 supported today, not new engineering.
 
-**This is deployed and live.** The backend runs at `https://insightai-rag-backend.onrender.com` (Render free tier, Docker) and the frontend at `https://insight-ai-rag-project.vercel.app` (Vercel). The pieces above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`) are running in production.
+**This was deployed and live on Render/Vercel; superseded by the AWS deployment below.** The pieces described above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`) still work exactly as documented — `render.yaml` and the Render/Vercel projects are what got removed, not the app's own portability.
+
+## Deploying to AWS (ECS Fargate + Terraform)
+
+**Backend → ECS on Fargate (the same `backend/Dockerfile`, unmodified).
+Frontend → S3 + CloudFront (still not a container — same reasoning as the
+Render era above: a CDN-backed static host has no upside gap to pay for
+container compute to close).** All infrastructure is declared in
+`infra/*.tf` (Terraform) — this repo had no IaC beyond `render.yaml`
+before this migration; Terraform replaces that with something versioned,
+reviewable, and reproducible rather than a single declarative-but-Render-specific
+file. The actual step-by-step deploy runbook lives in
+[`infra/README.md`](../infra/README.md), including the exact `terraform`
+commands and GitHub repo variable wiring; this section covers the
+architecture and *why*, not the commands.
+
+### Why ECS/Fargate over Render
+
+Render's free tier constraint was RAM (512MB, see "Memory" above).
+Fargate has no such ceiling — the task definition requests 0.5 vCPU / 1GB
+by default (`infra/variables.tf`'s `fargate_cpu`/`fargate_memory`),
+already double Render's limit, and is a simple variable change to grow
+further. The trade-off is cost: Render/Vercel's combined $0/month becomes
+roughly **$30-45/month minimum** on AWS (ALB + Fargate + CloudFront + EFS
++ CloudWatch — see `infra/README.md`'s cost table for the line-item
+breakdown). Stated plainly, the same way the 512MB OOM incident above is
+stated plainly, rather than glossed over.
+
+### Persistent storage: EFS replaces the ephemeral-filesystem workaround
+
+Render's ephemeral disk (see "The constraint that shapes everything below"
+above) is what `demo_seed_service.py`'s auto-seed-on-empty-store behavior
+was built to survive. On Fargate, `infra/efs.tf` mounts a persistent EFS
+filesystem at the same three paths the app already resolves locally —
+`/app/uploads`, `/app/vector_store`, and (newly, closing a gap that
+existed even in local `docker-compose.yml`) `/app/feedback` — so uploaded
+documents, the FAISS index, and feedback events all survive a task
+restart or redeploy. `demo_seed_service.py`'s behavior is unchanged and
+still runs — it's a no-op once the store has real data, exactly as before.
+
+**New limitations this introduces, not present in the single-instance
+Render deployment** — both stem from the same root cause, autoscaling
+actually being enabled for the first time (`infra/autoscaling.tf`
+configures min 1 / max 2 tasks by default, satisfying the "Cloud
+Deployment" checklist's Autoscaling criterion):
+
+- `faiss_vector_store.py` protects writes with an in-process
+  `threading.Lock` only, which doesn't extend across multiple ECS tasks
+  sharing the same EFS-mounted index — concurrent uploads or deletes
+  across two tasks can corrupt it.
+- `session_store.py`'s in-memory chat history is documented
+  (`docs/DESIGN_REVIEW.md`, Q9) as correct only for a single process —
+  dormant on Render (which never autoscaled), but live here: a session on
+  one task is invisible to a request landing on another, unless
+  `database_url` is set (routes to `PostgresSessionStore` automatically).
+
+Both are documented in detail in `infra/autoscaling.tf`'s header comment,
+not mitigated by this Terraform. Set `autoscaling_max_capacity = 1` in
+`infra/terraform.tfvars` to eliminate both risks entirely if that
+trade-off isn't acceptable, or set `database_url` to fix sessions
+specifically.
+
+### Secrets: SSM Parameter Store replaces Render's dashboard secrets
+
+`render.yaml`'s `sync: false` env vars (`GEMINI_API_KEY`, `API_KEY`,
+`GROQ_API_KEY`) were entered by hand in the Render dashboard. On AWS,
+`infra/ssm.tf` stores the same values as SSM `SecureString` parameters,
+referenced by the ECS task definition's `secrets` field (never plain
+`environment`) so they're resolved at container start and never appear in
+the task definition itself. **No application code changes were needed for
+this** — `pydantic-settings` already reads real process environment
+variables ahead of `.env` (`backend/app/core/config.py`), so
+ECS-injected env vars work exactly like Render's did.
+
+### HTTPS without a custom domain
+
+Neither the Render nor the AWS deployment owns a custom domain.
+CloudFront (`infra/cloudfront_backend.tf`, `infra/cloudfront_frontend.tf`)
+sits in front of both the ALB and the S3 frontend bucket and issues free
+HTTPS on its own `*.cloudfront.net` domain — no ACM certificate or
+Route53 zone required, the closest AWS-native equivalent to Render's and
+Vercel's free platform subdomains. The ALB itself has an HTTP-only
+listener; TLS terminates at CloudFront, not at the origin — the standard
+"TLS at the CDN" pattern, called out explicitly rather than left implicit.
+
+### Deploying
+
+See [`infra/README.md`](../infra/README.md) for the full runbook
+(Terraform state bootstrap, `terraform apply` in two phases, populating
+GitHub Actions repo variables, first deploy, and the smoke-test
+checklist). Ongoing deploys are automatic: `.github/workflows/deploy-backend.yml`
+and `deploy-frontend.yml` build and ship on every push to `main` that
+touches `backend/` or `frontend/` respectively — the GitHub Actions
+equivalent of Render's `autoDeployTrigger: commit` and Vercel's git
+integration, since AWS has no built-in webhook-based auto-deploy of its
+own.

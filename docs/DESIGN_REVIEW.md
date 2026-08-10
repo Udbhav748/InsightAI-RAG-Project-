@@ -227,12 +227,19 @@ by the eval script itself, never passing through
   include `error_code` (e.g. `UNAUTHORIZED`, `RATE_LIMITED`) and
   `taxonomy_category` (e.g. `input`, `tool`, `rate_limit`); frontend
   `getErrorInfo()` extracts these for programmatic handling.
-- **Not implemented**: application-level encryption at rest (Render provides
-  infrastructure-level AES-256 disk encryption; customer-managed keys /
-  field-level encryption remain future work), JWT/RBAC, advanced rate
-  limiting (token bucket, persistence, distributed enforcement),
-  per-user document isolation. All explicitly listed as future work in
-  `docs/NOT_APPLICABLE.md` and the README's Known Limitations section.
+- **Encryption at rest**: on AWS (see `docs/OPERATIONS.md` "Deploying to
+  AWS"), this moved from Render's platform-level AES-256 disk encryption to
+  explicit, Terraform-declared encryption: EFS (`infra/efs.tf`,
+  `encrypted = true`), SSM `SecureString` parameters (KMS-encrypted,
+  `infra/ssm.tf`), and S3 default SSE (`infra/s3_frontend.tf`) — a genuine
+  upgrade from an implicit platform guarantee to something versioned and
+  reviewable. **Not implemented**: application-level/field-level
+  encryption or customer-managed keys — those remain future work, same as
+  before.
+- **Not implemented**: JWT/RBAC, advanced rate limiting (token bucket,
+  persistence, distributed enforcement), per-user document isolation. All
+  explicitly listed as future work in `docs/NOT_APPLICABLE.md` and the
+  README's Known Limitations section.
 
 ## 8. What is the cost per successful task?
 
@@ -301,7 +308,11 @@ constraints beyond it:
   **No built-in key rotation or revocation.** To rotate a compromised key:
   1. Generate a new key for the client
   2. Update `API_KEYS` in `backend/.env` (e.g., `{"frontend": "new-key", "admin-script": "key2"}`)
-  2. Restart the backend service (Render: redeploy or manual restart)
+  2. Restart the backend service (AWS: `terraform apply` after updating the
+     SSM parameter value, or `aws ecs update-service --force-new-deployment`
+     — still a new container launch, same limitation shape as Render's
+     redeploy/restart, now self-service via Terraform/CLI instead of a
+     dashboard click)
   
   There's no API to rotate keys without restart, no key expiration, and no way to revoke one client without updating the JSON and restarting. This is acceptable for the current single-user demo scale; a multi-user product would need a proper secrets manager and rotation API.
 - **Document history lives in browser localStorage, not the server.**
@@ -316,10 +327,10 @@ constraints beyond it:
 
   **Why in-memory, not a file or DB?** The live Render free-tier instance has an ephemeral filesystem — that's why the FAISS index already uses the auto-seeded demo-document workaround (see `docs/OPERATIONS.md` "The constraint that shapes everything below: an ephemeral filesystem"). A file-backed session store would face the exact same problem (wiped on every restart/redeploy), so it wouldn't actually buy more durability than an in-memory store on the current deployment — it would just add complexity for a durability guarantee this environment can't actually provide right now. Given that, an in-memory session store is the honest, proportionate choice today — same pattern as the per-client API keys decision. The swap-in point has since been built: `session_store.py` now routes to a `PostgresSessionStore` whenever `DATABASE_URL` is configured (see `docs/ARCHITECTURE.md` "Persistence (PostgreSQL, optional)"), so a deployment with a managed database gets durable history behind the same interface — Redis remains the alternative if a multi-instance scale-out (below) calls for something more than Postgres.
 
-  **Single-instance assumption (critical for correctness).** The Render free-tier web service runs as **exactly one instance** (the `render.yaml` specifies `plan: free` with no `numInstances` or autoscaling; Render defaults to 1 instance on the free tier). The in-memory session store is **only correct while the service runs as a single process**. If the deployment ever scales to more than one instance (e.g., upgrading to a paid Render plan with multiple instances, or adding a load balancer), a session created on instance A would be invisible to a request landing on instance B — an active correctness bug, not a durability trade-off. At that point, the session store must be replaced with a shared external store (Redis, PostgreSQL, etc.) before enabling multi-instance deployment. `session_store.py` is the single swap point.
+  **Single-instance assumption (critical for correctness).** The in-memory session store is **only correct while the service runs as a single process**. On Render's free tier this was always true (1 instance, no autoscaling) — a dormant constraint, never actually exercised. **On the AWS deployment (see `docs/OPERATIONS.md` "Deploying to AWS"), it's no longer dormant**: `infra/autoscaling.tf` configures ECS service autoscaling up to `autoscaling_max_capacity` tasks (default 2), and a session created on one task is invisible to a request landing on another — an active correctness bug at max_capacity > 1, not a durability trade-off. The fix already exists: `session_store.py` routes to `PostgresSessionStore` automatically whenever `DATABASE_URL` is set — set `infra/terraform.tfvars`' `database_url` before relying on more than one task, or set `autoscaling_max_capacity = 1` to keep the single-instance assumption true.
 
   **Retention:** bounded by `max_sessions=1000` with LRU eviction (see `session_store.py`). No TTL — session count is capped to prevent OOM on the 512MB free tier. A production multi-instance deployment would need Redis with TTL instead.
-- **Deployed and live** — see [`docs/OPERATIONS.md`](OPERATIONS.md). The backend runs as a single Render free-tier instance (1 instance, no autoscaling). Everything above remains a single-process, single-machine design; there's no load balancer, no autoscaling, and no infrastructure-as-code beyond `render.yaml` in this repo today.
+- **Deployed on AWS** — see [`docs/OPERATIONS.md`](OPERATIONS.md). Infrastructure-as-code now exists (`infra/*.tf`, Terraform), and autoscaling now exists (ECS service autoscaling, min 1 / max `autoscaling_max_capacity` tasks) — but as the two points immediately above document, enabling it for the first time reactivates two previously-dormant single-instance assumptions (FAISS index writes, in-memory sessions) that never mattered on Render's fixed single instance. Autoscaling existing is not the same as autoscaling being safe to use above 1 task without also addressing those.
 
 ## 10. Would you trust the system as a customer?
 
