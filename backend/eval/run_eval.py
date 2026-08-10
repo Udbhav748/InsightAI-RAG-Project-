@@ -746,6 +746,12 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     task_success_rate = (
         sum(task_success_flags) / len(task_success_flags) if task_success_flags else None
     )
+    # The checklist's own name for task_success_rate's complement — kept
+    # as its own explicit field (rather than making a caller compute
+    # 1 - task_success_rate) for the same reason workflow_completion_rate
+    # is its own field in monitoring/log_aggregate.py despite being
+    # error_rate's complement: it's named explicitly in the spec.
+    failure_rate = 1 - task_success_rate if task_success_rate is not None else None
     groundedness_proxy = (
         sum(grounded_flags) / len(grounded_flags) if grounded_flags else None
     )
@@ -833,6 +839,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "tool_arg_accuracy": round(tool_arg_accuracy, 4) if tool_arg_accuracy is not None else None,
         "tool_arg_accuracy_n": len(tool_arg_accuracy_flags),
         "task_success_rate": round(task_success_rate, 4) if task_success_rate is not None else None,
+        "failure_rate": round(failure_rate, 4) if failure_rate is not None else None,
         "task_success_n": len(task_success_flags),
         "groundedness_proxy": round(groundedness_proxy, 4) if groundedness_proxy is not None else None,
         "groundedness_n": len(grounded_flags),
@@ -909,6 +916,7 @@ def print_report(report: dict) -> None:
     print("=" * 70)
 
     print(f"Task Success Rate:      {fmt(report['task_success_rate'], report['task_success_n'])}")
+    print(f"Failure Rate:           {fmt(report['failure_rate'], report['task_success_n'])}")
     print(f"Groundedness proxy:     {fmt(report['groundedness_proxy'], report['groundedness_n'])}")
     print(f"Entailment groundedness: {fmt(report['entailment_groundedness'], report['entailment_groundedness_n'])}")
     print(

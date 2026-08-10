@@ -345,11 +345,25 @@ python eval/regression_check.py --results eval/results/<new>.json \
 
 Baselines live in `eval/baselines/` (committed). Re-baselining: after a
 deliberate, human-reviewed change (new prompt version, model change), run
-a fresh eval and commit the resulting aggregates as a new baseline —
-intentionally, not as a way to paper over an unnoticed regression. The
-`eval.yml` workflow runs this gate after every manual eval run with the
-`baseline` input (default `eval/baselines/v2_groq.json`); set the input
-empty to skip the gate.
+a fresh eval and commit the resulting **full result file, including
+`entries`** — intentionally, not as a way to paper over an unnoticed
+regression. The `eval.yml` workflow runs this gate after every manual
+eval run with the `baseline` input (default `eval/baselines/v2_groq.json`);
+set the input empty to skip the gate.
+
+`entries` matters now, not just the aggregates: alongside the tolerance
+checks above, `regression_check.py` also computes case-level **Regression
+Rate** (`Previously Passing Cases Now Failing / Previously Passing Cases`,
+gated by `--max-regression-rate`, default 0.0) by matching entries between
+the two files on query text. This is a genuinely different, finer-grained
+signal than the aggregate checks — an aggregate can hold steady while
+individual cases flip (some regress, others newly pass, netting to no
+visible change), which the aggregate checks alone would never catch. It's
+a no-op (nothing to compare, never flags a regression) against a baseline
+that lacks `entries` — including `eval/baselines/v2_groq.json` as
+committed today, which predates this check and was trimmed to aggregates
+only. The next deliberate re-baseline should commit the full result so
+this check actually has something to compare against going forward.
 
 Every `run_eval.py` result also records the model + dataset revision that
 produced it: `dataset_version`, `llm_model_name`, `reranking_model_name`,

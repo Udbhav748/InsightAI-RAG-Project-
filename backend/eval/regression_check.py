@@ -9,7 +9,9 @@ Usage (from backend/):
     python eval/regression_check.py --results eval/results/<new>.json \
         --baseline eval/baselines/v1_v2_groq.json
 
-Metrics compared (when present in both files):
+Two distinct checks, both must pass:
+
+1. Aggregate metrics (when present in both files):
 
     Higher-is-better (regression = value dropped by more than tol):
         planner.accuracy, planner.macro_f1, planner.weighted_f1,
@@ -20,9 +22,22 @@ Metrics compared (when present in both files):
     Lower-is-better (regression = value rose by more than tol):
         false_refusal_rate, data_leak_rate
 
-A missing metric in either file is skipped (new metrics on a fresh run have
-no baseline yet; old runs predate them). Tolerances are absolute-percentage
-for rates (0-1 scale) unless overridden with --tol. Exit codes:
+    A missing metric in either file is skipped (new metrics on a fresh run
+    have no baseline yet; old runs predate them).
+
+2. Case-level Regression Rate: Previously Passing Cases Now Failing /
+   Previously Passing Cases. This is a genuinely different, finer-grained
+   check than #1 — an aggregate can hold steady while individual cases
+   flip (some regress, others newly pass, netting to "no visible change"),
+   and #1 alone would never catch that. Entries are matched between the
+   two files by query text (the natural stable key — dataset entries have
+   no explicit id); an entry missing from either side isn't comparable and
+   is skipped rather than counted either way. Gated by --max-regression-rate
+   (default 0.0 — any previously-passing case failing now is a regression;
+   raise it if some flakiness is expected and tolerable).
+
+Tolerances are absolute-percentage for rates (0-1 scale) unless overridden
+with --tol / --max-regression-rate. Exit codes:
     0 = no regression, 1 = regression detected, 2 = usage/input error.
 """
 
@@ -85,6 +100,39 @@ def _failures(results: dict, baseline: dict, tol: float) -> list[str]:
     return problems
 
 
+def _case_level_regression(
+    results: dict, baseline: dict, key_field: str = "query"
+) -> tuple[int, list[str], float | None]:
+    """Regression Rate: the fraction of cases that passed (task_success is
+    True) in the baseline but don't pass (False, None, or missing) in the
+    new run. Returns (previously_passing_count, now_failing_keys, rate) —
+    rate is None when there's nothing to compare (no case in the baseline
+    both passed and has a match in the new run).
+
+    Matching is by query text. A case present in the baseline but absent
+    from the new run (dataset changed) isn't comparable and is excluded
+    from both the numerator and denominator, rather than being silently
+    counted as either a pass or a regression.
+    """
+    new_by_key = {entry.get(key_field): entry for entry in (results.get("entries") or []) if entry.get(key_field)}
+
+    previously_passing = 0
+    now_failing: list[str] = []
+    for entry in baseline.get("entries") or []:
+        key = entry.get(key_field)
+        if not key or entry.get("task_success") is not True:
+            continue
+        new_entry = new_by_key.get(key)
+        if new_entry is None:
+            continue
+        previously_passing += 1
+        if new_entry.get("task_success") is not True:
+            now_failing.append(key)
+
+    rate = len(now_failing) / previously_passing if previously_passing else None
+    return previously_passing, now_failing, rate
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -101,7 +149,13 @@ def main() -> None:
         "--tol",
         type=float,
         default=0.05,
-        help="Absolute regression tolerance on the 0-1 scale (default 0.05).",
+        help="Absolute regression tolerance on the 0-1 scale (default 0.05), for the aggregate-metric check.",
+    )
+    parser.add_argument(
+        "--max-regression-rate",
+        type=float,
+        default=0.0,
+        help="Max fraction of previously-passing cases allowed to now fail (default 0.0 — none allowed).",
     )
     args = parser.parse_args()
 
@@ -114,9 +168,22 @@ def main() -> None:
 
     print(
         f"Comparing {args.results} vs baseline {args.baseline} "
-        f"(tolerance {args.tol:.3f})"
+        f"(tolerance {args.tol:.3f}, max regression rate {args.max_regression_rate:.3f})"
     )
+
     problems = _failures(results, baseline, args.tol)
+
+    previously_passing, now_failing, regression_rate = _case_level_regression(results, baseline)
+    print(f"Case-level: {previously_passing} previously-passing cases comparable, {len(now_failing)} now failing.")
+    if regression_rate is not None:
+        print(f"Regression Rate: {regression_rate:.4f} ({regression_rate * 100:.1f}%)")
+        if regression_rate > args.max_regression_rate:
+            problems.append(
+                f"regression_rate: {regression_rate:.4f} > {args.max_regression_rate} "
+                f"({len(now_failing)}/{previously_passing} cases: {', '.join(now_failing[:5])}"
+                f"{', ...' if len(now_failing) > 5 else ''})"
+            )
+
     if not problems:
         print("No regression detected.")
         sys.exit(0)
