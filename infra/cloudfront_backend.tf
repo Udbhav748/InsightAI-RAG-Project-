@@ -7,7 +7,7 @@
 #                                X-API-Key, and every authenticated request
 #                                (app/core/auth.py) would 401.
 locals {
-  cloudfront_caching_disabled_policy_id      = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+  cloudfront_caching_disabled_policy_id       = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
   cloudfront_all_viewer_except_host_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3"
 }
 
@@ -20,9 +20,9 @@ resource "aws_cloudfront_distribution" "backend" {
 
     custom_origin_config {
       http_port              = 80
-      https_port              = 443
-      origin_protocol_policy  = "http-only" # ALB has no HTTPS listener — see alb.tf
-      origin_ssl_protocols    = ["TLSv1.2"]
+      https_port             = 443
+      origin_protocol_policy = "http-only" # ALB has no HTTPS listener — see alb.tf
+      origin_ssl_protocols   = ["TLSv1.2"]
 
       # CloudFront's own default origin_read_timeout is 30s — well under
       # research_total_timeout_seconds (45, backend/app/core/config.py) plus
@@ -37,13 +37,13 @@ resource "aws_cloudfront_distribution" "backend" {
   }
 
   default_cache_behavior {
-    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    allowed_methods  = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods   = ["GET", "HEAD"]
     target_origin_id = "backend-alb"
 
-    viewer_protocol_policy    = "redirect-to-https"
-    cache_policy_id           = local.cloudfront_caching_disabled_policy_id
-    origin_request_policy_id  = local.cloudfront_all_viewer_except_host_policy_id
+    viewer_protocol_policy   = "redirect-to-https"
+    cache_policy_id          = local.cloudfront_caching_disabled_policy_id
+    origin_request_policy_id = local.cloudfront_all_viewer_except_host_policy_id
   }
 
   # Grants the free HTTPS cert on CloudFront's own *.cloudfront.net domain —

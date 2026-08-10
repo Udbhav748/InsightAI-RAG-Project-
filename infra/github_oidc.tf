@@ -3,8 +3,8 @@
 # scoped to this specific repo via the trust policy condition below.
 
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
   # thumbprint_list intentionally omitted: current aws provider versions
   # auto-manage the thumbprint for this well-known GitHub-hosted provider.
 }

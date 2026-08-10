@@ -35,7 +35,7 @@ resource "aws_ecs_task_definition" "backend" {
   cpu                      = var.fargate_cpu
   memory                   = var.fargate_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn             = aws_iam_role.ecs_task.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
 
   container_definitions = jsonencode([
     {
@@ -132,8 +132,8 @@ resource "aws_ecs_service" "backend" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.backend.arn
-    container_name    = "backend"
-    container_port    = 8000
+    container_name   = "backend"
+    container_port   = 8000
   }
 
   # Matches the Dockerfile's own documented ~76s cold start (torch +
