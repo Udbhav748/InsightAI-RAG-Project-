@@ -17,10 +17,12 @@ since those events are what Handoff Accuracy / Agent Idle Time derive
 from.
 """
 
+import time
 from types import SimpleNamespace
 
 import pytest
 
+import app.services.research_agent as research_agent
 from app.core.config import settings
 from app.models.document import WebSearchResult
 from app.services.research_agent import ResearchAgent
@@ -216,9 +218,96 @@ class TestResearchAgentRun:
         assert findings.results[0].snippet == "snippet text"  # page skipped, snippet kept
 
 
+class TestResearchAgentBudget:
+    """The total-timeout budget (research_total_timeout_seconds): once a
+    deadline has passed, _search/_read stop issuing new network calls
+    rather than running the full sequential chain unbounded."""
+
+    def test_search_stops_when_budget_already_exceeded(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(
+            research_agent, "search_web", lambda q, max_results=None: called.append(q) or []
+        )
+        agent = ResearchAgent(FakeLLM())
+        results = agent._search(["q1", "q2"], deadline=time.perf_counter() - 1)
+        assert results == []
+        assert called == []  # deadline already past — no search issued
+
+    def test_read_stops_when_budget_already_exceeded(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(
+            research_agent, "_fetch_page_text", lambda url, max_chars=None: called.append(url) or "text"
+        )
+        agent = ResearchAgent(FakeLLM())
+        read, count = agent._read([make_web_result()], deadline=time.perf_counter() - 1)
+        assert read == []
+        assert count == 0
+        assert called == []  # deadline already past — no fetch issued
+
+
 class TestResearchFetchPageText:
     def test_non_http_url_rejected(self):
         from app.services.research_agent import _fetch_page_text
 
         assert _fetch_page_text("file:///etc/passwd") == ""
         assert _fetch_page_text("javascript:alert(1)") == ""
+
+    def test_private_and_loopback_hosts_rejected(self):
+        """IP literals resolve locally (no real DNS/network call), so this
+        stays offline while covering the SSRF guard directly."""
+        from app.services.research_agent import _fetch_page_text
+
+        assert _fetch_page_text("http://127.0.0.1/secret") == ""
+        assert _fetch_page_text("http://10.0.0.5/") == ""
+        assert _fetch_page_text("http://169.254.169.254/latest/meta-data/") == ""
+
+    def test_redirect_to_private_host_rejected(self, monkeypatch):
+        """A host that passes the initial check but redirects to a private
+        address must still be rejected — the guard re-validates every hop,
+        not just the URL the agent started with."""
+        hosts_ok = {"example.com": True, "127.0.0.1": False}
+        monkeypatch.setattr(research_agent, "_is_public_host", lambda h: hosts_ok.get(h, False))
+
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            return SimpleNamespace(status_code=302, headers={"location": "http://127.0.0.1/admin"}, text="")
+
+        monkeypatch.setattr(research_agent.httpx, "get", fake_get)
+
+        assert research_agent._fetch_page_text("http://example.com/a") == ""
+        assert calls == ["http://example.com/a"]  # redirect target never fetched
+
+    def test_redirect_to_public_host_followed(self, monkeypatch):
+        monkeypatch.setattr(research_agent, "_is_public_host", lambda h: True)
+
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            if url == "http://example.com/a":
+                return SimpleNamespace(status_code=301, headers={"location": "https://example.com/b"}, text="")
+            return SimpleNamespace(
+                status_code=200, headers={}, text="<p>hello world</p>", raise_for_status=lambda: None
+            )
+
+        monkeypatch.setattr(research_agent.httpx, "get", fake_get)
+
+        text = research_agent._fetch_page_text("http://example.com/a")
+        assert "hello world" in text
+        assert calls == ["http://example.com/a", "https://example.com/b"]
+
+    def test_too_many_redirects_rejected(self, monkeypatch):
+        monkeypatch.setattr(research_agent, "_is_public_host", lambda h: True)
+
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            return SimpleNamespace(status_code=302, headers={"location": "http://example.com/next"}, text="")
+
+        monkeypatch.setattr(research_agent.httpx, "get", fake_get)
+
+        assert research_agent._fetch_page_text("http://example.com/a") == ""
+        assert len(calls) == research_agent._MAX_REDIRECTS + 1

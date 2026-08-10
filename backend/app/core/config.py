@@ -209,6 +209,16 @@ class Settings(BaseSettings):
     research_page_max_chars: int = 1500
     research_page_timeout_seconds: int = 15
 
+    # Wall-clock budget for the whole plan->search->read pass (the LLM plan
+    # and synthesis calls aren't counted — they have their own client-level
+    # timeouts). Without this, worst case is fully additive: subqueries x
+    # search timeout + read_limit x page timeout, which with defaults is
+    # already 30s+30s before a single LLM call. Checked between searches
+    # and between page reads; once exceeded, the agent stops collecting
+    # more and synthesizes from whatever it already has (degrade, not
+    # fail), same as every other bound in this module.
+    research_total_timeout_seconds: int = 45
+
     # Number of web results fetched when the fallback fires.
     web_search_result_count: int = 3
 

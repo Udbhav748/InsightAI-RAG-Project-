@@ -33,11 +33,14 @@ Failure-safe by construction, like every enhancement in this codebase:
 from __future__ import annotations
 
 import html
+import ipaddress
 import logging
+import socket
 import time
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -136,17 +139,21 @@ class ResearchAgent:
             return ResearchFindings(answer="")
 
         findings = ResearchFindings()
+        # Wall-clock budget for the search+read steps below; the plan and
+        # synthesis LLM calls aren't counted (they have their own
+        # client-level timeouts). See Settings.research_total_timeout_seconds.
+        deadline = start + max(1, settings.research_total_timeout_seconds)
 
         findings.queries = self._plan_queries(query)
         findings.steps.append({"stage": "plan", "query_count": len(findings.queries)})
 
-        search_results = self._search(findings.queries)
+        search_results = self._search(findings.queries, deadline)
         findings.steps.append({"stage": "search", "result_count": len(search_results)})
         if not search_results:
             log_agent_completed("research", query, start, outcome="no_results")
             return findings
 
-        page_results, pages_read = self._read(search_results)
+        page_results, pages_read = self._read(search_results, deadline)
         findings.pages_read = pages_read
         findings.steps.append({"stage": "read", "pages_read": pages_read})
 
@@ -193,12 +200,19 @@ class ResearchAgent:
         queries = [str(q).strip() for q in payload if str(q).strip()]
         return queries[:max_queries] if queries else [query]
 
-    def _search(self, queries: list[str]) -> list[WebSearchResult]:
+    def _search(self, queries: list[str], deadline: float) -> list[WebSearchResult]:
         """Step 2 — run each sub-query through the web-search tool.
-        Best-effort: an individual search failing is logged and skipped."""
+        Best-effort: an individual search failing is logged and skipped.
+        Stops issuing new searches once `deadline` (a time.perf_counter()
+        value) has passed — the total-timeout budget, checked between
+        searches rather than mid-search since search_web has its own
+        per-call timeout."""
         seen: set[str] = set()
         results: list[WebSearchResult] = []
         for query in queries:
+            if time.perf_counter() >= deadline:
+                logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
+                break
             try:
                 for result in search_web(query):
                     if result.url not in seen:
@@ -211,12 +225,17 @@ class ResearchAgent:
                 )
         return results
 
-    def _read(self, results: list[WebSearchResult]) -> tuple[list[WebSearchResult], int]:
+    def _read(self, results: list[WebSearchResult], deadline: float) -> tuple[list[WebSearchResult], int]:
         """Step 3 — fetch the top pages and pull bounded plain text into
-        context. A page that fails to fetch is skipped, not fatal."""
+        context. A page that fails to fetch is skipped, not fatal. Stops
+        fetching more pages once `deadline` has passed (same budget as
+        `_search`)."""
         read: list[WebSearchResult] = []
         limit = max(0, settings.research_read_limit)
         for result in results[:limit]:
+            if time.perf_counter() >= deadline:
+                logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
+                break
             text = _fetch_page_text(result.url)
             if not text:
                 continue
@@ -258,32 +277,92 @@ def _parse_plan(raw: str) -> list[Any] | None:
     return queries if isinstance(queries, list) else None
 
 
+_MAX_REDIRECTS = 3
+
+
+def _is_public_host(hostname: str) -> bool:
+    """True if every address `hostname` resolves to is a public,
+    routable IP — i.e. none of it, its DNS answers, or a redirect target
+    can be used to reach loopback/private/link-local/reserved space
+    (SSRF via search results the agent doesn't control the destination
+    of). A resolution failure is treated as unsafe, not "unknown"."""
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
 def _fetch_page_text(url: str, max_chars: int | None = None) -> str:
     """Fetch `url` and return its text, capped and bounded.
 
-    Only http(s) URLs are fetched (search results are untrusted data);
-    anything else, any transport/parse failure, or a non-200 response
-    returns "" — the Research agent treats that as "page unavailable" and
-    moves on, never as an error to propagate.
+    Only http(s) URLs pointing at a public host are fetched (search
+    results are untrusted data — the URL and everywhere it redirects to
+    must not resolve into loopback/private/internal address space, or
+    this becomes a fetch-anything-on-the-internal-network primitive).
+    Redirects are followed manually (capped at _MAX_REDIRECTS) so each
+    hop is re-validated the same way, instead of trusting httpx's
+    built-in follow_redirects to land somewhere safe. Any transport/parse
+    failure or a non-200 response returns "" — the Research agent treats
+    that as "page unavailable" and moves on, never as an error to
+    propagate.
     """
-    if not url.lower().startswith(("http://", "https://")):
-        return ""
-    cap = max_chars if max_chars is not None else settings.research_page_max_chars
-    try:
-        response = httpx.get(
-            url,
-            timeout=settings.research_page_timeout_seconds,
-            follow_redirects=True,
-            headers={"User-Agent": "InsightAI-RAG-research-agent/0.1"},
-        )
-        response.raise_for_status()
-    except Exception as exc:
-        logger.info(
-            "research_page_fetch_failed",
-            extra={"extra_fields": {"url": url, "error": str(exc)[:120]}},
-        )
+    for _ in range(_MAX_REDIRECTS + 1):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        if not _is_public_host(parsed.hostname):
+            logger.info("research_page_unsafe_host", extra={"extra_fields": {"url": url}})
+            return ""
+        try:
+            response = httpx.get(
+                url,
+                timeout=settings.research_page_timeout_seconds,
+                follow_redirects=False,
+                headers={"User-Agent": "InsightAI-RAG-research-agent/0.1"},
+            )
+        except Exception as exc:
+            logger.info(
+                "research_page_fetch_failed",
+                extra={"extra_fields": {"url": url, "error": str(exc)[:120]}},
+            )
+            return ""
+
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location")
+            if not location:
+                return ""
+            url = urljoin(url, location)
+            continue
+
+        try:
+            response.raise_for_status()
+        except Exception as exc:
+            logger.info(
+                "research_page_fetch_failed",
+                extra={"extra_fields": {"url": url, "error": str(exc)[:120]}},
+            )
+            return ""
+        break
+    else:
+        logger.info("research_page_too_many_redirects", extra={"extra_fields": {"url": url}})
         return ""
 
+    cap = max_chars if max_chars is not None else settings.research_page_max_chars
     parser = _TextExtractor()
     try:
         parser.feed(response.text[: max(0, cap * 4)])
