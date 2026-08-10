@@ -105,10 +105,32 @@ class ChatResponse(BaseModel):
     )
 
 
+class RubricScores(BaseModel):
+    """A reviewer's 1-5 rating on each of the answer-quality checklist's
+    seven criteria. All seven are required together — a partial rubric
+    (e.g. rating correctness but not safety) isn't a meaningful data
+    point for the per-criterion averages or Inter-Annotator Agreement
+    computed from it (see eval/metrics_report.py)."""
+
+    correctness: int = Field(..., ge=1, le=5, description="Is the answer factually and logically right?")
+    helpfulness: int = Field(..., ge=1, le=5, description="Does it help the user complete their task?")
+    completeness: int = Field(..., ge=1, le=5, description="Does it cover every required part?")
+    safety: int = Field(..., ge=1, le=5, description="Does it avoid harmful, unauthorized, or risky behavior?")
+    tone: int = Field(..., ge=1, le=5, description="Is the communication appropriate for the context?")
+    groundedness: int = Field(..., ge=1, le=5, description="Are factual claims supported by evidence?")
+    citation_quality: int = Field(..., ge=1, le=5, description="Do citations point to the correct sources?")
+
+
 class FeedbackRequest(BaseModel):
     message_id: str = Field(..., min_length=1)
     rating: Literal["up", "down"]
     comment: str | None = None
+    rubric: RubricScores | None = Field(
+        None,
+        description="Optional detailed per-criterion review (see RubricScores). The quick "
+        "thumbs-up/down above (`rating`) remains valid on its own — this is an additive, "
+        "opt-in deeper review, not a replacement.",
+    )
 
 
 class FeedbackResponse(BaseModel):

@@ -304,6 +304,79 @@ class TestChatFeedback:
         assert response.status_code == 401
         assert not client.feedback_path.exists()
 
+    def test_reviewer_id_resolved_from_authenticated_client_not_request_body(self, client):
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            # Even if a client tried to claim a different reviewer identity
+            # in the body, there's no field for it — reviewer_id can only
+            # ever come from the API key that authenticated the request.
+            json={"message_id": "msg-5-111", "rating": "up"},
+        )
+        assert response.status_code == 200
+        event = json.loads(client.feedback_path.read_text(encoding="utf-8"))
+        assert event["reviewer_id"] == "default"  # VALID_HEADERS' key maps to client "default"
+
+    def test_rubric_is_optional_and_recorded_when_given(self, client):
+        rubric = {
+            "correctness": 5,
+            "helpfulness": 4,
+            "completeness": 5,
+            "safety": 5,
+            "tone": 4,
+            "groundedness": 5,
+            "citation_quality": 3,
+        }
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-6-222", "rating": "up", "rubric": rubric},
+        )
+        assert response.status_code == 200
+        event = json.loads(client.feedback_path.read_text(encoding="utf-8"))
+        assert event["rubric"] == rubric
+
+    def test_feedback_without_rubric_still_works(self, client):
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-7-333", "rating": "down"},
+        )
+        assert response.status_code == 200
+        event = json.loads(client.feedback_path.read_text(encoding="utf-8"))
+        assert event["rubric"] is None
+
+    def test_rubric_score_out_of_range_returns_422(self, client):
+        rubric = {
+            "correctness": 6,  # out of the 1-5 range
+            "helpfulness": 4,
+            "completeness": 5,
+            "safety": 5,
+            "tone": 4,
+            "groundedness": 5,
+            "citation_quality": 3,
+        }
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-8-444", "rating": "up", "rubric": rubric},
+        )
+        assert response.status_code == 422
+        assert not client.feedback_path.exists()
+
+    def test_incomplete_rubric_returns_422(self, client):
+        # All seven criteria are required together when a rubric is sent at
+        # all — a partial rubric isn't a meaningful per-criterion average
+        # or agreement data point (see RubricScores in app/models/schemas.py).
+        incomplete_rubric = {"correctness": 5, "helpfulness": 4}
+        response = client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "msg-9-555", "rating": "up", "rubric": incomplete_rubric},
+        )
+        assert response.status_code == 422
+        assert not client.feedback_path.exists()
+
 
 class TestDeleteDocument:
     def test_without_confirm_returns_400(self, client):

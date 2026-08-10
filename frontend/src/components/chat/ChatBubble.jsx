@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
+import { Check, ClipboardList, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
 import AgentTraceStrip from './AgentTraceStrip'
 import CitedAnswer from './CitedAnswer'
+import RubricReviewModal from './RubricReviewModal'
 import { sendFeedback } from '../../services/feedbackService'
 import useToast from '../../hooks/useToast'
 import getErrorMessage from '../../utils/errorMessage'
@@ -10,6 +11,8 @@ import getErrorMessage from '../../utils/errorMessage'
 export default function ChatBubble({ message, isLast, onRegenerate }) {
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState(null) // null | 'up' | 'down'
+  const [rubricModalOpen, setRubricModalOpen] = useState(false)
+  const [rubricSubmitted, setRubricSubmitted] = useState(false)
   const { showToast } = useToast()
   const isUser = message.role === 'user'
 
@@ -122,11 +125,37 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
                 >
                   <ThumbsDown size={12} strokeWidth={1.75} />
                 </button>
+                {feedback && !rubricSubmitted && (
+                  <button
+                    type="button"
+                    onClick={() => setRubricModalOpen(true)}
+                    className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-secondary"
+                  >
+                    <ClipboardList size={12} strokeWidth={1.75} />
+                    Detailed review
+                  </button>
+                )}
+                {rubricSubmitted && (
+                  <span className="flex items-center gap-1 px-1.5 py-1 text-xs text-success">
+                    <Check size={12} strokeWidth={1.75} />
+                    Reviewed
+                  </span>
+                )}
               </>
             )}
           </div>
         )}
       </div>
+
+      {feedback && (
+        <RubricReviewModal
+          open={rubricModalOpen}
+          onClose={() => setRubricModalOpen(false)}
+          messageId={message.id}
+          rating={feedback}
+          onSubmitted={() => setRubricSubmitted(true)}
+        />
+      )}
     </motion.div>
   )
 }

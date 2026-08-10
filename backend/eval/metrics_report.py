@@ -1,8 +1,9 @@
 """Parses the backend's JSON logs and prints a lightweight metrics report:
 latency percentiles, error rate by taxonomy_category, corrective-RAG Loop
 Count and Average Steps, Retry Success Rate and Timeout Rate across every
-retry-capable call, total LLM token usage/cost, and Acceptance Rate from
-chat feedback.
+retry-capable call, total LLM token usage/cost, Acceptance Rate from chat
+feedback, per-criterion Rubric Scores, and Inter-Annotator Agreement
+across reviewers who scored the same response.
 
 This is a stand-in for real observability, not a replacement for it — in
 production you'd ship these same structured log lines to something like
@@ -20,9 +21,10 @@ Usage (from backend/):
     # or pipe directly:
     cat app.log | python eval/metrics_report.py
 
-Acceptance Rate is read separately, from backend/feedback/feedback.jsonl
-(written by POST /chat/feedback — see app/services/feedback_service.py),
-not from the log file argument above:
+Acceptance Rate, Rubric Scores, and Inter-Annotator Agreement are read
+separately, from backend/feedback/feedback.jsonl (written by
+POST /chat/feedback — see app/services/feedback_service.py), not from the
+log file argument above:
     python eval/metrics_report.py app.log --feedback-file feedback/feedback.jsonl
 """
 
@@ -374,6 +376,116 @@ def report_acceptance_rate(feedback_path: Path) -> None:
     print()
 
 
+# The seven answer-quality-checklist criteria a reviewer can score 1-5 on
+# (see RubricScores, app/models/schemas.py) — kept in one place so the
+# two report functions below can't drift on which fields they expect.
+RUBRIC_CRITERIA = [
+    "correctness",
+    "helpfulness",
+    "completeness",
+    "safety",
+    "tone",
+    "groundedness",
+    "citation_quality",
+]
+
+
+def report_rubric_scores(feedback_path: Path) -> None:
+    """Per-criterion average of the optional 1-5 rubric a reviewer can
+    attach to feedback (see RubricScores). Only rubric-bearing events
+    contribute — plain thumbs-up/down feedback has no rubric and is
+    covered by Acceptance Rate instead.
+    """
+    print("=== Rubric Scores (1-5 per criterion) ===")
+    if not feedback_path.is_file():
+        print(f"No feedback file found at {feedback_path}.\n")
+        return
+
+    lines = feedback_path.read_text(encoding="utf-8").splitlines()
+    events = parse_log_lines(lines)
+    rubrics = [event["rubric"] for event in events if event.get("rubric")]
+
+    if not rubrics:
+        print("No rubric-bearing feedback events found.\n")
+        return
+
+    for criterion in RUBRIC_CRITERIA:
+        scores = [rubric[criterion] for rubric in rubrics if criterion in rubric]
+        if not scores:
+            continue
+        avg = sum(scores) / len(scores)
+        print(f"  {criterion:<18s}: {avg:.2f} / 5  (n={len(scores)})")
+    print(f"  rubric reviews:     {len(rubrics)}")
+    print()
+
+
+def report_inter_annotator_agreement(feedback_path: Path) -> None:
+    """Inter-Annotator Agreement — the checklist's "Basic agreement":
+    Agreement Rate = Matching Reviewer Judgments / Total Judgments.
+
+    Operationalized as pairwise percent agreement on `rating` (up/down):
+    for every pair of distinct reviewers (by reviewer_id) who both judged
+    the same message_id, one "judgment comparison" is whether their
+    ratings matched. Agreement Rate = matching pairs / total pairs —
+    the standard percent-agreement definition of inter-rater reliability.
+
+    reviewer_id is resolved server-side from the authenticated caller
+    (see query.py's submit_feedback), never client-supplied — events
+    without one (feedback submitted before rubric support existed, or
+    with no resolvable identity) are excluded, since "who agrees with
+    whom" is undefined without knowing who "who" is. A message_id judged
+    by only one reviewer contributes no pairs either — agreement is
+    inherently about *multiple* reviewers of the same output.
+    """
+    print("=== Inter-Annotator Agreement ===")
+    if not feedback_path.is_file():
+        print(f"No feedback file found at {feedback_path}.\n")
+        return
+
+    lines = feedback_path.read_text(encoding="utf-8").splitlines()
+    events = parse_log_lines(lines)
+
+    # message_id -> {reviewer_id: latest rating} — a reviewer who
+    # re-submits feedback on the same message overwrites their own
+    # earlier judgment rather than counting twice.
+    by_message: dict[str, dict[str, str]] = defaultdict(dict)
+    for event in events:
+        reviewer_id = event.get("reviewer_id")
+        message_id = event.get("message_id")
+        rating = event.get("rating")
+        if not reviewer_id or not message_id or not rating:
+            continue
+        by_message[message_id][reviewer_id] = rating
+
+    matching_pairs = 0
+    total_pairs = 0
+    multi_reviewer_messages = 0
+    for reviewer_ratings in by_message.values():
+        if len(reviewer_ratings) < 2:
+            continue
+        multi_reviewer_messages += 1
+        ratings = list(reviewer_ratings.values())
+        for i in range(len(ratings)):
+            for j in range(i + 1, len(ratings)):
+                total_pairs += 1
+                if ratings[i] == ratings[j]:
+                    matching_pairs += 1
+
+    if total_pairs == 0:
+        print(
+            "No message judged by 2+ distinct reviewers found — Inter-Annotator "
+            "Agreement needs multiple reviewers on the same output.\n"
+        )
+        return
+
+    agreement_rate = matching_pairs / total_pairs
+    print(f"  messages with 2+ reviewers: {multi_reviewer_messages}")
+    print(f"  reviewer pairs compared:    {total_pairs}")
+    print(f"  matching pairs:             {matching_pairs}")
+    print(f"  Agreement Rate:             {agreement_rate:.4f} ({agreement_rate * 100:.1f}%)")
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -408,6 +520,8 @@ def main() -> None:
     report_timeout_rate(records)
     report_tokens_and_cost(records)
     report_acceptance_rate(Path(args.feedback_file))
+    report_rubric_scores(Path(args.feedback_file))
+    report_inter_annotator_agreement(Path(args.feedback_file))
 
 
 if __name__ == "__main__":

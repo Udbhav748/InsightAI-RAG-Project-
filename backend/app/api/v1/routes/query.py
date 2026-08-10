@@ -274,7 +274,18 @@ async def diagnose(
 
 @router.post("/chat/feedback", response_model=FeedbackResponse)
 def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResponse:
-    record_feedback(feedback.message_id, feedback.rating, feedback.comment)
+    # reviewer_id comes from the authenticated caller (require_api_key,
+    # the router-level dependency), never from the request body — a
+    # client-supplied reviewer identity would let one API key pose as
+    # multiple reviewers and fabricate Inter-Annotator Agreement.
+    reviewer_id = getattr(request.state, "client_name", None)
+    record_feedback(
+        feedback.message_id,
+        feedback.rating,
+        feedback.comment,
+        reviewer_id=reviewer_id,
+        rubric=feedback.rubric.model_dump() if feedback.rubric else None,
+    )
 
     logger.info(
         "audit_event",
@@ -284,7 +295,8 @@ def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResp
                 "path": request.url.path,
                 "message_id": feedback.message_id,
                 "rating": feedback.rating,
-                "client": getattr(request.state, "client_name", "unknown"),
+                "client": reviewer_id or "unknown",
+                "has_rubric": feedback.rubric is not None,
             }
         },
     )
