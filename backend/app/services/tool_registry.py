@@ -1,11 +1,12 @@
-"""Formal tool I/O schemas and a tool-invocation tracking decorator.
+"""Formal tool specs (name, description, I/O schema) and a tool-invocation
+tracking decorator.
 
 The agent's tools (retrieval, summarization, web search, diagnose) each get
-a declared Pydantic input and output schema here, so tool arguments are
-validated at the boundary instead of being untyped function parameters, and
-so the tool registry is the single source of truth for what each tool takes
-and returns (used by the agent spec in prompt_builder.py and the eval
-harness).
+a name, a human-readable description, and a declared Pydantic input and
+output schema here, so tool arguments are validated at the boundary instead
+of being untyped function parameters, and so the tool registry is the single
+source of truth for what each tool is, takes, and returns — read directly by
+prompt_builder.AGENT_TOOLS and the eval harness.
 
 @track_tool wraps a tool function and emits a structured "tool_invocation"
 log event on every call — name, input summary, output summary, success/
@@ -92,12 +93,31 @@ class DiagnoseOutput(BaseModel):
 
 # --- Registry ----------------------------------------------------------------
 
-TOOL_SCHEMAS: dict[str, dict[str, type[BaseModel]]] = {
-    "retrieval": {"input": RetrievalInput, "output": RetrievalOutput},
-    "summarization": {"input": SummarizationInput, "output": SummarizationOutput},
-    "web_search": {"input": WebSearchInput, "output": WebSearchOutput},
-    "diagnose": {"input": DiagnoseInput, "output": DiagnoseOutput},
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "retrieval": {
+        "description": "Vector search over the uploaded PDFs' embedded chunks; returns the top-k passages most relevant to the query.",
+        "input": RetrievalInput,
+        "output": RetrievalOutput,
+    },
+    "summarization": {
+        "description": "Whole-document summary built from every chunk belonging to one uploaded document.",
+        "input": SummarizationInput,
+        "output": SummarizationOutput,
+    },
+    "web_search": {
+        "description": "DuckDuckGo web search fallback for queries the uploaded corpus can't answer (opt-in, human-approval gated).",
+        "input": WebSearchInput,
+        "output": WebSearchOutput,
+    },
+    "diagnose": {
+        "description": "LeafSense HTTP vision integration: classifies a crop-leaf image into a disease class, mapped to a plain-language crop/disease/confidence.",
+        "input": DiagnoseInput,
+        "output": DiagnoseOutput,
+    },
 }
+# Descriptions are read directly (TOOL_SCHEMAS[name]["description"]) by
+# prompt_builder.AGENT_TOOLS, so the model-facing tool list can't drift
+# from what's actually registered.
 
 
 def track_tool(name: str):

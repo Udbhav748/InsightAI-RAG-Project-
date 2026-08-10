@@ -7,12 +7,20 @@ whose snippets are bolted onto the normal generation prompt, the Research
 agent runs its own loop autonomously:
 
 1. plan      — the LLM breaks the user's query into 1..N search queries.
-2. search    — each sub-query runs through the web-search tool.
-3. read      — the top pages are fetched and their text pulled into
-               context (bounded: research_read_limit pages,
+2. search    — sub-queries run through the web-search tool in parallel
+               (independent calls, no reason to pay their latency
+               sequentially).
+3. read      — the top pages are fetched in parallel and their text
+               pulled into context (bounded: research_read_limit pages,
                research_page_max_chars chars each, per-page timeout).
 4. synthesize— the agent builds its own grounded answer from what it
                collected and returns it to the orchestrator.
+
+Steps 2 and 3 both share one wall-clock budget
+(research_total_timeout_seconds): a step that's already out of budget
+doesn't start, and an in-flight call that outlives it is abandoned
+rather than awaited — the agent synthesizes from whatever finished in
+time instead of blocking on the slowest search/fetch.
 
 This is the multi-agent design the checklist asks for: the router agent
 hands off to a specialist that does real work and reports back, rather
@@ -37,6 +45,7 @@ import ipaddress
 import logging
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
@@ -201,47 +210,88 @@ class ResearchAgent:
         return queries[:max_queries] if queries else [query]
 
     def _search(self, queries: list[str], deadline: float) -> list[WebSearchResult]:
-        """Step 2 — run each sub-query through the web-search tool.
-        Best-effort: an individual search failing is logged and skipped.
-        Stops issuing new searches once `deadline` (a time.perf_counter()
-        value) has passed — the total-timeout budget, checked between
-        searches rather than mid-search since search_web has its own
-        per-call timeout."""
-        seen: set[str] = set()
-        results: list[WebSearchResult] = []
-        for query in queries:
-            if time.perf_counter() >= deadline:
+        """Step 2 — run every sub-query through the web-search tool in
+        parallel (they're independent — one query's search result doesn't
+        depend on another's), instead of paying each call's latency
+        sequentially. Best-effort: an individual search failing is logged
+        and skipped, never fatal to the others.
+
+        Bails out without starting anything once `deadline` (a
+        time.perf_counter() value — the total-timeout budget) has already
+        passed; otherwise every future gets whatever's left of the budget
+        to finish in, and a future still running past it is abandoned
+        (its thread finishes in the background, same non-blocking-shutdown
+        pattern as retrieval_service's timeout wrapper). Results are
+        merged in submission order — first sub-query's results first — so
+        callers see the same ordering the old sequential loop produced.
+        """
+        if not queries or time.perf_counter() >= deadline:
+            if queries:
                 logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
-                break
+            return []
+
+        def _search_one(q: str) -> list[WebSearchResult]:
             try:
-                for result in search_web(query):
-                    if result.url not in seen:
-                        seen.add(result.url)
-                        results.append(result)
+                return list(search_web(q))
             except WebSearchError as exc:
                 logger.warning(
                     "research_search_failed",
-                    extra={"extra_fields": {"query": query, "error": str(exc)}},
+                    extra={"extra_fields": {"query": q, "error": str(exc)}},
                 )
+                return []
+
+        seen: set[str] = set()
+        results: list[WebSearchResult] = []
+        executor = ThreadPoolExecutor(max_workers=len(queries))
+        try:
+            futures = [executor.submit(_search_one, q) for q in queries]
+            for future in futures:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
+                    break
+                try:
+                    for result in future.result(timeout=remaining):
+                        if result.url not in seen:
+                            seen.add(result.url)
+                            results.append(result)
+                except FutureTimeoutError:
+                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
+                    break
+        finally:
+            executor.shutdown(wait=False)
         return results
 
     def _read(self, results: list[WebSearchResult], deadline: float) -> tuple[list[WebSearchResult], int]:
-        """Step 3 — fetch the top pages and pull bounded plain text into
-        context. A page that fails to fetch is skipped, not fatal. Stops
-        fetching more pages once `deadline` has passed (same budget as
-        `_search`)."""
-        read: list[WebSearchResult] = []
+        """Step 3 — fetch the top pages in parallel and pull bounded plain
+        text into context. A page that fails to fetch is skipped, not
+        fatal. Same budget/ordering semantics as `_search`."""
         limit = max(0, settings.research_read_limit)
-        for result in results[:limit]:
-            if time.perf_counter() >= deadline:
+        candidates = results[:limit]
+        if not candidates or time.perf_counter() >= deadline:
+            if candidates:
                 logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
-                break
-            text = _fetch_page_text(result.url)
-            if not text:
-                continue
-            read.append(
-                WebSearchResult(title=result.title, url=result.url, snippet=text)
-            )
+            return [], 0
+
+        read: list[WebSearchResult] = []
+        executor = ThreadPoolExecutor(max_workers=len(candidates))
+        try:
+            futures = [(result, executor.submit(_fetch_page_text, result.url)) for result in candidates]
+            for result, future in futures:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
+                    break
+                try:
+                    text = future.result(timeout=remaining)
+                except FutureTimeoutError:
+                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
+                    break
+                if not text:
+                    continue
+                read.append(WebSearchResult(title=result.title, url=result.url, snippet=text))
+        finally:
+            executor.shutdown(wait=False)
         return read, len(read)
 
     def _synthesize(self, query: str, results: list[WebSearchResult]) -> str:

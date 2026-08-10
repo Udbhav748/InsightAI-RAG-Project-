@@ -8,6 +8,7 @@ import re
 
 from app.core.exceptions import PromptGenerationError
 from app.models.document import RetrievedChunk, WebSearchResult
+from app.services.tool_registry import TOOL_SCHEMAS
 
 # Bumped whenever _INSTRUCTIONS or the prompt's overall shape changes, so
 # generation logs (see rag_service._generate / summarization_service) can
@@ -38,10 +39,10 @@ AGENT_BACKSTORY = (
     "answer comes back ungrounded. It is deliberately framework-free plain "
     "Python — see docs/ARCHITECTURE.md's 'Framework choice'."
 )
-AGENT_TOOLS = (
-    "retrieval (vector search over uploaded PDFs), summarization (per-document "
-    "summaries), web search (DuckDuckGo fallback, opt-in), and vision/diagnose "
-    "(LeafSense HTTP integration)."
+# Built from tool_registry.TOOL_SCHEMAS rather than duplicated by hand, so
+# this list can't drift from the tools' actual registered descriptions.
+AGENT_TOOLS = "; ".join(
+    f"{name.replace('_', ' ')} ({schema['description']})" for name, schema in TOOL_SCHEMAS.items()
 )
 
 # Matches the prompt's own "Sources:" heading (see _INSTRUCTIONS below),
