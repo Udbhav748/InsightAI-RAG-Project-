@@ -30,6 +30,8 @@ backend/eval/results/*.json
 !backend/eval/results/20260807T233553Z.json
 !backend/eval/results/20260809T120316Z.json
 !backend/eval/results/20260809T122325Z.json
+!backend/eval/results/20260809T145404Z.json
+!backend/eval/results/20260809T211609Z.json
 !backend/eval/results/_full_capture_entries.json
 !backend/eval/results/_gemini_summarize_entries.json
 
