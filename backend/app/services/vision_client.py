@@ -17,6 +17,7 @@ import logging
 import time
 
 import httpx
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from app.core.config import settings
 from app.core.exceptions import VisionServiceError
@@ -24,6 +25,18 @@ from app.models.document import VisionPrediction
 from app.services.tool_registry import track_tool
 
 logger = logging.getLogger(__name__)
+
+
+def _log_retry(retry_state) -> None:
+    logger.warning(
+        "vision_request_retrying",
+        extra={
+            "extra_fields": {
+                "attempt": retry_state.attempt_number,
+                "exception": str(retry_state.outcome.exception()),
+            }
+        },
+    )
 
 # model_id is unused by LeafSense's endpoint (every id runs the same hybrid
 # model) — kept as a fixed, descriptive literal rather than a config value
@@ -79,6 +92,13 @@ CLASS_LABEL_MAP: dict[str, tuple[str, str]] = {
 
 
 @track_tool("diagnose")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type(VisionServiceError),
+    reraise=True,
+    before_sleep=_log_retry,
+)
 def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionPrediction:
     """POST an image to LeafSense and return its prediction, mapped to a
     plain-language crop/disease pair.
@@ -86,7 +106,9 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
     Raises VisionServiceError if LeafSense is unreachable, times out, or
     returns something outside its documented {class, confidence} contract
     — callers are expected to let this propagate as a request failure
-    rather than guess at a diagnosis.
+    rather than guess at a diagnosis. Transient failures (timeout,
+    connection error, non-2xx) get up to 3 attempts total (same retry
+    shape as web_search_service.search_web) before that happens.
     """
     start = time.perf_counter()
     headers = {}
