@@ -555,6 +555,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         precision = None
         recall = None
         rr = None
+        hit = None
         citation_accurate = None
         answer = ""
         tool_used = "none"
@@ -638,6 +639,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 precision = precision_at_k(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
                 recall = recall_at_k(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
                 rr = reciprocal_rank(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
+                hit = hit_at_k(response.retrieved_chunks, chunk_keywords, RETRIEVAL_EVAL_K)
                 citation_accurate = citation_supported(response.sources, chunk_keywords)
 
         except AppError as exc:
@@ -652,7 +654,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             if expected_source:
                 source_correct = False
             if chunk_keywords:
-                precision, recall, rr = 0.0, 0.0, 0.0
+                precision, recall, rr, hit = 0.0, 0.0, 0.0, False
                 citation_accurate = False
             plan_execution_consistent = False
             step_efficiency_flags.append(0.0)
@@ -685,7 +687,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
                 "source_correct": source_correct,
                 "precision_at_5": precision,
                 "recall_at_5": recall,
-                "hit_at_5": precision is not None and precision > 0.0,
+                "hit_at_5": hit,
                 "reciprocal_rank": rr,
                 "citation_accurate": citation_accurate,
                 "error": error,
@@ -719,7 +721,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
             precision_flags.append(precision)
             recall_flags.append(recall)
             reciprocal_ranks.append(rr)
-            hit_at_5_flags.append(rr > 0.0)
+            hit_at_5_flags.append(hit)
             citation_accuracy_flags.append(citation_accurate)
 
     planner_report = classification_report(y_true, y_pred)
