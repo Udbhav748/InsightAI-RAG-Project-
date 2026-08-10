@@ -273,7 +273,7 @@ EXPECTED_TOOL_FOR_ACTION = {
 # runtime wire contract a caller sees, independent of Pydantic's own
 # validation (which guarantees construction, not that the values are
 # semantically populated).
-KNOWN_TOOL_USED = {"none", "retrieval", "summarization", "web_search", "diagnose"}
+KNOWN_TOOL_USED = {"none", "retrieval", "summarization", "web_search", "diagnose", "research_agent"}
 KNOWN_ANSWER_SOURCES = {"documents", "web", "mixed"}
 
 
