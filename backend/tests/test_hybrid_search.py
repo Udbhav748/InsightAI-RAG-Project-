@@ -85,10 +85,10 @@ class FakeVectorStore:
         self._semantic_results = semantic_results
         self._bm25_results = bm25_results
 
-    def search(self, query_vector, top_k):
+    def search(self, query_vector, top_k, tenant_id=None):
         return self._semantic_results[:top_k]
 
-    def search_bm25(self, query, top_k):
+    def search_bm25(self, query, top_k, tenant_id=None):
         return self._bm25_results[:top_k]
 
 

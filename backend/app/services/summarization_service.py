@@ -35,15 +35,20 @@ MAX_SUMMARY_INPUT_CHARS = 8000
 
 @track_tool("summarization")
 def summarize_document(
-    document_id: str, vector_store: VectorStore, llm_client: LLMClient
+    document_id: str, vector_store: VectorStore, llm_client: LLMClient, tenant_id: int | None = None
 ) -> tuple[str, list[RetrievedChunk]]:
     """Return (summary, chunks) for document_id.
 
-    Raises DocumentNotFoundError if no chunks are stored for document_id.
+    Raises DocumentNotFoundError if no chunks are stored for document_id —
+    including when it exists but belongs to a different tenant than
+    tenant_id, which is deliberately indistinguishable from "doesn't
+    exist" (same reasoning as the DELETE /documents/{id} route: a
+    non-owner shouldn't be able to tell a real document_id from a made-up
+    one just by which error they get).
     """
     start = time.perf_counter()
 
-    chunks = vector_store.get_chunks_by_document(document_id)
+    chunks = vector_store.get_chunks_by_document(document_id, tenant_id=tenant_id)
     if not chunks:
         raise DocumentNotFoundError(f"No document found with id {document_id}")
 

@@ -40,6 +40,7 @@ class HistoryTurn(TypedDict):
 @dataclass
 class Session:
     session_id: str
+    tenant_id: int | None = None
     history: list[HistoryTurn] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
@@ -83,16 +84,16 @@ class InMemorySessionStore:
 
     def create_session(self, tenant_id: int | None = None) -> str:
         """Create a new empty session and return its session_id.
-        
-        Evicts LRU session if at capacity. tenant_id is accepted for
-        interface parity with the PostgresSessionStore; the in-memory
-        store doesn't use it (memory is bounded by max_sessions, not
-        partitioned by tenant).
+
+        Evicts LRU session if at capacity. tenant_id is stored on the
+        session so get_or_create_session can refuse to hand it back to a
+        different tenant later — memory bounds are still by max_sessions,
+        not partitioned by tenant, only ownership is tracked.
         """
         session_id = str(uuid.uuid4())
         with self._lock:
             self._evict_lru_if_needed()
-            self._sessions[session_id] = Session(session_id=session_id)
+            self._sessions[session_id] = Session(session_id=session_id, tenant_id=tenant_id)
         logger.info("session_created", extra={"extra_fields": {"session_id": session_id}})
         return session_id
 
@@ -123,13 +124,28 @@ class InMemorySessionStore:
         return True
 
     def get_or_create_session(self, session_id: str | None, tenant_id: int | None = None) -> str:
-        """If session_id is provided and exists, return it. Otherwise create new session.
-        
-        tenant_id is accepted for interface parity with the
-        PostgresSessionStore (see create_session)."""
+        """If session_id is provided, exists, and its owner isn't
+        verifiably a different tenant, return it. Otherwise create a new
+        session.
+
+        A session whose stored tenant_id is known and doesn't match the
+        requester's is never handed back — without this, knowing (or
+        guessing) another tenant's session_id would read and extend their
+        conversation history. Ownership is only enforced when both sides
+        are known (session.tenant_id and the requester's tenant_id);
+        either being None (DB disabled — no multi-tenancy in effect, or a
+        session created before tenant tracking existed) skips the check,
+        same "unknown isn't a mismatch" rule used everywhere else tenant
+        ownership is checked in this app. On a mismatch, this transparently
+        starts a fresh session rather than raising — the same recovery
+        path an unknown/expired session_id already takes.
+        """
         if session_id is not None:
             with self._lock:
-                if session_id in self._sessions:
+                session = self._sessions.get(session_id)
+                if session is not None and (
+                    session.tenant_id is None or tenant_id is None or session.tenant_id == tenant_id
+                ):
                     return session_id
         return self.create_session(tenant_id=tenant_id)
 

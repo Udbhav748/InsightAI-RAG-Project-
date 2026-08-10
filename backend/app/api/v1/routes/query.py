@@ -97,6 +97,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         session_id=session_id,
         confirm_web_search=payload.confirm_web_search,
         structured_response=payload.structured_response,
+        tenant_id=tenant_id,
     )
 
     # Append this turn to server-side history
@@ -183,6 +184,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
             history=history,
             session_id=session_id,
             confirm_web_search=payload.confirm_web_search,
+            tenant_id=tenant_id,
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
@@ -221,6 +223,7 @@ async def diagnose(
     # request, so /chat's existing ChatRequest JSON body and a File() param
     # can't coexist on one route without breaking every current JSON caller.
     chat_service = get_chat_service()
+    tenant_id = getattr(request.state, "tenant_id", None)
 
     contents = await image.read()
     await image.seek(0)
@@ -251,6 +254,7 @@ async def diagnose(
         query=query,
         session_id=session_id,
         confirm_web_search=confirm_web_search,
+        tenant_id=tenant_id,
     )
 
     logger.info(

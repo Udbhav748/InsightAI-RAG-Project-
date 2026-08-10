@@ -109,7 +109,7 @@ class TestStreamQueryConversational:
 class TestStreamQueryRetrieveHappyPath:
     def test_trace_sequence_and_streamed_answer_matches_done_payload(self, monkeypatch):
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 
@@ -136,7 +136,7 @@ class TestStreamQueryRetrieveHappyPath:
         # should produce identical steps_taken — a divergence here would
         # mean the two pipelines aren't actually equivalent.
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 
@@ -154,7 +154,7 @@ class TestStreamQueryRetrieveHappyPath:
 class TestStreamQueryReflection:
     def test_ungrounded_first_answer_triggers_reflecting_trace_and_regenerates(self, monkeypatch):
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 
@@ -187,7 +187,7 @@ class TestStreamQuerySummarize:
         monkeypatch.setattr(
             rag_service_module,
             "summarize_document",
-            lambda document_id, vector_store, llm_client: ("a concise summary", chunks),
+            lambda document_id, vector_store, llm_client, tenant_id=None: ("a concise summary", chunks),
         )
 
         service = make_service()
@@ -207,7 +207,7 @@ class TestStreamQuerySummarize:
 
 class TestStreamQueryErrorHandling:
     def test_retrieval_failure_yields_error_event_not_an_exception(self, monkeypatch):
-        def _raise_not_found(query, vector_store, top_k=None, min_score=None):
+        def _raise_not_found(query, vector_store, top_k=None, min_score=None, tenant_id=None):
             raise VectorStoreNotFoundError("No vector store found.")
 
         monkeypatch.setattr(rag_service_module, "retrieve", _raise_not_found)

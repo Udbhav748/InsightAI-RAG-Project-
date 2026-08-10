@@ -17,10 +17,16 @@ from app.models.document import DocumentChunk, ExtractedDocument
 logger = logging.getLogger(__name__)
 
 
-def chunk_document(document: ExtractedDocument) -> list[DocumentChunk]:
+def chunk_document(document: ExtractedDocument, tenant_id: int | None = None) -> list[DocumentChunk]:
     """Split document.extracted_text into DocumentChunks.
 
     Chunk size and overlap come from Settings (chunk_size, chunk_overlap).
+
+    tenant_id (None when the DB/multi-tenancy is disabled) rides along in
+    each chunk's metadata so the vector store can later filter retrieval
+    by it — see retrieval_service.retrieve() and
+    FAISSVectorStore.search()/search_bm25(). Without this, every chunk is
+    just as searchable to every tenant regardless of who uploaded it.
     """
     start = time.perf_counter()
 
@@ -42,6 +48,7 @@ def chunk_document(document: ExtractedDocument) -> list[DocumentChunk]:
                 "chunk_index": index,
                 "total_chunks": total_chunks,
                 "source": "pdf",
+                "tenant_id": tenant_id,
             },
         )
         for index, text in enumerate(texts)

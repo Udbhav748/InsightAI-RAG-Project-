@@ -324,3 +324,46 @@ class TestDeleteDocument:
         assert_matches_schema(DocumentDeleteResponse, payload)
         assert payload["document_id"] == SEEDED_DOCUMENT_ID
         assert payload["chunks_removed"] == 1
+
+    def test_wrong_tenant_cannot_delete_document(self, client, monkeypatch, seeded_vector_store):
+        # DB disabled (this fixture's default) means request.state.tenant_id
+        # is always None, so the ownership check never has anything to
+        # compare — simulate a DB-enabled, multi-tenant request by
+        # patching resolve_tenant (what require_api_key calls) and
+        # get_document_owner (what the route calls) directly, the same
+        # boundary-mocking style the rest of this fixture already uses.
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 2)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        # 404, not 403 — a non-owner gets the same response as "doesn't
+        # exist" rather than a signal that confirms the document is real.
+        assert response.status_code == 404
+        # And the document must still actually be there — a denied
+        # request must never have touched the vector store.
+        assert seeded_vector_store.get_chunks_by_document(SEEDED_DOCUMENT_ID) != []
+
+    def test_same_tenant_can_delete_document(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 1)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 200
+
+    def test_unknown_owner_does_not_block_delete(self, client, monkeypatch):
+        # No DB row for this document (legacy upload, or uploaded with the
+        # DB disabled) — unknown ownership isn't treated as a mismatch.
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: None)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 200

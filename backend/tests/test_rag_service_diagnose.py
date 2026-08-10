@@ -56,7 +56,7 @@ class TestHandleDiagnoseHappyPath:
     def test_high_confidence_in_corpus_prediction_returns_grounded_answer(self, monkeypatch):
         monkeypatch.setattr(rag_service_module, "diagnose_image", lambda *a, **k: make_prediction())
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
         )
 
         llm_client = FakeLLMClient(response="This is bacterial spot; here's what to do.")
@@ -80,7 +80,7 @@ class TestHandleDiagnoseHappyPath:
         # wrong crop's chunks.
         captured_queries = []
 
-        def _fake_retrieve(query, vector_store, top_k=None, min_score=None):
+        def _fake_retrieve(query, vector_store, top_k=None, min_score=None, tenant_id=None):
             captured_queries.append(query)
             return [make_chunk()]
 
@@ -97,7 +97,7 @@ class TestHandleDiagnoseHappyPath:
     def test_accompanying_user_query_is_folded_into_retrieval_query(self, monkeypatch):
         captured_queries = []
 
-        def _fake_retrieve(query, vector_store, top_k=None, min_score=None):
+        def _fake_retrieve(query, vector_store, top_k=None, min_score=None, tenant_id=None):
             captured_queries.append(query)
             return [make_chunk()]
 
@@ -117,7 +117,7 @@ class TestHandleDiagnoseLowConfidence:
         low_confidence_prediction = make_prediction(confidence=0.31, low_confidence=True)
         monkeypatch.setattr(rag_service_module, "diagnose_image", lambda *a, **k: low_confidence_prediction)
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
         )
 
         service = make_service()
@@ -160,7 +160,7 @@ class TestHandleDiagnoseOutOfCorpusCrop:
         grape_prediction = make_prediction(raw_class="Grape___Black_rot", crop="grape", disease="black rot")
         monkeypatch.setattr(rag_service_module, "diagnose_image", lambda *a, **k: grape_prediction)
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None: []
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: []
         )
 
         llm_client = FakeLLMClient(response=FALLBACK_REPLY)

@@ -57,15 +57,27 @@ class BM25Index:
         corpus = [_tokenize(record["metadata"].get("text", "")) for record in records]
         self._bm25 = BM25Okapi(corpus)
 
-    def search(self, query: str, top_k: int) -> list[tuple[dict, float]]:
+    def search(
+        self, query: str, top_k: int, tenant_id: int | None = None
+    ) -> list[tuple[dict, float]]:
         """Return up to top_k (record, score) pairs, highest score first.
         score is BM25Okapi's raw score: unbounded above, exactly 0.0 for a
-        document with no query-term overlap at all."""
+        document with no query-term overlap at all.
+
+        tenant_id, when given, restricts candidates to records tagged with
+        that tenant (see FAISSVectorStore.search's docstring for the same
+        semantics) — applied before ranking, not after, so a wrong-tenant
+        record can never crowd out a same-tenant one within top_k."""
         if self._bm25 is None or top_k <= 0:
             return []
 
         scores = self._bm25.get_scores(_tokenize(query))
-        ranked_positions = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        candidate_positions = range(len(scores))
+        if tenant_id is not None:
+            candidate_positions = [
+                i for i in candidate_positions if self._records[i]["metadata"].get("tenant_id") == tenant_id
+            ]
+        ranked_positions = sorted(candidate_positions, key=lambda i: scores[i], reverse=True)[:top_k]
         return [(self._records[i], float(scores[i])) for i in ranked_positions]
 
 
@@ -88,6 +100,7 @@ def hybrid_search(
     vector_store,
     top_k: int,
     candidate_k: int | None = None,
+    tenant_id: int | None = None,
 ) -> list[RetrievedChunk]:
     """Fuse FAISS semantic search with BM25 lexical search.
 
@@ -104,6 +117,9 @@ def hybrid_search(
     scale as cosine similarity) — not either input score directly, so it
     stays meaningful to retrieval_min_score filtering and
     ChatService._grade_retrieval downstream.
+
+    tenant_id is passed through to both retrievers unchanged — see
+    FAISSVectorStore.search's docstring for its filtering semantics.
     """
     resolved_candidate_k = candidate_k if candidate_k is not None else settings.retrieval_candidate_k
     semantic_weight = settings.hybrid_semantic_weight
@@ -112,8 +128,8 @@ def hybrid_search(
     start = time.perf_counter()
 
     query_vector = embed_query(query)
-    semantic_results = vector_store.search(query_vector, resolved_candidate_k)
-    bm25_results = vector_store.search_bm25(query, resolved_candidate_k)
+    semantic_results = vector_store.search(query_vector, resolved_candidate_k, tenant_id=tenant_id)
+    bm25_results = vector_store.search_bm25(query, resolved_candidate_k, tenant_id=tenant_id)
 
     semantic_norm = _min_max_normalize([chunk.score for chunk in semantic_results])
     bm25_norm = _min_max_normalize([chunk.score for chunk in bm25_results])

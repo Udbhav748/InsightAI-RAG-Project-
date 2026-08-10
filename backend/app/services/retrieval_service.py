@@ -36,6 +36,7 @@ def _search_with_timeout(
     vector_store: VectorStore,
     fetch_k: int,
     resolved_top_k: int,
+    tenant_id: int | None = None,
 ) -> list[RetrievedChunk]:
     """Run the retrieval search block (hybrid or plain semantic) under a
     configurable wall-clock timeout.
@@ -53,9 +54,9 @@ def _search_with_timeout(
     """
     def _do_search() -> list[RetrievedChunk]:
         if settings.hybrid_search_enabled and isinstance(vector_store, FAISSVectorStore):
-            return hybrid_search(query, vector_store, top_k=fetch_k)
+            return hybrid_search(query, vector_store, top_k=fetch_k, tenant_id=tenant_id)
         query_vector = embed_query(query)
-        return vector_store.search(query_vector, fetch_k)
+        return vector_store.search(query_vector, fetch_k, tenant_id=tenant_id)
 
     timeout = settings.retrieval_timeout_seconds
     if timeout <= 0:
@@ -87,11 +88,16 @@ def retrieve(
     vector_store: VectorStore,
     top_k: int | None = None,
     min_score: float | None = None,
+    tenant_id: int | None = None,
 ) -> list[RetrievedChunk]:
     """Retrieve (optionally hybrid + reranked), then drop results below
     min_score.
 
     top_k and min_score default to Settings when not given explicitly.
+    tenant_id (not part of RetrievalInput's user-facing schema — it's
+    system-injected auth context, same treatment as the vector_store
+    param) restricts results to that tenant's own chunks; see
+    FAISSVectorStore.search's docstring for exact filtering semantics.
     """
     resolved_top_k = top_k if top_k is not None else settings.retrieval_top_k
     resolved_min_score = min_score if min_score is not None else settings.retrieval_min_score
@@ -106,7 +112,7 @@ def retrieve(
     # before fusing down to this number.
     fetch_k = settings.retrieval_candidate_k if settings.reranking_enabled else resolved_top_k
 
-    results = _search_with_timeout(query, vector_store, fetch_k, resolved_top_k)
+    results = _search_with_timeout(query, vector_store, fetch_k, resolved_top_k, tenant_id=tenant_id)
 
     reranked = False
     if settings.reranking_enabled:

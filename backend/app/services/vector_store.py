@@ -20,11 +20,20 @@ class VectorStore(ABC):
         """Add embeddings to the index, keeping metadata in sync with vector positions."""
 
     @abstractmethod
-    def search(self, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
+    def search(
+        self, query_vector: list[float], top_k: int, tenant_id: int | None = None
+    ) -> list[RetrievedChunk]:
         """Return up to top_k chunks most similar to query_vector, ranked by score.
 
         Similarity thresholding is not applied here; callers filter results
         by score themselves.
+
+        tenant_id, when given, restricts results to chunks tagged with that
+        tenant at ingest (see chunking_service.chunk_document) — chunks
+        with no tenant tag (uploaded before tenant tracking existed, or
+        with the DB disabled) never match a specific tenant_id, so they're
+        excluded rather than leaked. None (the default) means no
+        filtering, i.e. today's single-tenant behavior.
         """
 
     @abstractmethod
@@ -36,12 +45,19 @@ class VectorStore(ABC):
         """
 
     @abstractmethod
-    def get_chunks_by_document(self, document_id: str) -> list[RetrievedChunk]:
+    def get_chunks_by_document(
+        self, document_id: str, tenant_id: int | None = None
+    ) -> list[RetrievedChunk]:
         """Return every stored chunk for document_id, ordered by chunk_index.
 
         Not a similarity search — score is meaningless here and callers
         (e.g. summarization_service) should ignore it. Returns an empty
         list (rather than raising) if the document isn't present.
+
+        tenant_id has the same filtering semantics as search(): when
+        given, chunks not tagged with that tenant (including untagged
+        ones) are excluded — so a caller can't summarize a document by ID
+        alone regardless of who it actually belongs to.
         """
 
     @abstractmethod

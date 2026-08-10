@@ -63,6 +63,22 @@ def persist_document(
         )
 
 
+def get_document_owner(document_id: str) -> int | None:
+    """Return the tenant_id that owns document_id, or None if unknown —
+    either because the DB is disabled, or because no metadata row exists
+    for it (e.g. uploaded before tenant tracking existed, or with the DB
+    disabled at the time). Callers (documents.delete_document) treat
+    "unknown" as "can't verify ownership, don't block" rather than
+    denying the request — the vector store, not this row, is the source
+    of truth for whether the document itself exists."""
+    if not db_enabled():
+        return None
+
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.document_id == document_id).first()
+        return doc.tenant_id if doc is not None else None
+
+
 def delete_document_metadata(document_id: str) -> None:
     """Delete the metadata row for a document (best-effort). The vector
     store deletion is the source of truth; this cleans up the durable

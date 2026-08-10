@@ -62,7 +62,7 @@ class DocumentProcessingService:
                 },
             )
 
-        chunks = chunk_document(extracted_document)
+        chunks = chunk_document(extracted_document, tenant_id=tenant_id)
         self._log_stage("chunking", document_id, total_chunks=len(chunks))
 
         embedded_chunks = generate_embeddings(chunks)

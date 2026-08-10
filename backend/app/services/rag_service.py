@@ -324,12 +324,27 @@ class ChatService:
         self._cache_keys: list[str] = []
         self._max_cache_size = 256
 
-    def _make_cache_key(self, query: str, session_id: str | None, vector_store: VectorStore) -> str:
-        """Create a cache key from normalized query, session_id, and document set hash."""
+    def _make_cache_key(
+        self,
+        query: str,
+        session_id: str | None,
+        vector_store: VectorStore,
+        tenant_id: int | None = None,
+    ) -> str:
+        """Create a cache key from normalized query, session_id, document set
+        hash, and tenant_id.
+
+        tenant_id must be part of the key: retrieve() now filters by tenant
+        (see retrieval_service.py), so two tenants asking the same question
+        can get different, correctly-scoped chunks — without tenant_id
+        here, the second tenant could get served the first tenant's cached
+        answer straight past that filter.
+        """
         normalized = _normalize(query)
         doc_hash = str(vector_store.total_vectors())  # simple proxy for document set
         session = session_id or "no-session"
-        key_str = f"{normalized}|{session}|{doc_hash}"
+        tenant = str(tenant_id) if tenant_id is not None else "no-tenant"
+        key_str = f"{normalized}|{session}|{doc_hash}|{tenant}"
         return hashlib.sha256(key_str.encode()).hexdigest()[:32]
 
     def _get_cached_response(self, cache_key: str) -> ChatResponse | None:
@@ -766,6 +781,7 @@ class ChatService:
         session_id: str | None = None,
         confirm_web_search: bool = False,
         structured_response: bool = False,
+        tenant_id: int | None = None,
     ) -> ChatResponse:
         start = time.perf_counter()
         steps_taken = 1  # planning
@@ -795,7 +811,7 @@ class ChatService:
             if plan.action == "summarize":
                 steps_taken += 1  # fetch document chunks
                 summary, chunks = summarize_document(
-                    plan.document_id, self._vector_store, self._llm_client
+                    plan.document_id, self._vector_store, self._llm_client, tenant_id=tenant_id
                 )
                 steps_taken += 1  # generation
                 return self._respond(
@@ -813,14 +829,16 @@ class ChatService:
             # loop. Check cache first (only cache final responses after
             # corrective loop, and only for plain retrieve — a research
             # answer depends on live web state, so it's never cached).
-            cache_key = self._make_cache_key(query, session_id, self._vector_store)
+            cache_key = self._make_cache_key(query, session_id, self._vector_store, tenant_id=tenant_id)
             cached = self._get_cached_response(cache_key)
             if cached is not None:
                 logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
                 return cached
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(query, self._vector_store, top_k=top_k, min_score=min_score)
+            chunks = retrieve(
+                query, self._vector_store, top_k=top_k, min_score=min_score, tenant_id=tenant_id
+            )
 
             steps_taken += 1  # grading
             grade = self._grade_retrieval(query, chunks)
@@ -926,6 +944,7 @@ class ChatService:
         session_id: str | None = None,
         confirm_web_search: bool = False,
         structured_response: bool = False,
+        tenant_id: int | None = None,
     ) -> Iterator[dict]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
@@ -987,7 +1006,7 @@ class ChatService:
                 steps_taken += 1  # fetch document chunks
                 yield _trace_event("retrieval", {"document_id": plan.document_id})
                 summary, chunks = summarize_document(
-                    plan.document_id, self._vector_store, self._llm_client
+                    plan.document_id, self._vector_store, self._llm_client, tenant_id=tenant_id
                 )
                 steps_taken += 1  # generation
                 yield _trace_event("generating", {})
@@ -1011,7 +1030,7 @@ class ChatService:
 
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
             # Check cache first (only cache final responses after corrective loop)
-            cache_key = self._make_cache_key(query, session_id, self._vector_store)
+            cache_key = self._make_cache_key(query, session_id, self._vector_store, tenant_id=tenant_id)
             cached = self._get_cached_response(cache_key)
             if cached is not None:
                 logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
@@ -1019,7 +1038,9 @@ class ChatService:
                 return
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(query, self._vector_store, top_k=top_k, min_score=min_score)
+            chunks = retrieve(
+                query, self._vector_store, top_k=top_k, min_score=min_score, tenant_id=tenant_id
+            )
             yield _trace_event("retrieval", {"chunk_count": len(chunks)})
 
             steps_taken += 1  # grading
@@ -1139,6 +1160,7 @@ class ChatService:
         history: list[dict] | None = None,
         session_id: str | None = None,
         confirm_web_search: bool = False,
+        tenant_id: int | None = None,
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense, then run the predicted
         disease through the same corrective RAG loop handle_query uses —
@@ -1175,7 +1197,7 @@ class ChatService:
             diagnosis_query = _build_diagnosis_query(prediction, query)
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(diagnosis_query, self._vector_store)
+            chunks = retrieve(diagnosis_query, self._vector_store, tenant_id=tenant_id)
 
             steps_taken += 1  # grading
             grade = self._grade_retrieval(diagnosis_query, chunks)

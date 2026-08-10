@@ -102,9 +102,16 @@ class PostgresSessionStore:
         return True
 
     def get_or_create_session(self, session_id: str | None, tenant_id: int | None = None) -> str:
+        """Same ownership rule as InMemorySessionStore.get_or_create_session:
+        a session with a known tenant_id that doesn't match the requester's
+        is never handed back (starts a fresh session instead of raising);
+        either side being unknown (None) skips the check."""
         if session_id is not None:
             with SessionLocal() as db:
-                if db.get(ChatSession, session_id) is not None:
+                session = db.get(ChatSession, session_id)
+                if session is not None and (
+                    session.tenant_id is None or tenant_id is None or session.tenant_id == tenant_id
+                ):
                     return session_id
         return self.create_session(tenant_id=tenant_id)
 

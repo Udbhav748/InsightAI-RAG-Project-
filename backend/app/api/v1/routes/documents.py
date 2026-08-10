@@ -13,7 +13,7 @@ from app.models.schemas import (
     DocumentProcessingResponse,
 )
 from app.services.document_processing_service import DocumentProcessingService
-from app.services.document_repository import delete_document_metadata, list_documents
+from app.services.document_repository import delete_document_metadata, get_document_owner, list_documents
 from app.services.upload_service import UPLOAD_DIR
 from app.services.validation_service import validate_pdf_upload
 
@@ -88,6 +88,30 @@ def delete_document(
         raise ConfirmationRequiredError(
             "Deleting a document is irreversible. Retry with ?confirm=true to proceed."
         )
+
+    # Ownership check: only enforced when we can actually verify it (a
+    # requesting tenant *and* a known owner). An unknown owner (no DB row —
+    # DB disabled, or uploaded before tenant tracking existed) isn't
+    # treated as a mismatch: the vector store, not this row, is the source
+    # of truth for whether the document exists at all. 404, not 403 — a
+    # non-owner gets the same response as "doesn't exist" rather than a
+    # signal that confirms the document is real.
+    requester_tenant_id = getattr(request.state, "tenant_id", None)
+    if requester_tenant_id is not None:
+        owner_tenant_id = get_document_owner(document_id)
+        if owner_tenant_id is not None and owner_tenant_id != requester_tenant_id:
+            logger.warning(
+                "audit_event",
+                extra={
+                    "extra_fields": {
+                        "event": "document_delete_denied_wrong_tenant",
+                        "path": request.url.path,
+                        "document_id": document_id,
+                        "client": getattr(request.state, "client_name", "unknown"),
+                    }
+                },
+            )
+            raise DocumentNotFoundError(f"No document found with id {document_id}")
 
     vector_store = get_vector_store()
     removed_count = vector_store.delete_document(document_id)

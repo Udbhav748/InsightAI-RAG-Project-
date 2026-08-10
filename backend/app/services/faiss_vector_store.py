@@ -128,7 +128,9 @@ class FAISSVectorStore(VectorStore):
                 },
             )
 
-    def search(self, query_vector: list[float], top_k: int) -> list[RetrievedChunk]:
+    def search(
+        self, query_vector: list[float], top_k: int, tenant_id: int | None = None
+    ) -> list[RetrievedChunk]:
         if self._index is None:
             raise VectorStoreNotFoundError(
                 "No index to search. Call create_index() or load() first."
@@ -145,27 +147,43 @@ class FAISSVectorStore(VectorStore):
             return []
 
         query = np.array([query_vector], dtype="float32")
-        k = min(top_k, self._index.ntotal)
+        # IndexFlatIP is exact brute-force: it scores every vector in the
+        # index regardless of k, then returns the top k of those already-
+        # computed scores. So when filtering by tenant, fetching *every*
+        # score (k=ntotal) costs essentially the same as fetching top_k —
+        # it just lets the tenant filter below see the whole ranked list
+        # instead of risking top_k being filled with another tenant's
+        # chunks before this tenant's actually-best matches are reached.
+        k = self._index.ntotal if tenant_id is not None else min(top_k, self._index.ntotal)
         scores, positions = self._index.search(query, k)
 
         results = []
         for score, position in zip(scores[0], positions[0]):
             if position == -1:
                 continue
-            results.append(self._record_to_chunk(self._metadata[position], float(score)))
+            record = self._metadata[position]
+            if tenant_id is not None and record["metadata"].get("tenant_id") != tenant_id:
+                continue
+            results.append(self._record_to_chunk(record, float(score)))
+            if len(results) >= top_k:
+                break
 
         return results
 
-    def search_bm25(self, query: str, top_k: int) -> list[RetrievedChunk]:
+    def search_bm25(
+        self, query: str, top_k: int, tenant_id: int | None = None
+    ) -> list[RetrievedChunk]:
         """BM25 lexical search — a FAISSVectorStore-specific capability
         alongside search() (semantic), not part of the VectorStore ABC.
         Used by hybrid_search.hybrid_search() when
         Settings.hybrid_search_enabled. score is BM25's raw score, not a
         0-1 similarity — callers that fuse it with search()'s scores are
-        responsible for normalizing first (see hybrid_search.py)."""
+        responsible for normalizing first (see hybrid_search.py).
+
+        tenant_id has the same filtering semantics as search()."""
         return [
             self._record_to_chunk(record, score)
-            for record, score in self._bm25_index.search(query, top_k)
+            for record, score in self._bm25_index.search(query, top_k, tenant_id=tenant_id)
         ]
 
     def delete_document(self, document_id: str) -> int:
@@ -218,7 +236,9 @@ class FAISSVectorStore(VectorStore):
 
         return removed_count
 
-    def get_chunks_by_document(self, document_id: str) -> list[RetrievedChunk]:
+    def get_chunks_by_document(
+        self, document_id: str, tenant_id: int | None = None
+    ) -> list[RetrievedChunk]:
         if self._index is None:
             return []
 
@@ -228,6 +248,7 @@ class FAISSVectorStore(VectorStore):
             self._record_to_chunk(record, 1.0)
             for record in self._metadata
             if record["document_id"] == document_id
+            and (tenant_id is None or record["metadata"].get("tenant_id") == tenant_id)
         ]
 
         matches.sort(key=lambda chunk: chunk.metadata.get("chunk_index", 0))
