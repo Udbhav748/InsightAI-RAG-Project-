@@ -16,7 +16,11 @@ computed from at runtime (see eval/ and monitoring/).
 Inputs are validated against the schema *before* the wrapped call runs; a
 validation failure raises ToolInputError (an AppError, 422) rather than
 proceeding, so a malformed tool call surfaces loudly instead of failing
-halfway through the pipeline.
+halfway through the pipeline. Outputs are validated *after* the wrapped
+call returns, against the tool's actual return type (see TOOL_SCHEMAS);
+a violation raises ToolOutputError (500) — the tool ran, but broke its
+own contract, which is a bug worth surfacing loudly rather than passing
+malformed data downstream.
 """
 
 from __future__ import annotations
@@ -27,9 +31,10 @@ import logging
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from app.core.exceptions import AppError, ChatServiceError
+from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,19 @@ class ToolInputError(ChatServiceError):
 
     def __init__(self, tool: str, detail: str):
         super().__init__(f"Invalid arguments for tool '{tool}': {detail}")
+
+
+class ToolOutputError(ChatServiceError):
+    """Raised when a tool's own return value fails its declared output
+    schema — the tool ran successfully but produced something outside its
+    contract. Distinct from ToolInputError (422, caller's fault): this is
+    a 500, since it means the tool itself is broken, not the request."""
+
+    status_code = 500
+    error_code = "TOOL_OUTPUT_ERROR"
+
+    def __init__(self, tool: str, detail: str):
+        super().__init__(f"Tool '{tool}' returned output that fails its schema: {detail}")
 
 
 # --- Per-tool input schemas -------------------------------------------------
@@ -68,56 +86,46 @@ class DiagnoseInput(BaseModel):
     query: str | None = None
 
 
-# --- Per-tool output schemas -------------------------------------------------
-
-class RetrievalOutput(BaseModel):
-    chunks: list[Any]
-
-
-class SummarizationOutput(BaseModel):
-    summary: str
-    chunks: list[Any]
-
-
-class WebSearchOutput(BaseModel):
-    results: list[Any]
-
-
-class DiagnoseOutput(BaseModel):
-    raw_class: str
-    crop: str
-    disease: str
-    confidence: float
-    low_confidence: bool
-
-
 # --- Registry ----------------------------------------------------------------
+#
+# "output" is the tool function's actual return type (not a separate wrapper
+# schema nothing produces) — retrieve() really does return list[RetrievedChunk],
+# summarize_document() really does return tuple[str, list[RetrievedChunk]], and
+# so on. track_tool validates the real return value against this type via
+# TypeAdapter, so a tool whose implementation drifts from its declared
+# contract is caught at the boundary instead of passing malformed data on.
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "retrieval": {
         "description": "Vector search over the uploaded PDFs' embedded chunks; returns the top-k passages most relevant to the query.",
         "input": RetrievalInput,
-        "output": RetrievalOutput,
+        "output": list[RetrievedChunk],
     },
     "summarization": {
         "description": "Whole-document summary built from every chunk belonging to one uploaded document.",
         "input": SummarizationInput,
-        "output": SummarizationOutput,
+        "output": tuple[str, list[RetrievedChunk]],
     },
     "web_search": {
         "description": "DuckDuckGo web search fallback for queries the uploaded corpus can't answer (opt-in, human-approval gated).",
         "input": WebSearchInput,
-        "output": WebSearchOutput,
+        "output": list[WebSearchResult],
     },
     "diagnose": {
         "description": "LeafSense HTTP vision integration: classifies a crop-leaf image into a disease class, mapped to a plain-language crop/disease/confidence.",
         "input": DiagnoseInput,
-        "output": DiagnoseOutput,
+        "output": VisionPrediction,
     },
 }
 # Descriptions are read directly (TOOL_SCHEMAS[name]["description"]) by
 # prompt_builder.AGENT_TOOLS, so the model-facing tool list can't drift
 # from what's actually registered.
+
+# Built once rather than per-call — TypeAdapter's schema build isn't free,
+# and the output type per tool is static.
+_OUTPUT_ADAPTERS: dict[str, TypeAdapter] = {
+    tool_name: TypeAdapter(spec["output"]) for tool_name, spec in TOOL_SCHEMAS.items()
+}
 
 
 def track_tool(name: str):
@@ -184,6 +192,25 @@ def track_tool(name: str):
                     },
                 )
                 raise
+
+            try:
+                _OUTPUT_ADAPTERS[name].validate_python(result)
+            except ValidationError as exc:
+                latency_ms = (time.perf_counter() - start) * 1000
+                logger.warning(
+                    "tool_invocation",
+                    extra={
+                        "extra_fields": {
+                            "tool": name,
+                            "success": False,
+                            "error_type": "ToolOutputError",
+                            "input": input_summary,
+                            "latency_ms": round(latency_ms, 2),
+                        }
+                    },
+                )
+                raise ToolOutputError(name, str(exc)) from exc
+
             latency_ms = (time.perf_counter() - start) * 1000
             logger.info(
                 "tool_invocation",
@@ -226,8 +253,10 @@ def _summarize_output(result: Any) -> Any:
     gap. Handles the shapes the registry's tools actually return:
     - list[RetrievedChunk] / list[WebSearchResult] → count + chunk ids
       (what the tool produced, not its full text)
-    - str (summarization) → truncated text
-    - dict (diagnose's VisionPrediction.model_dump via other paths) →
+    - tuple (summarization's real (summary, chunks) return) → each
+      element summarized the same way, recursively
+    - str → truncated text
+    - dict / a model with model_dump() (diagnose's VisionPrediction) →
       truncated fields
     """
     if result is None:
@@ -236,6 +265,8 @@ def _summarize_output(result: Any) -> Any:
         items = [getattr(item, "chunk_id", None) for item in result[:10]]
         items = [item for item in items if item is not None]
         return {"count": len(result), "ids": items[:10]}
+    if isinstance(result, tuple):
+        return [_summarize_output(item) for item in result]
     if isinstance(result, str):
         return result[:120] + "..." if len(result) > 120 else result
     if isinstance(result, dict):
