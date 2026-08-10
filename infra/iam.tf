@@ -1,47 +1,58 @@
-# Two distinct roles, easy to confuse:
-#   - execution role: what ECS itself needs to LAUNCH the container
-#     (pull the image, write logs, resolve SSM secrets).
-#   - task role: what the APPLICATION CODE can call via AWS APIs at runtime.
-# The app makes no AWS API calls today, so the task role is an empty
-# placeholder — created now as an attach point for future features (e.g.
-# S3-backed uploads, Bedrock) instead of needing a brand-new resource then.
+# Lambda has one execution role, not ECS's execution-role/task-role split
+# — there's no separate "what launches the container" vs. "what the app
+# calls" distinction in Lambda the way there was for Fargate.
+#
+# No SSM here (unlike the superseded ecs.tf design): the app never calls
+# the SSM SDK itself — SSM only existed as a delivery conduit for ECS's
+# `secrets` field, which has no Lambda equivalent (Lambda environment
+# variables are static strings set at function-config time, with no
+# per-variable "resolve from SSM at launch" mechanism). Lambda encrypts
+# environment variables at rest by default with an AWS-managed KMS key —
+# the same at-rest protection SecureString gave, one fewer resource.
 
-data "aws_iam_policy_document" "ecs_tasks_assume" {
+data "aws_iam_policy_document" "lambda_assume" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
+      identifiers = ["lambda.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role" "ecs_task_execution" {
-  name               = "${var.project_name}-ecs-task-execution"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+resource "aws_iam_role" "lambda_execution" {
+  name               = "${var.project_name}-lambda-execution"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
-resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
-  role       = aws_iam_role.ecs_task_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
-# Scoped to this app's own SSM path prefix only — not ssm:*, not resource "*".
-data "aws_iam_policy_document" "ecs_task_execution_ssm" {
+# Scoped to this function's own log group only — not the AWS-managed
+# AWSLambdaBasicExecutionRole's implicit arn:aws:logs:*:*:* wildcard.
+data "aws_iam_policy_document" "lambda_logs" {
   statement {
-    actions   = ["ssm:GetParameters"]
-    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}/*"]
+    actions   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.backend.arn}:*"]
   }
 }
 
-resource "aws_iam_role_policy" "ecs_task_execution_ssm" {
-  name   = "${var.project_name}-ssm-read"
-  role   = aws_iam_role.ecs_task_execution.id
-  policy = data.aws_iam_policy_document.ecs_task_execution_ssm.json
+resource "aws_iam_role_policy" "lambda_logs" {
+  name   = "${var.project_name}-lambda-logs"
+  role   = aws_iam_role.lambda_execution.id
+  policy = data.aws_iam_policy_document.lambda_logs.json
 }
 
-resource "aws_iam_role" "ecs_task" {
-  name               = "${var.project_name}-ecs-task"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
-  # No inline policy attached — placeholder role, see file header comment.
+data "aws_iam_policy_document" "lambda_s3_data" {
+  statement {
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.data.arn}/*"]
+  }
+  statement {
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.data.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_s3_data" {
+  name   = "${var.project_name}-lambda-s3-data"
+  role   = aws_iam_role.lambda_execution.id
+  policy = data.aws_iam_policy_document.lambda_s3_data.json
 }

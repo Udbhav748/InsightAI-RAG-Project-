@@ -60,3 +60,5 @@ infra/terraform.tfvars
 infra/.terraform.lock.hcl.backup
 infra/crash.log
 infra/*.tfplan
+infra/tfplan.binary
+infra/tfplan_output.txt

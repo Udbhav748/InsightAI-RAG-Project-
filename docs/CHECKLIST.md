@@ -287,18 +287,18 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | FastAPI | ✅ | `app/main.py` |
 | Docker | ✅ | `backend/Dockerfile` |
-| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ✅ | ECS on Fargate, Terraform-provisioned (`infra/*.tf`); see `docs/OPERATIONS.md` "Deploying to AWS" |
-| HTTPS | ✅ | CloudFront default certificate, no custom domain needed (`infra/cloudfront_backend.tf`, `infra/cloudfront_frontend.tf`) |
-| Secrets | ✅ | SSM Parameter Store `SecureString`, injected via the ECS task definition's `secrets` field, never plain `environment` (`infra/ssm.tf`) |
-| Load balancer | ✅ | ALB in front of ECS (`infra/alb.tf`) |
-| Autoscaling | ⚠️ | ECS service autoscaling configured (`infra/autoscaling.tf`, min 1 / max 2 tasks by default) — but see that file's header comment: FAISS writes and in-memory sessions aren't safe across >1 task unless `database_url` is also set |
-| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts, `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/ecs.tf`) |
-| Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/ecs.tf`); `log_aggregate.py` remains the offline rollup tool |
+| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ✅ | AWS Lambda (container image), Terraform-provisioned (`infra/lambda.tf`); see `docs/OPERATIONS.md` "Deploying to AWS" |
+| HTTPS | ✅ | Backend: Lambda Function URL's default `*.lambda-url.*.on.aws` certificate. Frontend: CloudFront default certificate. Neither needs a custom domain (`infra/lambda.tf`, `infra/cloudfront_frontend.tf`) |
+| Secrets | ✅ | Plain Lambda environment variables, encrypted at rest by Lambda's default AWS-managed KMS key (`infra/lambda.tf`) — no SSM/Secrets Manager indirection needed for Lambda, unlike the superseded ECS design |
+| Load balancer | N/A | No ALB/NLB in this design — a Lambda Function URL needs no separate load balancer resource; Lambda's own invocation model is the request-routing layer |
+| Autoscaling | ⚠️ | Deliberately capped at 1 (`infra/lambda.tf`'s `reserved_concurrent_executions = 1`), trading Lambda's native ability to scale out for FAISS/session write-safety — see that file's comment. A second concurrent request gets an immediate `429` rather than being served in parallel |
+| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts, `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/lambda.tf`) |
+| Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/lambda.tf`); `log_aggregate.py` remains the offline rollup tool |
 | Requests per second | ⚠️ | Not measured |
 | Latency | ✅ | P50/P95/P99 offline |
 | Availability | ⚠️ | `monitoring/uptime_check.py` probes + scheduled `monitoring.yml`; point-in-time |
 | Cost per hour | ⚠️ | Not measured live; static estimate in `infra/README.md`'s cost table (~$30-45/month) |
-| CPU/GPU/Memory utilisation | ❌ | Not measured; ECS Container Insights available but disabled by default for cost (`infra/ecs.tf`) |
+| CPU/GPU/Memory utilisation | ⚠️ | Not dashboarded; Lambda publishes Duration/Invocations/ConcurrentExecutions/Errors to CloudWatch automatically at no extra cost (no Container-Insights-equivalent opt-in needed the way the superseded ECS design required) |
 
 ---
 
@@ -309,7 +309,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | PII | ✅ | Regex detection (email/phone/id), flag-and-continue, `pii_service.py`; recall evals |
 | GDPR / DPDP / HIPAA | ⚠️ | No formal compliance assessment doc |
 | RBAC | ❌ | Per-client keys only; no roles/users |
-| Encryption | ✅ | Transport: CloudFront HTTPS. At-rest: EFS `encrypted = true`, SSM `SecureString` (KMS), S3 default SSE (`infra/efs.tf`, `infra/ssm.tf`, `infra/s3_frontend.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
+| Encryption | ✅ | Transport: Lambda Function URL + CloudFront HTTPS. At-rest: S3 default SSE for uploads/vector_store/feedback/frontend build (`infra/s3_data.tf`, `infra/s3_frontend.tf`), Lambda environment variables encrypted by its default AWS-managed KMS key (`infra/lambda.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
 | Consent | ❌ | No consent mechanism |
 | Secrets | ✅ | Env vars, gitignored |
 | Prompt injection | ✅ | Untrusted-excerpt markers + eval resistance metrics |

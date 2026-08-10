@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "github_actions_assume" {
     # Scoped to any ref on this repo. Tighten to
     # "repo:${var.github_repo}:ref:refs/heads/main" to restrict this role
     # to main-branch pushes only, the recommended posture given this role
-    # can push images and mutate the running ECS service.
+    # can push images and update the deployed Lambda function.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
@@ -61,30 +61,23 @@ data "aws_iam_policy_document" "github_actions_deploy" {
   }
 
   statement {
-    sid     = "ECSDeployService"
-    actions = ["ecs:UpdateService", "ecs:DescribeServices"]
-    # aws_ecs_service.id is the full service ARN, not a short cluster/service
-    # id, as long as the AWS account has ECS long-ARN-format enabled — true
-    # by default for every account since AWS made it mandatory in 2021, so
-    # safe to assume for a new account, but noted here rather than silently
-    # assumed.
-    resources = [aws_ecs_service.backend.id]
-  }
-
-  statement {
-    sid     = "ECSDeployTaskDefinition"
-    actions = ["ecs:RegisterTaskDefinition", "ecs:DescribeTaskDefinition"]
-    # Neither action supports resource-level restriction in IAM — AWS
-    # requires resources = ["*"] here regardless of scoping intent.
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "PassEcsRoles"
-    actions   = ["iam:PassRole"]
-    resources = [aws_iam_role.ecs_task_execution.arn, aws_iam_role.ecs_task.arn]
-    # Required for ecs:RegisterTaskDefinition to hand the execution/task
-    # roles to the new revision.
+    sid = "LambdaDeploy"
+    actions = [
+      "lambda:UpdateFunctionCode",
+      "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
+    ]
+    resources = [aws_lambda_function.backend.arn]
+    # Documented trade-off, not fixed here: GetFunction/GetFunctionConfiguration
+    # both return Lambda environment variables *decrypted* by default, so this
+    # role (needed for `aws lambda wait function-updated`, which polls
+    # GetFunction) can read the app's plaintext secrets. Closing this
+    # properly needs a customer-managed KMS key with kms:Decrypt withheld
+    # from this role — real complexity for unverified benefit at this
+    # project's scale (a personal AWS account, a short-lived OIDC-issued
+    # credential scoped to this one repo). Accepted and stated plainly,
+    # the same way the FAISS-concurrency caveat is accepted and documented
+    # rather than silently glossed over.
   }
 
   statement {

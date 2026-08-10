@@ -31,6 +31,7 @@ from app.core.exceptions import (
     VectorStoreNotFoundError,
 )
 from app.models.document import EmbeddedChunk, RetrievedChunk
+from app.services import s3_sync_service
 from app.services.hybrid_search import BM25Index
 from app.services.vector_store import VectorStore
 
@@ -269,6 +270,10 @@ class FAISSVectorStore(VectorStore):
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
             faiss.write_index(self._index, str(self.index_path))
             self.metadata_path.write_text(json.dumps(self._metadata))
+
+        # Outside the lock: network I/O has no reason to hold it, and this
+        # covers both of save()'s call sites (upload, delete) automatically.
+        s3_sync_service.upload_dir(self.index_path.parent, settings.vector_store_dir_name)
 
     def load(self) -> None:
         if not self.index_path.is_file():

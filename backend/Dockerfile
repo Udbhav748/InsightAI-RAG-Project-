@@ -62,15 +62,25 @@ COPY alembic.ini .
 # data (local dev, or any platform with real persistent storage).
 COPY demo_corpus ./demo_corpus
 
+# AWS Lambda Web Adapter — a Lambda *extension* (not a layer; layers can't
+# attach to package_type="Image" functions), so this is the only way to
+# add it to a container-image function. Inert outside Lambda: nothing
+# invokes this binary unless Lambda's own runtime bootstrap is present, so
+# docker-compose.yml/local `docker run` are unaffected. Verify the current
+# release tag at https://github.com/aws/aws-lambda-web-adapter/releases
+# before rebuilding against a newer one.
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
+COPY entrypoint.sh ./entrypoint.sh
+
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p /app/uploads /app/vector_store \
+    && mkdir -p /app/uploads /app/vector_store /app/feedback \
+    && chmod +x /app/entrypoint.sh \
     && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
 
-# Shell form (not exec-form CMD ["...", "8000"]) so ${PORT} actually expands:
-# both Render and Cloud Run inject PORT and require the container to listen
-# on it; docker-compose.yml doesn't set PORT locally, so this still falls
-# back to 8000 there, matching its "8000:8000" port mapping unchanged.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# entrypoint.sh handles the Lambda-specific /tmp redirection (read-only
+# filesystem outside /tmp) and always execs uvicorn at the end — so this
+# works unchanged for Render, Cloud Run, Lambda, and local docker-compose.
+CMD ["/app/entrypoint.sh"]

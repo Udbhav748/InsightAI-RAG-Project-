@@ -13,7 +13,7 @@ terraform {
   # infra/README.md Step 0), then replace the bucket name below with the
   # real one before running `terraform init`.
   backend "s3" {
-    bucket         = "insightai-rag-tfstate-REPLACE_WITH_UNIQUE_SUFFIX"
+    bucket         = "insightai-rag-tfstate-618788620038"
     key            = "prod/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "insightai-rag-tf-locks"

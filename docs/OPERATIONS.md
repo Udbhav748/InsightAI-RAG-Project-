@@ -566,88 +566,129 @@ supported today, not new engineering.
 
 **This was deployed and live on Render/Vercel; superseded by the AWS deployment below.** The pieces described above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`) still work exactly as documented — `render.yaml` and the Render/Vercel projects are what got removed, not the app's own portability.
 
-## Deploying to AWS (ECS Fargate + Terraform)
+## Deploying to AWS (Lambda + Terraform)
 
-**Backend → ECS on Fargate (the same `backend/Dockerfile`, unmodified).
-Frontend → S3 + CloudFront (still not a container — same reasoning as the
-Render era above: a CDN-backed static host has no upside gap to pay for
+**Backend → AWS Lambda, container image (the same `backend/Dockerfile`,
+extended with the AWS Lambda Web Adapter — see `entrypoint.sh` below, not
+rewritten). Frontend → S3 + CloudFront (unchanged reasoning from the
+Render era: a CDN-backed static host has no upside gap to pay for
 container compute to close).** All infrastructure is declared in
-`infra/*.tf` (Terraform) — this repo had no IaC beyond `render.yaml`
-before this migration; Terraform replaces that with something versioned,
-reviewable, and reproducible rather than a single declarative-but-Render-specific
-file. The actual step-by-step deploy runbook lives in
-[`infra/README.md`](../infra/README.md), including the exact `terraform`
-commands and GitHub repo variable wiring; this section covers the
+`infra/*.tf` (Terraform). The actual step-by-step deploy runbook lives in
+[`infra/README.md`](../infra/README.md); this section covers the
 architecture and *why*, not the commands.
 
-### Why ECS/Fargate over Render
+An earlier version of this migration targeted ECS on Fargate + an
+Application Load Balancer + EFS — fully designed and Terraform-validated,
+but never applied to AWS. It was replaced by this Lambda design because
+ALB + an always-on Fargate task + EFS have **no AWS free tier at all**
+(~$30-45/month minimum), whereas Lambda's free tier (1M requests +
+400,000 GB-seconds/month) and CloudFront's "Always Free" tier (1TB egress
++ 10M requests/month) are both *permanent*, not 12-month-limited — the
+only realistic path to near-$0 AWS hosting for a service that doesn't run
+24/7. See `infra/README.md`'s cost table for exact numbers: genuinely
+**$0/month for the first year**, then a few cents to about a dollar a
+month after (ECR image storage loses its free tier; S3/CloudWatch storage
+stays a fraction of a cent). Stated plainly, the same way the 512MB OOM
+incident above is stated plainly — never "$0 forever, no asterisk."
 
-Render's free tier constraint was RAM (512MB, see "Memory" above).
-Fargate has no such ceiling — the task definition requests 0.5 vCPU / 1GB
-by default (`infra/variables.tf`'s `fargate_cpu`/`fargate_memory`),
-already double Render's limit, and is a simple variable change to grow
-further. The trade-off is cost: Render/Vercel's combined $0/month becomes
-roughly **$30-45/month minimum** on AWS (ALB + Fargate + CloudFront + EFS
-+ CloudWatch — see `infra/README.md`'s cost table for the line-item
-breakdown). Stated plainly, the same way the 512MB OOM incident above is
-stated plainly, rather than glossed over.
+### Two AWS-specific facts that shape this design, not just details
 
-### Persistent storage: EFS replaces the ephemeral-filesystem workaround
+**Lambda's container filesystem is read-only outside `/tmp`.** This app's
+three write paths (`upload_service.py`, `faiss_vector_store.py`,
+`feedback_service.py`) always resolve to `/app/<name>` — never a
+configurable absolute path — so every write would throw `OSError:
+Read-only file system` in real Lambda without a fix. **`backend/entrypoint.sh`**
+(the new Docker `CMD`) detects real Lambda via the Lambda-reserved
+`AWS_LAMBDA_FUNCTION_NAME` env var (never set locally) and, only in that
+branch, symlinks `/app/uploads`/`/app/vector_store`/`/app/feedback` onto
+fresh directories under `/tmp` — Python's file I/O follows symlinks
+transparently, so no application code needed to change. It also copies
+the model cache baked into the image at build time into `/tmp` and
+repoints `HF_HOME` there, working around a related fact: `sentence-transformers`/
+`huggingface_hub` writes a filelock next to cached model weights even on
+a pure read, which would otherwise crash startup under the now-read-only
+`/app` even though the model itself needs no network re-download.
 
-Render's ephemeral disk (see "The constraint that shapes everything below"
-above) is what `demo_seed_service.py`'s auto-seed-on-empty-store behavior
-was built to survive. On Fargate, `infra/efs.tf` mounts a persistent EFS
-filesystem at the same three paths the app already resolves locally —
-`/app/uploads`, `/app/vector_store`, and (newly, closing a gap that
-existed even in local `docker-compose.yml`) `/app/feedback` — so uploaded
-documents, the FAISS index, and feedback events all survive a task
-restart or redeploy. `demo_seed_service.py`'s behavior is unchanged and
-still runs — it's a no-op once the store has real data, exactly as before.
+**Lambda's execution environment is torn down when idle**, wiping `/tmp`
+— a stricter, more frequent version of the exact problem Render's free
+tier already had (see "The constraint that shapes everything below"
+above). `demo_seed_service.py`'s auto-seed-on-empty-store behavior
+already handles this for the bundled demo document; real uploads need
+more, which is what the next section covers.
 
-**New limitations this introduces, not present in the single-instance
-Render deployment** — both stem from the same root cause, autoscaling
-actually being enabled for the first time (`infra/autoscaling.tf`
-configures min 1 / max 2 tasks by default, satisfying the "Cloud
-Deployment" checklist's Autoscaling criterion):
+### Persistent storage: S3 sync replaces the ephemeral-filesystem workaround
 
-- `faiss_vector_store.py` protects writes with an in-process
-  `threading.Lock` only, which doesn't extend across multiple ECS tasks
-  sharing the same EFS-mounted index — concurrent uploads or deletes
-  across two tasks can corrupt it.
-- `session_store.py`'s in-memory chat history is documented
-  (`docs/DESIGN_REVIEW.md`, Q9) as correct only for a single process —
-  dormant on Render (which never autoscaled), but live here: a session on
-  one task is invisible to a request landing on another, unless
-  `database_url` is set (routes to `PostgresSessionStore` automatically).
+**New `backend/app/services/s3_sync_service.py`** downloads
+`uploads/`/`vector_store/`/`feedback/` from S3 on Lambda cold start
+(before anything else touches local disk — the first line of `main.py`'s
+lifespan) and uploads changes back after every write (`FAISSVectorStore.save()`,
+`upload_service.save_uploaded_file()`, `feedback_service.record_feedback()`,
+and document deletion). Entirely gated behind `Settings.s3_sync_enabled`
+(default `False`) — local dev and docker-compose never touch S3 or need
+`boto3` imported. Every sync call is best-effort: a failed sync never
+fails a request that already succeeded locally, only next-cold-start
+durability is at risk. `infra/s3_data.tf` provisions one private,
+encrypted S3 bucket with three prefixes for this.
 
-Both are documented in detail in `infra/autoscaling.tf`'s header comment,
-not mitigated by this Terraform. Set `autoscaling_max_capacity = 1` in
-`infra/terraform.tfvars` to eliminate both risks entirely if that
-trade-off isn't acceptable, or set `database_url` to fix sessions
-specifically.
+**New limitation this introduces, not present in the single-instance
+Render deployment**: `faiss_vector_store.py` protects writes with an
+in-process `threading.Lock` only, which doesn't extend across two Lambda
+execution environments concurrently writing the same synced index.
+`infra/lambda.tf` sets **`reserved_concurrent_executions = 1`**
+specifically to make that structurally impossible rather than just
+unlikely — the trade-off, stated plainly: a second request arriving while
+one is in flight gets an immediate `429`, not queued, a real behavioral
+difference from a single process's own in-process request queueing. This
+same concurrency cap also keeps `session_store.py`'s in-memory chat
+history safe (documented in `docs/DESIGN_REVIEW.md`, Q9, as correct only
+for a single process) — dormant on Render (which never scaled beyond one
+instance), and kept dormant here by the concurrency cap rather than by
+accident.
 
-### Secrets: SSM Parameter Store replaces Render's dashboard secrets
+### Secrets: plain Lambda environment variables, not SSM
 
 `render.yaml`'s `sync: false` env vars (`GEMINI_API_KEY`, `API_KEY`,
-`GROQ_API_KEY`) were entered by hand in the Render dashboard. On AWS,
-`infra/ssm.tf` stores the same values as SSM `SecureString` parameters,
-referenced by the ECS task definition's `secrets` field (never plain
-`environment`) so they're resolved at container start and never appear in
-the task definition itself. **No application code changes were needed for
-this** — `pydantic-settings` already reads real process environment
-variables ahead of `.env` (`backend/app/core/config.py`), so
-ECS-injected env vars work exactly like Render's did.
+`GROQ_API_KEY`) were entered by hand in the Render dashboard. On Lambda,
+`infra/lambda.tf` passes the same values straight into the function's
+`environment` block — Lambda encrypts environment variables at rest by
+default with an AWS-managed KMS key, so there's no SSM/Secrets-Manager
+indirection layer the way the earlier ECS design needed (ECS's `secrets`
+field had no environment-variable-at-launch equivalent; Lambda's
+environment variables already are that). **No application code changes
+were needed for this** — `pydantic-settings` already reads real process
+environment variables ahead of `.env` (`backend/app/core/config.py`).
+**Documented trade-off**: the GitHub Actions deploy role needs
+`lambda:GetFunction` (to poll deployment status), and that action returns
+environment variables decrypted by default — a short-lived, repo-scoped
+OIDC credential can therefore read the app's plaintext secrets. See
+`infra/github_oidc.tf`'s comment for why this is accepted rather than
+fixed with a customer-managed KMS key at this project's scale.
 
 ### HTTPS without a custom domain
 
-Neither the Render nor the AWS deployment owns a custom domain.
-CloudFront (`infra/cloudfront_backend.tf`, `infra/cloudfront_frontend.tf`)
-sits in front of both the ALB and the S3 frontend bucket and issues free
-HTTPS on its own `*.cloudfront.net` domain — no ACM certificate or
-Route53 zone required, the closest AWS-native equivalent to Render's and
-Vercel's free platform subdomains. The ALB itself has an HTTP-only
-listener; TLS terminates at CloudFront, not at the origin — the standard
-"TLS at the CDN" pattern, called out explicitly rather than left implicit.
+Neither the Render nor the AWS deployment owns a custom domain. Lambda
+Function URLs are HTTPS-only by default on their own AWS-owned domain
+(`https://<id>.lambda-url.<region>.on.aws/`) — solving the "free HTTPS
+without a domain" problem Fargate's CloudFront-in-front-of-an-ALB design
+needed, without needing CloudFront at all for the backend. (The frontend
+still uses CloudFront — `infra/cloudfront_frontend.tf`, unchanged — since
+that problem is genuinely CloudFront's to solve for a private S3 origin.)
+Trade-off, stated plainly: this loses "the backend is only reachable
+through a CDN's IP range," mitigated by `X-API-Key` already being the
+real access gate and `reserved_concurrent_executions=1` throttling bursts
+far more aggressively than an ALB ever did.
+
+### Streaming: `/chat/stream`'s SSE endpoint needs explicit config
+
+`POST /chat/stream` (`backend/app/api/v1/routes/query.py`) streams tokens
+via `StreamingResponse`. Lambda buffers responses by default; incremental
+delivery requires the Lambda Web Adapter's `AWS_LWA_INVOKE_MODE=RESPONSE_STREAM`
+env var (`infra/lambda.tf`) to exactly match the Function URL's own
+`invoke_mode = "RESPONSE_STREAM"` setting — the two are configured
+independently and silently disagree (buffered instead of incremental) if
+they don't match. `infra/README.md`'s smoke test includes a `curl -N`
+check specifically to verify this is actually wired correctly, not just
+declared.
 
 ### Deploying
 
@@ -659,4 +700,7 @@ and `deploy-frontend.yml` build and ship on every push to `main` that
 touches `backend/` or `frontend/` respectively — the GitHub Actions
 equivalent of Render's `autoDeployTrigger: commit` and Vercel's git
 integration, since AWS has no built-in webhook-based auto-deploy of its
-own.
+own. The backend deploy pins the Lambda function directly to a sha-tagged
+ECR image (`aws lambda update-function-code --image-uri ...`), simpler
+than the superseded ECS design's mutable-`:latest`-tag-plus-force-deploy
+approach.

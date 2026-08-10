@@ -6,12 +6,14 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 
 from app.api.v1.routes.query import get_vector_store
 from app.core.auth import require_api_key
+from app.core.config import settings
 from app.core.exceptions import ConfirmationRequiredError, DocumentNotFoundError
 from app.models.schemas import (
     DocumentDeleteResponse,
     DocumentListResponse,
     DocumentProcessingResponse,
 )
+from app.services import s3_sync_service
 from app.services.document_processing_service import DocumentProcessingService
 from app.services.document_repository import delete_document_metadata, get_document_owner, list_documents
 from app.services.upload_service import UPLOAD_DIR
@@ -126,6 +128,9 @@ def delete_document(
     # anything, so a missing file here isn't an error.
     for path in UPLOAD_DIR.glob(f"{document_id}.*"):
         path.unlink(missing_ok=True)
+        # So the deleted file doesn't resurrect on the next cold start's
+        # s3_sync_service.download_all() (no-op when sync is disabled).
+        s3_sync_service.delete_file(path.name, settings.upload_dir_name)
 
     # Best-effort removal of the durable metadata row (no-op if DB disabled).
     delete_document_metadata(document_id)

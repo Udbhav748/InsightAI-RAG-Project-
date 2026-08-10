@@ -11,6 +11,7 @@ from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.request_context import request_id_var
 from app.api.v1.routes import documents, health, query
+from app.services import s3_sync_service
 from app.services.demo_seed_service import seed_if_empty
 from app.services.tenant_service import seed_keys_from_settings
 from app.services.usage_service import record_usage
@@ -20,13 +21,20 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # On the Lambda deployment (Settings.s3_sync_enabled), restore whatever
+    # was last synced before anything else touches local disk — a no-op
+    # everywhere else. Must run before query.get_vector_store() below,
+    # which triggers a synchronous FAISSVectorStore().load() off whatever
+    # is on disk at that point.
+    s3_sync_service.download_all()
+
     # Bring the PostgreSQL schema up-to-date and mirror env API keys into
     # the DB (both no-ops when DATABASE_URL is unset). Then seed the vector
     # store — no-op whenever the store already has vectors (local dev with
-    # a persisted docker-compose volume, or any platform with real
-    # persistent storage) — only fires on a genuinely empty store, e.g.
-    # Render's free tier, which wipes local disk on every spin-down. See
-    # demo_seed_service.py.
+    # a persisted docker-compose volume, restored from S3 sync above, or
+    # any platform with real persistent storage) — only fires on a
+    # genuinely empty store, e.g. Render's free tier or a fresh Lambda
+    # environment with nothing synced yet. See demo_seed_service.py.
     init_db()
     seed_keys_from_settings()
     await seed_if_empty(query.get_vector_store())

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import settings
+from app.services import s3_sync_service
 
 FEEDBACK_DIR = Path(__file__).resolve().parents[2] / settings.feedback_dir_name
 FEEDBACK_PATH = FEEDBACK_DIR / settings.feedback_filename
@@ -53,6 +54,7 @@ def record_feedback(
 
     with FEEDBACK_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event) + "\n")
+    s3_sync_service.upload_file(FEEDBACK_PATH, settings.feedback_dir_name)
 
     logger.debug(
         "feedback_written",

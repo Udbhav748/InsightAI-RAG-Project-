@@ -302,6 +302,17 @@ class Settings(BaseSettings):
     # rather than silently presenting an uncertain guess as settled.
     vision_confidence_threshold: float = 0.5
 
+    # Enables S3 sync of uploads/vector_store/feedback (services/
+    # s3_sync_service.py) — the persistence mechanism for the AWS Lambda
+    # deployment, whose filesystem is read-only outside /tmp and wiped on
+    # every cold start. Off by default: local dev, docker-compose, and any
+    # non-Lambda deployment never touch S3 or need boto3 installed.
+    s3_sync_enabled: bool = False
+
+    # S3 bucket s3_sync_service.py reads/writes when s3_sync_enabled is
+    # True. Required (non-empty) whenever sync is enabled.
+    s3_sync_bucket_name: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

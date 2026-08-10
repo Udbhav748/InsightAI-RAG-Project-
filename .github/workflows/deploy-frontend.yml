@@ -41,7 +41,10 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_API_BASE_URL: https://${{ vars.BACKEND_CLOUDFRONT_DOMAIN }}
+          # LAMBDA_FUNCTION_URL already includes the https:// scheme and a
+          # trailing slash (AWS's own format); axios's baseURL joining
+          # handles that trailing slash correctly, no stripping needed.
+          VITE_API_BASE_URL: ${{ vars.LAMBDA_FUNCTION_URL }}
           VITE_API_KEY: ${{ secrets.VITE_API_KEY }}
 
       - uses: aws-actions/configure-aws-credentials@v4

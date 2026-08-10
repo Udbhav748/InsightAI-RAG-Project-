@@ -12,9 +12,12 @@ name: Uptime Monitor
 # monitoring story (log_aggregate.py does windowed alert thresholds on
 # demand).
 #
-# BACKEND_URL/FRONTEND_URL below are the CloudFront domains, sourced from
-# repo Variables populated after `terraform apply` (see infra/README.md
-# Step 6) rather than hardcoded literals.
+# BACKEND_URL/FRONTEND_URL below are sourced from repo Variables populated
+# after `terraform apply` (see infra/README.md Step 6) rather than
+# hardcoded literals. uptime_check.py probes whatever URL it's given
+# as-is (it never appends /health itself, despite the module docstring's
+# phrasing) — BACKEND_URL must be the full /health URL, not just the
+# Lambda Function URL's bare domain, or every probe 404s.
 
 on:
   schedule:
@@ -35,5 +38,7 @@ jobs:
         run: python backend/monitoring/uptime_check.py --json
         env:
           # Use the real deployed endpoints (defaults are localhost).
-          BACKEND_URL: https://${{ vars.BACKEND_CLOUDFRONT_DOMAIN }}
+          # LAMBDA_FUNCTION_URL already ends in "/" (AWS's own format), so
+          # appending "health" directly (no extra slash) is correct.
+          BACKEND_URL: ${{ vars.LAMBDA_FUNCTION_URL }}health
           FRONTEND_URL: https://${{ vars.FRONTEND_CLOUDFRONT_DOMAIN }}

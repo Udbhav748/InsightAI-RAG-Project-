@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.services import s3_sync_service
 
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.upload_dir_name
 
@@ -28,6 +29,7 @@ async def save_uploaded_file(file: UploadFile) -> dict:
 
     contents = await file.read()
     destination.write_bytes(contents)
+    s3_sync_service.upload_file(destination, settings.upload_dir_name)
 
     logger.debug(
         "file_written",

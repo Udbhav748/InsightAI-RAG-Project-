@@ -16,44 +16,54 @@ variable "environment" {
 
 variable "image_tag" {
   description = <<-EOT
-    Tag the ECS task definition points at. The running service always
-    references ":latest"; CI pushes both ":latest" and ":<git-sha>" on every
-    deploy, so rolling back means retagging a known-good sha as ":latest"
-    and forcing a new deployment, not changing this variable.
+    Tag the Lambda function's image_uri points at. The deployed function
+    always references the sha CI just built; CI updates it directly via
+    `aws lambda update-function-code --image-uri <repo>:<sha>` and
+    Terraform ignores drift on image_uri (see lambda.tf's lifecycle block).
+    Rolling back means pointing update-function-code at a known-good sha,
+    not changing this variable.
   EOT
   type        = string
   default     = "latest"
 }
 
-variable "fargate_cpu" {
-  description = "Task-level vCPU units (Fargate: 512 = 0.5 vCPU). A step up from Render free tier's 0.1 CPU / 512MB ceiling."
-  type        = string
-  default     = "512"
-}
-
-variable "fargate_memory" {
-  description = "Task-level memory in MiB (Fargate: must be a valid pairing with fargate_cpu)."
-  type        = string
-  default     = "1024"
-}
-
-variable "autoscaling_max_capacity" {
+variable "lambda_memory_mb" {
   description = <<-EOT
-    Max ECS tasks the service can scale out to. IMPORTANT: faiss_vector_store.py
-    protects writes with an in-process threading.Lock only — safe within one
-    task, NOT safe across multiple tasks writing the same EFS-mounted FAISS
-    index concurrently. Reads scale fine; concurrent POST /upload or
-    DELETE /documents/{id} across tasks can corrupt the index. Set this to 1
-    to eliminate the risk entirely (autoscaling effectively disabled) until
-    the vector store is replaced with something concurrency-safe. See
-    autoscaling.tf for the full writeup.
+    Lambda memory (128-10240 MB) — CPU scales proportionally with this.
+    2048 is double Fargate's 1024MiB: Lambda's Init phase (torch/
+    sentence-transformers import + model load) is hard-capped at 10s on a
+    cold environment; more memory buys more CPU, shortening how much of
+    that spills into the first real request's own timeout budget.
   EOT
   type        = number
-  default     = 2
+  default     = 2048
+}
+
+variable "lambda_timeout_seconds" {
+  description = <<-EOT
+    Must additively cover: deferred Init (if the 10s cap was hit) +
+    research_total_timeout_seconds (45, backend/app/core/config.py) + LLM
+    synthesis + adapter overhead. A genuinely new consideration Fargate
+    never had — its health_check_grace_period_seconds absorbed cold start
+    entirely outside any single request's timeout; Lambda's retried-Init
+    mechanic eats into the first request's own timeout instead.
+  EOT
+  type        = number
+  default     = 120
+}
+
+variable "lambda_ephemeral_storage_mb" {
+  description = <<-EOT
+    /tmp size (512-10240 MB). Doubled from Lambda's 512MB default since
+    /tmp also holds the HF model cache copy (entrypoint.sh) plus
+    uploads/vector_store/feedback.
+  EOT
+  type        = number
+  default     = 1024
 }
 
 variable "gemini_api_key" {
-  description = "Required. Stored as an SSM SecureString, never in plain task-definition environment."
+  description = "Required. Passed to the Lambda function as an environment variable, encrypted at rest by Lambda's default AWS-managed KMS key."
   type        = string
   sensitive   = true
 }

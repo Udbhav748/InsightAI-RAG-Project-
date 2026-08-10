@@ -1,4 +1,4 @@
-# AWS deployment runbook (ECS Fargate + Terraform)
+# AWS deployment runbook (Lambda + Terraform)
 
 This is the actual step-by-step sequence to stand up the AWS deployment
 described by the `.tf` files in this directory. It requires AWS credentials
@@ -11,63 +11,40 @@ cutover step.
 
 ## Cost
 
-Rough monthly floor once this is live (`us-east-1`, one always-on Fargate
-task, CloudFront `PriceClass_100`):
+This design targets genuine near-$0 hosting — Lambda's free tier (1M
+requests + 400,000 GB-seconds/month) and CloudFront's "Always Free" tier
+(1TB egress + 10M requests/month, frontend only) are both *permanent*, not
+12-month-limited:
 
-| Component | Est. monthly cost |
-|---|---|
-| ALB (base + LCUs at low traffic) | ~$16-20 |
-| Fargate (0.5 vCPU / 1GB, 24/7) | ~$10-15 |
-| EFS (a few GB) | <$1 |
-| CloudFront (2 distributions, low traffic) | ~$1-3 |
-| S3 (static build) | <$1 |
-| CloudWatch Logs (14-day retention) | ~$1-2 |
-| ECR storage | <$1 |
-| SSM Parameter Store | $0 (within free tier at this volume) |
-| **Total** | **≈ $30-45/month minimum** |
+| Component | Cost | Basis |
+|---|---|---|
+| Lambda compute | **$0** | Permanent free tier. At 2048MB and even a generous 500 req/month x 10s avg, that's ~10,000 GB-seconds — ~2.5% of the free tier. |
+| Lambda Function URL | **$0** | No charge beyond the invocation itself — no ALB-style hourly base fee. |
+| CloudFront (frontend only) | **$0** | "Always Free" tier, permanent. |
+| S3 (data + frontend buckets) | **~$0.001-0.01/month** | A few MB total footprint at Standard storage rates. Genuinely non-zero, just imperceptibly so. |
+| CloudWatch Logs (14-day retention) | **~$0.01-0.05/month** | This app's tiny structured-JSON log volume. |
+| DynamoDB (state lock table) | **~$0.0001/month** | On-demand mode has no request-level free tier, but usage is a handful of requests per `terraform apply`. |
+| ECR image storage | **$0 for 12 months, then ~$0.05-0.90/month** | 500MB/month free for year 1, then ~$0.10/GB-month on a ~590MB image. |
+| **Total** | **≈ $0/month for year 1, then ≈ $0.05-1/month** | Never claim "$0 forever" — state the year-1-vs-after distinction plainly. |
 
-This is a real jump from Render/Vercel's $0 free tier. Go in with that
-expectation. If `autoscaling_max_capacity` (default 2) is ever actually hit,
-add roughly another Fargate task's worth of compute on top.
+## Step 0 — Terraform state backend (already done, don't touch)
 
-## Step 0 — Terraform state backend (manual, one-time)
+The state S3 bucket (`insightai-rag-tfstate-618788620038`) and DynamoDB
+lock table (`insightai-rag-tf-locks`) already exist and are referenced in
+`versions.tf`. Nothing here needs to change for the Lambda redesign.
 
-Terraform can't create the S3 bucket/DynamoDB table it stores its own state
-in, in the same config that references them. Create both first, with a
-globally-unique bucket name:
+## Step 1 — verify locally before touching AWS
 
-```bash
-aws s3api create-bucket --bucket insightai-rag-tfstate-<your-unique-suffix> --region us-east-1
-aws s3api put-bucket-versioning --bucket insightai-rag-tfstate-<your-unique-suffix> --versioning-configuration Status=Enabled
-aws s3api put-bucket-encryption --bucket insightai-rag-tfstate-<your-unique-suffix> --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-aws s3api put-public-access-block --bucket insightai-rag-tfstate-<your-unique-suffix> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-
-aws dynamodb create-table \
-  --table-name insightai-rag-tf-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
-```
-
-Then edit `versions.tf`'s `backend "s3"` block and replace
-`insightai-rag-tfstate-REPLACE_WITH_UNIQUE_SUFFIX` with the real bucket name.
-
-## Step 1 — verify the container's UID
-
-`efs.tf`'s access points assume `appuser` (created in `backend/Dockerfile`
-via `useradd --create-home --shell /usr/sbin/nologin appuser`, no explicit
-`--uid`) lands on UID/GID 1000, the usual first free UID on
-`python:3.11-slim`. Verify this against the real image before applying —
-if it's wrong, the container won't be able to write to its EFS mounts:
+Confirm the Dockerfile/entrypoint.sh changes don't regress local dev —
+`AWS_LAMBDA_FUNCTION_NAME` is never set locally, so `entrypoint.sh`'s
+Lambda-specific branch should be entirely inert:
 
 ```bash
-cd backend
-docker build -t insightai-rag-backend .
-docker run --rm insightai-rag-backend id appuser
+docker compose up --build
+curl http://localhost:8000/health
+# upload a PDF, ask a question, submit feedback via the frontend at
+# http://localhost:8080 — confirm the full round trip still works.
 ```
-
-If the UID/GID isn't 1000, update `local.efs_owner_uid` / `local.efs_owner_gid`
-in `infra/efs.tf` to match before applying.
 
 ## Step 2 — init and configure
 
@@ -87,13 +64,13 @@ terraform validate
 terraform plan
 ```
 
-Read the plan before applying. Expect roughly 35-45 resources to create:
-one VPC (2 public subnets, IGW, route table), 3 security groups, 1 ECR
-repo, up to 4 SSM parameters, 2 IAM roles + policies, 1 EFS filesystem + 2
-mount targets + 3 access points, 1 ALB + target group + listener, 1 ECS
-cluster + task definition + service, 2 autoscaling resources, 2 CloudFront
-distributions, 1 S3 bucket + policy, 1 OIDC provider + IAM role for GitHub
-Actions.
+Read the plan before applying. Expect **~20 resources**: 1 Lambda function
++ function URL + log group, 1 S3 data bucket + its 2 sub-resources, 1 IAM
+role + 2 policies, 1 ECR repo + lifecycle policy, 1 S3 frontend bucket + 2
+sub-resources, 1 CloudFront distribution (frontend only) + OAC + bucket
+policy, 1 OIDC provider + IAM role + policy for GitHub Actions. Notably
+**no VPC, no ALB, no ECS, no EFS, no autoscaling resources, and no backend
+CloudFront distribution** — none of that exists in this design.
 
 ## Step 4 — apply (phase 1)
 
@@ -112,9 +89,8 @@ terraform output frontend_cloudfront_domain
 terraform apply
 ```
 
-This should show only an in-place update to the ECS task definition
-(new revision with correct CORS) and a forced new deployment — not any
-resource replacement.
+This should show only an in-place update to the Lambda function's
+`environment` block — not any resource replacement.
 
 ## Step 6 — populate GitHub repo Variables/Secrets
 
@@ -124,11 +100,10 @@ From `terraform output`, set (repo Settings → Actions → Variables, unless no
 |---|---|
 | `AWS_REGION` | `terraform output aws_region` |
 | `AWS_GITHUB_ACTIONS_ROLE_ARN` | `terraform output github_actions_role_arn` |
-| `ECS_CLUSTER_NAME` | `terraform output ecs_cluster_name` |
-| `ECS_SERVICE_NAME` | `terraform output ecs_service_name` |
+| `LAMBDA_FUNCTION_NAME` | `terraform output lambda_function_name` |
+| `LAMBDA_FUNCTION_URL` | `terraform output lambda_function_url` (includes trailing slash) |
 | `FRONTEND_BUCKET_NAME` | `terraform output frontend_s3_bucket_name` |
 | `FRONTEND_CLOUDFRONT_DISTRIBUTION_ID` | `terraform output frontend_cloudfront_distribution_id` |
-| `BACKEND_CLOUDFRONT_DOMAIN` | `terraform output backend_cloudfront_domain` |
 | `FRONTEND_CLOUDFRONT_DOMAIN` | `terraform output frontend_cloudfront_domain` |
 
 And one repo **Secret**: `VITE_API_KEY` — same value as `terraform.tfvars`'s
@@ -155,42 +130,44 @@ Confirm both complete successfully before trusting the `push`-triggered path.
 ## Step 8 — smoke test
 
 ```bash
-curl -i https://<backend_cloudfront_domain>/health
+curl -i "$(terraform output -raw lambda_function_url)health"
 # expect 200
 
-curl -i -H "X-API-Key: <your api_key>" https://<backend_cloudfront_domain>/documents
-# expect 200, not 401 — confirms CloudFront is forwarding X-API-Key end to end
+curl -i -H "X-API-Key: <your api_key>" "$(terraform output -raw lambda_function_url)documents"
+# expect 200, not 401
 ```
 
 Then, by hand:
-- Open `https://<frontend_cloudfront_domain>/`, upload a real PDF.
-- Force a new ECS deployment (`aws ecs update-service --cluster <cluster> --service <service> --force-new-deployment`) and confirm the uploaded document and its vector-store entries **survive** — this is the test that actually proves EFS persistence works, not just that it's declared in Terraform.
-- Submit a chat query — confirm retrieval returns both the demo corpus and the freshly uploaded document.
-- Submit a thumbs-up/down feedback event, confirm it lands in the EFS-backed feedback store.
+- `curl -N -H "X-API-Key: <your api_key>" "$(terraform output -raw lambda_function_url)chat/stream" -d '{"query": "hello"}' -H "Content-Type: application/json"` and confirm chunks arrive incrementally, not all at once at the end — proves `AWS_LWA_INVOKE_MODE`/the function URL's `invoke_mode` are both correctly wired to `RESPONSE_STREAM`, not just declared.
+- Open the frontend, upload a real PDF, then force a cold start (`aws lambda update-function-configuration --function-name <fn> --environment "Variables={...current vars...,FORCE_COLD=1}"` or simply wait out the idle-recycle window) and confirm the upload + vector-store entries + a feedback event **survive** — this is the test that actually proves S3-sync persistence works, not just that it's declared in Terraform.
+- Submit a chat query, confirm retrieval returns both the demo corpus and the freshly uploaded document.
+- Fire two requests at the function URL at the same time (e.g. two terminal tabs) and confirm the second gets `429`, not a hang or a corrupted index — validates `reserved_concurrent_executions=1` is actually doing its job.
 - Load a deep-linked frontend route directly (e.g. `/documents`) — expect `200`, not S3's raw `403`.
-- Run `gh workflow run monitoring.yml` and confirm it reports both AWS endpoints as up.
+- Run `gh workflow run monitoring.yml` and confirm it reports both endpoints as up.
 
 ## Step 9 — cutover (only after Step 8 passes)
 
 1. Merge the `aws-migration` branch to `main`.
 2. Delete `render.yaml` from `main`.
 3. Pause (don't delete yet) the Render service and the Vercel project — keep them as a fast rollback path for a few days.
-4. Update `README.md`'s live-URL lines with the real CloudFront domains.
+4. Update `README.md`'s live-URL lines with the real Lambda Function URL / CloudFront domain.
 
 After a confidence period, delete the Render service and Vercel project for
 real.
 
 ## Rollback
 
-The running task always points at the `:latest` image tag. To roll back a
+The deployed function is pinned directly to a sha-tagged image (not a
+mutable `:latest` the way the superseded ECS design worked). To roll back a
 bad backend deploy:
 
 ```bash
-# find a known-good sha tag in ECR, then:
-docker pull <ecr_repository_url>:<known-good-sha>
-docker tag <ecr_repository_url>:<known-good-sha> <ecr_repository_url>:latest
-docker push <ecr_repository_url>:latest
-aws ecs update-service --cluster <cluster> --service <service> --force-new-deployment
+aws lambda update-function-code \
+  --function-name "$(terraform output -raw lambda_function_name)" \
+  --image-uri "$(terraform output -raw ecr_repository_url):<known-good-sha>"
+aws lambda wait function-updated --function-name "$(terraform output -raw lambda_function_name)"
 ```
 
-Not automated as its own pipeline — this scale doesn't need one.
+Simpler than the ECS design's retag-and-force-deploy dance — no `:latest`
+mutation involved. Not automated as its own pipeline — this scale doesn't
+need one.
