@@ -61,9 +61,14 @@ data "aws_iam_policy_document" "github_actions_deploy" {
   }
 
   statement {
-    sid       = "ECSDeployService"
-    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
-    resources = [aws_ecs_service.backend.id] # both actions DO support resource-level scoping — no reason to leave this at "*"
+    sid     = "ECSDeployService"
+    actions = ["ecs:UpdateService", "ecs:DescribeServices"]
+    # aws_ecs_service.id is the full service ARN, not a short cluster/service
+    # id, as long as the AWS account has ECS long-ARN-format enabled — true
+    # by default for every account since AWS made it mandatory in 2021, so
+    # safe to assume for a new account, but noted here rather than silently
+    # assumed.
+    resources = [aws_ecs_service.backend.id]
   }
 
   statement {
