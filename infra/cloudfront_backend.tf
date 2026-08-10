@@ -23,6 +23,16 @@ resource "aws_cloudfront_distribution" "backend" {
       https_port              = 443
       origin_protocol_policy  = "http-only" # ALB has no HTTPS listener — see alb.tf
       origin_ssl_protocols    = ["TLSv1.2"]
+
+      # CloudFront's own default origin_read_timeout is 30s — well under
+      # research_total_timeout_seconds (45, backend/app/core/config.py) plus
+      # synthesis time. Without raising this, CloudFront itself would cut off
+      # exactly the slow research-agent requests alb.tf's 90s idle_timeout
+      # was set to accommodate, before the ALB's timeout ever came into play.
+      # 60s is CloudFront's hard maximum for both settings — not quite the
+      # full 90s the ALB allows, but the largest ceiling CloudFront permits.
+      origin_read_timeout      = 60
+      origin_keepalive_timeout = 60
     }
   }
 

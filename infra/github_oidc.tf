@@ -61,18 +61,17 @@ data "aws_iam_policy_document" "github_actions_deploy" {
   }
 
   statement {
-    sid = "ECSDeploy"
-    actions = [
-      "ecs:UpdateService",
-      "ecs:DescribeServices",
-      "ecs:RegisterTaskDefinition",
-      "ecs:DescribeTaskDefinition",
-    ]
+    sid       = "ECSDeployService"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = [aws_ecs_service.backend.id] # both actions DO support resource-level scoping — no reason to leave this at "*"
+  }
+
+  statement {
+    sid     = "ECSDeployTaskDefinition"
+    actions = ["ecs:RegisterTaskDefinition", "ecs:DescribeTaskDefinition"]
+    # Neither action supports resource-level restriction in IAM — AWS
+    # requires resources = ["*"] here regardless of scoping intent.
     resources = ["*"]
-    # ecs:RegisterTaskDefinition and DescribeTaskDefinition don't support
-    # resource-level restriction; UpdateService/DescribeServices are
-    # effectively scoped in practice to this repo's one cluster/service via
-    # the CI workflow's own arguments, not IAM.
   }
 
   statement {
