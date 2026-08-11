@@ -198,14 +198,44 @@ by the eval script itself, never passing through
    `document_deleted`, `chat_request_received`, `chat_response_sent`,
    `diagnose_response_sent`, `feedback_submitted`). This is the smallest
    real improvement over one shared secret that's demonstrably per-client
-   — not per-user (no JWT, tokens, sessions, or roles) — proportionate to
-   this project's actual single-user demo scale. See
-   [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) for why JWT/RBAC isn't
-   the next step here.
+   — not per-user (no JWT, tokens, or sessions) — proportionate to this
+   project's actual single-user demo scale. See
+   [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) for why a general JWT/
+   permission system isn't the next step here.
+- **Minimal RBAC, via a real permission registry**: `Tenant.role`
+  (`app/models/db_models.py`, "admin" | "member", default "member") is
+  enforced through `app/core/permissions.py` — a fixed permission
+  vocabulary (`document_delete`, `document_list_all_tenants`), an
+  explicit role→permission map, and one `check_permission()` function —
+  rather than two duplicated inline `if role != "admin"` blocks (the
+  earlier design, and the thing "not a general permission system" was
+  actually flagging). Gates two actions today — `DELETE
+  /documents/{id}` and `GET /documents?all_tenants=true` (cross-tenant
+  visibility for oversight) — deliberately still small, but adding a
+  third is a 2-line registry change plus one call site, not a new
+  copy-pasted pattern. `Settings.admin_client_names` grants admin
+  without DB access, checked live per-request so promoting/demoting is
+  an env var change, not a migration. Only active when `DATABASE_URL` is
+  set; without a DB there's nowhere to persist role, so `document_delete`
+  falls back to its pre-RBAC, ungated behavior (`all_tenants=true` is
+  denied outright instead, since there's no pre-RBAC behavior for a
+  brand-new action to fall back to — encoded explicitly in the registry's
+  `_DEGRADE_ALLOW_WHEN_NO_ROLE` set, not left implicit) — the same
+  graceful-degradation shape tenant-scoping (Q9) already has.
+- **Human approval, two independent gates**: web search
+  (`Settings.web_search_requires_approval` + `confirm_web_search=true`)
+  and document deletion (`Settings.document_delete_requires_approval` +
+  `approved=true`, `app/api/v1/routes/documents.py`), same shape, both
+  off by default. Distinct from the RBAC role check above: RBAC asks "is
+  this caller allowed to delete anything at all?", the approval gate
+  asks "has this deployment opted into requiring an extra explicit flag
+  before this action executes?" — a caller can fail either independently
+  of the other.
 - **Destructive-action confirmation**: `DELETE /documents/{id}` requires
   `?confirm=true` or returns `ConfirmationRequiredError` (400) — a
-  human-in-the-loop gate against accidental deletion, not a security
-  boundary per se.
+  mistake-prevention gate against accidental deletion by the same actor,
+  distinct from the role gate above (which is about *who* may delete at
+  all, not about catching an accidental click).
 - **PII flagging**: uploaded text is scanned for PII-shaped patterns
   (emails, phone numbers, ID-number-like strings —
   `app/services/pii_service.py`); a match count is logged as a warning.
@@ -228,20 +258,24 @@ by the eval script itself, never passing through
   `taxonomy_category` (e.g. `input`, `tool`, `rate_limit`); frontend
   `getErrorInfo()` extracts these for programmatic handling.
 - **Encryption at rest**: on AWS (see `docs/OPERATIONS.md` "Deploying to
-  AWS"), this moved from Render's platform-level AES-256 disk encryption to
-  explicit, Terraform-declared encryption: S3 default SSE for the
+  AWS"), this moved from Render's platform-level AES-256 disk encryption
+  to explicit, Terraform-declared encryption: S3 default SSE for the
   uploads/vector_store/feedback data bucket and the frontend bucket
-  (`infra/s3_data.tf`, `infra/s3_frontend.tf`), and Lambda's own
-  AWS-managed-KMS-key encryption of environment variables at rest
-  (`infra/lambda.tf`, replacing the earlier SSM SecureString design — no
-  SSM resource exists in this design at all) — a genuine upgrade from an
-  implicit platform guarantee to something versioned and reviewable.
-  **Not implemented**: application-level/field-level encryption or
-  customer-managed keys — those remain future work, same as before.
-- **Not implemented**: JWT/RBAC, advanced rate limiting (token bucket,
-  persistence, distributed enforcement), per-user document isolation. All
-  explicitly listed as future work in `docs/NOT_APPLICABLE.md` and the
-  README's Known Limitations section.
+  (`infra/s3_data.tf`, `infra/s3_frontend.tf`), and secrets as SSM
+  `SecureString` parameters (`infra/ssm.tf`), resolved by the app at cold
+  start rather than sourced from a plain Lambda environment variable —
+  a genuine upgrade from an implicit platform guarantee to something
+  versioned and reviewable. **Not implemented**: application-level/
+  field-level encryption or customer-managed keys — those remain future
+  work, same as before.
+- **Not implemented**: JWT, advanced rate limiting (token bucket,
+  persistence, distributed enforcement), per-user document isolation, a
+  large-scale multi-role RBAC system (dynamic role management, per-resource
+  ACLs, an admin UI). The registry above (`app/core/permissions.py`) *is*
+  a real, reusable permission-enforcement mechanism now — it's the
+  permission set that's deliberately narrow (2 roles, 2 permissions), not
+  the mechanism. All explicitly listed as future work in
+  `docs/NOT_APPLICABLE.md` and the README's Known Limitations section.
 
 ## 8. What is the cost per successful task?
 

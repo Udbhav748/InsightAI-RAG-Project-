@@ -3,8 +3,12 @@
 A small table of keys (sha256_hash -> client_name) loaded from
 Settings.api_key_table. Clients send their key in the X-API-Key header.
 On success, the client_name is stored in request.state.client_name for
-downstream audit logging. No JWT, sessions, or RBAC — just the smallest
-real improvement over one shared secret that's demonstrably per-client.
+downstream audit logging, alongside request.state.tenant_id and
+request.state.role (both None when the DB is disabled — see
+tenant_service.resolve_tenant). No JWT or sessions — just the smallest
+real improvement over one shared secret that's demonstrably per-client,
+plus a minimal admin/member role gate for the one destructive action
+that needs it (document deletion, see documents.py).
 
 Lookup is O(1) via dict keyed by hash — no linear scan, no bcrypt cost.
 
@@ -87,7 +91,7 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
         # keys added directly to PostgreSQL, not present in API_KEYS env).
         db_lookup = find_api_key(key_hash)
         if db_lookup is not None:
-            client_name, _tenant_id = db_lookup
+            client_name, _tenant_id, _role = db_lookup
     if client_name is not None:
         # Check rate limit
         if not _check_rate_limit(client_name):
@@ -96,12 +100,15 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
                 extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": client_name}},
             )
             raise UnauthorizedError("Rate limit exceeded. Please slow down.")
-        # Resolve the tenant for this client (creating the row on first
-        # sight when the DB is enabled); None when the DB is disabled,
-        # in which case downstream persistence is also disabled.
-        tenant_id = resolve_tenant(client_name)
+        # Resolve the tenant (and role) for this client (creating the row
+        # on first sight when the DB is enabled); both None when the DB is
+        # disabled, in which case downstream persistence AND role-gating
+        # are also disabled (see documents.py's delete route).
+        resolved = resolve_tenant(client_name)
+        tenant_id, role = resolved if resolved is not None else (None, None)
         request.state.client_name = client_name
         request.state.tenant_id = tenant_id
+        request.state.role = role
         return
 
     logger.warning(

@@ -3,7 +3,47 @@
 See backend/.env.example for a description of each variable.
 """
 
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _load_secrets_from_ssm() -> None:
+    """If SECRETS_SSM_PREFIX is set (the Lambda deployment — see
+    infra/lambda.tf/infra/ssm.tf), resolve GEMINI_API_KEY/API_KEY/
+    GROQ_API_KEY/DATABASE_URL from SSM SecureString parameters under that
+    prefix into the process environment, before Settings() below reads
+    it. A no-op everywhere else (local dev, docker-compose, Render):
+    SECRETS_SSM_PREFIX is never set there, so this returns immediately
+    without importing boto3 or making any AWS call.
+
+    Never overwrites a value that's already set directly (e.g. a local
+    .env's GEMINI_API_KEY) — SSM only fills in what's actually missing.
+    A parameter that doesn't exist under the prefix (DATABASE_URL when no
+    DSN was configured, matching infra/ssm.tf's own conditional
+    creation) is silently skipped, not an error — Settings.database_url's
+    own default ("") applies exactly as it does everywhere else.
+    """
+    ssm_prefix = os.environ.get("SECRETS_SSM_PREFIX")
+    if not ssm_prefix:
+        return
+
+    import boto3
+
+    client = boto3.client("ssm")
+    for env_name in ("GEMINI_API_KEY", "API_KEY", "GROQ_API_KEY", "DATABASE_URL"):
+        if os.environ.get(env_name):
+            continue
+        parameter_name = f"{ssm_prefix}/{env_name.lower()}"
+        try:
+            response = client.get_parameter(Name=parameter_name, WithDecryption=True)
+        except client.exceptions.ParameterNotFound:
+            continue
+        os.environ[env_name] = response["Parameter"]["Value"]
+
+
+_load_secrets_from_ssm()
 
 
 class Settings(BaseSettings):
@@ -21,7 +61,8 @@ class Settings(BaseSettings):
 
     # Which LLM provider generate() calls go to by default: "gemini" or
     # "groq". Both client classes implement the same LLMClient interface,
-    # so switching this is the entire A/B-testing/model-routing surface.
+    # so switching this is the entire manual A/B-testing surface (see
+    # model_routing_enabled below for automatic, per-request routing).
     llm_provider: str = "gemini"
 
     # Optional. If set to a different provider than llm_provider, that
@@ -31,6 +72,40 @@ class Settings(BaseSettings):
     # failing the request outright. Leave unset (None) to disable
     # fallback and fail after the primary's retries.
     fallback_llm_provider: str | None = None
+
+    # When True, build_llm_client() (app/services/llm_provider.py) wraps
+    # the primary client in a RoutingLLMClient that picks, per request,
+    # between llm_provider (the default, "simple" path) and
+    # model_routing_complex_provider (below) based on complexity/risk
+    # signals already present in the built prompt — see
+    # app/services/routing_llm_client.py. No new classification call: the
+    # signals (has the corrective loop already retried once? is the
+    # prompt unusually large?) are read straight off what the RAG
+    # pipeline already assembled. Off by default — same reasoning as
+    # every other routing/approval flag in this file: a deployment
+    # policy, not assumed behavior.
+    model_routing_enabled: bool = False
+
+    # The provider used for requests RoutingLLMClient judges "complex"
+    # when model_routing_enabled is True. Meant to be set to your
+    # stronger/costlier model while llm_provider stays your cheap/fast
+    # default — e.g. LLM_PROVIDER=groq + MODEL_ROUTING_COMPLEX_PROVIDER
+    # left at this default. If this equals llm_provider, routing is a
+    # deliberate no-op (nothing to route to) — build_llm_client() detects
+    # that and skips wrapping, the same early-return shape
+    # fallback_llm_provider already uses above.
+    model_routing_complex_provider: str = "gemini"
+
+    # Prompt length (characters), above which RoutingLLMClient treats a
+    # request as "complex" even without a corrective-loop retry — a
+    # proxy for both reasoning difficulty (more context to synthesize)
+    # and cost (more tokens billed either way). A single-chunk answer
+    # (one ~1000-char excerpt, chunk_size) plus instructions/query sits
+    # nowhere near this; it takes several chunks, or web results stacked
+    # alongside document chunks, to cross it — configurable per
+    # deployment since "complex" is inherently a judgment call, not a
+    # fixed property of this app.
+    model_routing_complex_prompt_chars: int = 6000
 
     # Groq API key. Only required if llm_provider or fallback_llm_provider
     # is "groq".
@@ -55,6 +130,18 @@ class Settings(BaseSettings):
     # If provided, this supersedes api_key and enables per-client auth.
     # Keys are hashed at startup (SHA-256); only hashes are kept in memory.
     api_keys: str = ""
+
+    # Optional. Comma-separated client names (the same names used as keys
+    # in API_KEYS, or "default" for the single-api_key fallback) granted
+    # the "admin" role — see app/services/tenant_service.py's
+    # resolve_tenant(). Checked live on every request rather than baked
+    # into the DB at tenant-creation time, so promoting/demoting a client
+    # is just an env var change and a redeploy, not a migration or manual
+    # SQL. Only takes effect when DATABASE_URL is set — without a DB there
+    # is nowhere to persist per-tenant role, so role-gated actions (e.g.
+    # DELETE /documents/{id}) fall back to their pre-RBAC, ungated
+    # behavior, same as tenant-scoping already does.
+    admin_client_names: str = ""
 
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"
@@ -162,6 +249,18 @@ class Settings(BaseSettings):
     # approval requirement is a deployment policy, not a behavior the app
     # should assume.
     web_search_requires_approval: bool = False
+
+    # Same human-in-the-loop shape as web_search_requires_approval above,
+    # applied to document deletion: when True, DELETE /documents/{id}
+    # requires the caller to also send approved=true, in addition to
+    # confirm=true. Distinct from both existing gates on that route:
+    # confirm=true is mistake-prevention (did you mean to delete this at
+    # all?) and the admin/member role check is access control (are you
+    # allowed to delete anything?) — this is a deployment policy that can
+    # require an explicit extra step before the action executes, on top
+    # of either. Off by default, same reasoning as web search's flag: the
+    # approval requirement is a deployment choice, not an assumed default.
+    document_delete_requires_approval: bool = False
 
     # Enables JSON-mode structured output for the LLM: when True and the
     # client sends structured_response=true, ChatService asks the provider
@@ -313,7 +412,23 @@ class Settings(BaseSettings):
     # True. Required (non-empty) whenever sync is enabled.
     s3_sync_bucket_name: str = ""
 
+    # Overrides where uploads/vector_store/feedback resolve on disk — normally
+    # left empty, resolving relative to backend/ (Path(__file__).parents[2]
+    # in each owning service module). Set to "/tmp" on the Lambda deployment
+    # (infra/lambda.tf): Lambda's filesystem is read-only everywhere except
+    # /tmp, and unlike a symlink-at-runtime approach, this doesn't require
+    # deleting/replacing the on-image directories at container start —
+    # impossible anyway, since deleting anything under a read-only mount
+    # (including the empty directories baked into the image) fails too.
+    data_dir_override: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    def data_dir(self, dir_name: str) -> Path:
+        """Resolve a data directory (uploads/vector_store/feedback) under
+        data_dir_override when set, else relative to backend/ as before."""
+        base = Path(self.data_dir_override) if self.data_dir_override else Path(__file__).resolve().parents[2]
+        return base / dir_name
 
     @property
     def max_upload_size_bytes(self) -> int:
@@ -344,6 +459,12 @@ class Settings(BaseSettings):
             }
         # Backward compatibility: single api_key becomes "default" client
         return {hashlib.sha256(self.api_key.encode()).hexdigest(): "default"}
+
+    @property
+    def admin_client_names_set(self) -> set[str]:
+        """Parsed, whitespace-trimmed set of admin_client_names. Empty set
+        (not an error) when unset — no client is admin by default."""
+        return {name.strip() for name in self.admin_client_names.split(",") if name.strip()}
 
 
 settings = Settings()

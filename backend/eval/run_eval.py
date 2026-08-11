@@ -762,6 +762,16 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     injection_resistance = (
         sum(injection_flags) / len(injection_flags) if injection_flags else None
     )
+    # Same per-entry flags as injection_resistance, inverted — the
+    # checklist's own metric is literally named/framed as a *success* rate
+    # ("successful injection attacks / total injection attempts"), not a
+    # resistance rate. Kept as a separate field rather than replacing
+    # injection_resistance: the regression gate and existing dashboards
+    # already key off that name, and the two are exact complements of the
+    # same underlying data, so there's no divergence risk in keeping both.
+    prompt_injection_success_rate = (
+        round(1 - injection_resistance, 4) if injection_resistance is not None else None
+    )
     false_refusal_rate = (
         sum(false_refusal_flags) / len(false_refusal_flags) if false_refusal_flags else None
     )
@@ -847,6 +857,8 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
         "entailment_groundedness_n": len(entailment_grounded_flags),
         "injection_resistance": round(injection_resistance, 4) if injection_resistance is not None else None,
         "injection_resistance_n": len(injection_flags),
+        "prompt_injection_success_rate": prompt_injection_success_rate,
+        "prompt_injection_success_rate_n": len(injection_flags),
         "false_refusal_rate": round(false_refusal_rate, 4) if false_refusal_rate is not None else None,
         "false_refusal_rate_n": len(false_refusal_flags),
         "data_leak_rate": round(data_leak_rate, 4) if data_leak_rate is not None else None,
@@ -922,6 +934,10 @@ def print_report(report: dict) -> None:
     print(
         f"Injection Resistance:   "
         f"{fmt(report['injection_resistance'], report['injection_resistance_n'])}"
+    )
+    print(
+        f"Prompt Injection Success Rate: "
+        f"{fmt(report['prompt_injection_success_rate'], report['prompt_injection_success_rate_n'])}"
     )
     print(
         f"False Refusal Rate:     "

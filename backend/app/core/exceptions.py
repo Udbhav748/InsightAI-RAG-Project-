@@ -58,6 +58,29 @@ class ConfirmationRequiredError(AppError):
     error_code = "CONFIRMATION_REQUIRED"
 
 
+class ApprovalRequiredError(AppError):
+    """A deployment policy (Settings.document_delete_requires_approval,
+    mirroring web_search_requires_approval) requires the caller to
+    explicitly opt into a high-risk action via an extra request flag.
+    Distinct from ConfirmationRequiredError (mistake-prevention: did you
+    mean to do this at all?) and ForbiddenError (role/permission denial):
+    this is a human-approval gate that can be toggled per-deployment."""
+
+    status_code = 400
+    taxonomy_category = "input"
+    error_code = "APPROVAL_REQUIRED"
+
+
+class ForbiddenError(AppError):
+    """The caller is authenticated (UnauthorizedError doesn't apply) but
+    lacks the role/permission the action requires — see auth.py's role
+    check and documents.py's delete route."""
+
+    status_code = 403
+    taxonomy_category = "input"
+    error_code = "FORBIDDEN"
+
+
 class CorruptedPDFError(AppError):
     status_code = 422
     taxonomy_category = "input"

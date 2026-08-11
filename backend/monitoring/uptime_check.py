@@ -27,6 +27,13 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Same reasoning as dashboard.py's identical line: needed whether this
+# runs as a standalone script (`python monitoring/uptime_check.py` puts
+# monitoring/ on sys.path, not backend/) or gets imported under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from monitoring.alert_webhook import send_alert  # noqa: E402
+
 DEFAULT_BACKEND = "http://localhost:8000"
 DEFAULT_FRONTEND = "http://localhost:5173"
 
@@ -114,12 +121,26 @@ def _print_human(report: dict) -> None:
         )
 
 
+def _alert_text(report: dict) -> str:
+    down = [
+        f"{name} ({t['status_code'] or 'no-response'})"
+        for name, t in report["targets"].items()
+        if not t["healthy"]
+    ]
+    return f"InsightAI-RAG uptime alert: {', '.join(down)} unreachable at {report['checked_at']}."
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", default=os.environ.get("BACKEND_URL", DEFAULT_BACKEND), help=f"Backend base URL (default: {DEFAULT_BACKEND}).")
     parser.add_argument("--frontend", default=os.environ.get("FRONTEND_URL", DEFAULT_FRONTEND), help=f"Frontend URL (default: {DEFAULT_FRONTEND}).")
     parser.add_argument("--loop", type=int, default=0, help="Poll every N seconds instead of once. 0 = run once.")
     parser.add_argument("--json", action="store_true", help="Emit one JSON line per check instead of human text.")
+    parser.add_argument(
+        "--alert-webhook-url",
+        default=os.environ.get("ALERT_WEBHOOK_URL"),
+        help="Slack-compatible webhook URL to POST to when a target is down. Unset = no-op.",
+    )
     args = parser.parse_args()
 
     while True:
@@ -129,6 +150,15 @@ def main() -> None:
             sys.stdout.flush()
         else:
             _print_human(report)
+        if not report["all_healthy"]:
+            # Best-effort, un-debounced: a --loop run that stays down
+            # alerts on every iteration, not just the first. Accepted
+            # for the same reason the rest of this package stays simple
+            # — see monitoring/README.md's Known Limitations. The
+            # scheduled CI run (monitoring.yml) only runs once per
+            # invocation anyway, so this only matters for a long-lived
+            # local --loop.
+            send_alert(args.alert_webhook_url, _alert_text(report))
         if args.loop <= 0:
             break
         time.sleep(args.loop)

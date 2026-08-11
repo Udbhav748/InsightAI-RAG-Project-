@@ -38,6 +38,9 @@ backend/eval/results/*.json
 # Chat feedback events (local append-only log, not for GitHub)
 backend/feedback/*.jsonl
 
+# Uptime-check runtime state (local trailing-availability counters, regenerated per run)
+backend/monitoring/uptime_state.json
+
 # Node
 node_modules/
 frontend/dist/

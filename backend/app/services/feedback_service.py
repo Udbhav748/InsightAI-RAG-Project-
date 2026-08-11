@@ -12,12 +12,11 @@ backend/).
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.core.config import settings
 from app.services import s3_sync_service
 
-FEEDBACK_DIR = Path(__file__).resolve().parents[2] / settings.feedback_dir_name
+FEEDBACK_DIR = settings.data_dir(settings.feedback_dir_name)
 FEEDBACK_PATH = FEEDBACK_DIR / settings.feedback_filename
 
 logger = logging.getLogger(__name__)

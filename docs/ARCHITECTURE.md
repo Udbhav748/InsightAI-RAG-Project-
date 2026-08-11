@@ -137,10 +137,14 @@ table stays the fast path and is mirrored into `api_keys` at startup). On
 success, it sets `request.state.client_name` (and `request.state.tenant_id`
 when a tenant is known) for downstream audit logging. It's applied at
 the router level to the documents and chat routers (`/health` stays open).
-This is a per-client gate (not per-user — no JWT, tokens, sessions, or
-roles), the smallest real improvement over one shared secret that's
-demonstrably per-client. See `docs/NOT_APPLICABLE.md` for why JWT/RBAC
-isn't the next step at this scale.
+This is a per-client gate (not per-user — no JWT, tokens, or sessions),
+the smallest real improvement over one shared secret that's demonstrably
+per-client. A minimal admin/member role (`Tenant.role`) is enforced
+through a central permission registry (`app/core/permissions.py`, not
+duplicated inline checks), gating two actions today — document deletion
+and cross-tenant document listing (`all_tenants=true`) — see
+`docs/NOT_APPLICABLE.md` for why a large-scale multi-role permission
+system isn't the next step at this scale.
 
 **Planner** (`app/services/rag_service.py`, `ChatService._plan`). Pure
 keyword/regex routing — no LLM call. It returns one of three actions:

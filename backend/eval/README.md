@@ -82,6 +82,33 @@ python eval/run_eval.py --dataset dataset_v2.json
 This prints a report to stdout and writes the full result (including
 every entry's raw answer) to `eval/results/<UTC-timestamp>.json`.
 
+## Metric selection: cost of failure
+
+Every metric in this harness exists because the failure mode it detects
+has a real, distinct cost if it ships silently. This is the explicit
+rationale — not "we compute lots of things," but "each thing we compute
+is here because *this specific failure* would otherwise go unnoticed
+until a user hit it":
+
+| Metric | Failure it detects | Cost if it ships undetected |
+|---|---|---|
+| Task Success Rate | The system gives a wrong or fabricated answer to a question it should get right | Direct user-facing harm — the core product promise (grounded answers) is broken; the most expensive failure mode in the harness, hence tracked first and with the largest dataset weight |
+| False Refusal Rate | The system declines a question it should have answered | A quieter cost than Task Success Rate, but still real: every false refusal is a user who got no value at all from an answerable query — this is the metric that would silently regress if a "safety" tweak (e.g. tightening the retrieval-grade threshold) overcorrects |
+| Injection Resistance / Prompt Injection Success Rate | The model complies with an attacker-supplied instruction hidden in a document or query | Security/trust failure, not just a wrong answer — a successful injection can exfiltrate the system prompt, make the app say attacker-chosen text, or otherwise act outside its intended role. Tracked with a zero-desired framing (like the other security metrics) because *any* non-zero rate here is a finding, not a tolerable baseline |
+| Data Leak Rate | A response exposes content it shouldn't (an injection marker leaking outside the entry that was designed to provoke it) | Same class of cost as injection success, but catches leaks the *adversarial* entries alone would miss — a leak provoked by an unrelated, ordinary-looking query is arguably worse, since nothing about the request looked suspicious |
+| Groundedness proxy / Entailment groundedness / Citation Accuracy | The answer sounds plausible but isn't actually supported by the retrieved context (or the citations shown don't back the claim) | The single most expensive *silent* failure mode for a RAG product specifically: a confident, well-formatted, wrong answer is more dangerous than an obvious one, because nothing about it signals "check this." Three metrics exist here, not one, because each catches a different way this can go wrong (lexical overlap without entailment; entailment without correct citations shown) — collapsing them into one would hide which layer actually failed |
+| Precision@5 / Recall@5 / MRR / Hit Rate@5 | The wrong chunks come back from retrieval, independent of what the LLM does with them | Isolates a cheaper-to-fix failure (retrieval tuning) from a more expensive one (regenerate/reflect) — without these, a retrieval regression and a generation regression look identical at the Task Success Rate level, and you'd spend engineering time in the wrong place |
+| Planner confusion matrix / accuracy / F1 | The system runs the wrong tool for a query (e.g. tries to summarize when it should retrieve) | Cheapest failure to detect (no LLM call needed — `_plan` is pure regex) and, left unchecked, the cheapest to silently compound: a misroute wastes every metric downstream of it on work that was never going to answer the actual question |
+| Memory Recall Rate | A follow-up question that depends on earlier conversation turns gets answered as if the history weren't there | Product-trust cost specific to multi-turn use — a user who has to repeat themselves loses confidence in the "assistant" framing even when each individual answer is factually fine |
+| Regression Rate (case-level, `regression_check.py`) | An aggregate metric holds steady while individual cases flip (some regress, others newly pass, netting to "no visible change") | The failure an aggregate-only gate would miss entirely — this is why it's a *second*, separate check rather than folded into the tolerance comparisons above |
+
+Not every metric here is weighted equally in CI: `HIGHER_IS_BETTER`/
+`LOWER_IS_BETTER` in `regression_check.py` gate on all of them with the
+same tolerance today (a deliberate simplification — see "Regression
+gate" below), rather than a severity-weighted gate that would fail harder
+on, say, a Data Leak Rate regression than a Groundedness proxy dip. That
+per-metric severity weighting is a reasonable next step, not yet built.
+
 ## What each metric means
 
 ### Planner metrics (confusion matrix, accuracy, precision/recall/F1)
@@ -179,6 +206,16 @@ resisted (it didn't comply — it just failed).
 This only detects the specific markers each entry defines; it isn't a
 general jailbreak classifier. Add sharper markers as you add new
 adversarial entries.
+
+### Prompt Injection Success Rate
+
+The exact complement of Injection Resistance (`1 - injection_resistance`,
+same per-entry flags, same `n`) — reported separately because it matches
+the literal framing used elsewhere ("successful injection attacks /
+total injection attempts"), not because it's independently computed.
+Kept alongside Injection Resistance rather than replacing it: existing
+baselines and the regression gate already key off `injection_resistance`
+by name.
 
 ### False Refusal Rate
 
@@ -339,7 +376,7 @@ python eval/regression_check.py --results eval/results/<new>.json \
   `source_accuracy`, `precision_at_5`, `recall_at_5`, `mrr`,
   `hit_rate_at_5`, `citation_accuracy`, `tool_arg_accuracy`.
 - **Lower-is-better** metrics fail when they rise more than `--tol`:
-  `false_refusal_rate`, `data_leak_rate`.
+  `false_refusal_rate`, `data_leak_rate`, `prompt_injection_success_rate`.
 - Metrics missing from either file are skipped — so new metrics don't gate
   until a baseline that includes them is committed.
 

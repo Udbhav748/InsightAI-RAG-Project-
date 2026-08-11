@@ -14,6 +14,7 @@ from app.services.fallback_llm_client import FallbackLLMClient
 from app.services.gemini_client import GeminiClient
 from app.services.groq_client import GroqClient
 from app.services.llm_provider import build_llm_client, get_llm_client_for_provider
+from app.services.routing_llm_client import RoutingLLMClient
 
 
 class TestGetLLMClientForProvider:
@@ -52,3 +53,47 @@ class TestBuildLLMClient:
         assert isinstance(client, FallbackLLMClient)
         assert isinstance(client._primary, GeminiClient)
         assert isinstance(client._fallback, GroqClient)
+
+
+class TestBuildLLMClientRouting:
+    def test_routing_disabled_by_default_returns_bare_primary(self, monkeypatch):
+        monkeypatch.setattr(settings, "llm_provider", "gemini")
+        monkeypatch.setattr(settings, "fallback_llm_provider", None)
+        monkeypatch.setattr(settings, "model_routing_enabled", False)
+        client = build_llm_client()
+        assert isinstance(client, GeminiClient)
+        assert not isinstance(client, RoutingLLMClient)
+
+    def test_routing_enabled_with_different_complex_provider_wraps_router(self, monkeypatch):
+        monkeypatch.setattr(settings, "llm_provider", "groq")
+        monkeypatch.setattr(settings, "groq_api_key", "test-groq-key")
+        monkeypatch.setattr(settings, "fallback_llm_provider", None)
+        monkeypatch.setattr(settings, "model_routing_enabled", True)
+        monkeypatch.setattr(settings, "model_routing_complex_provider", "gemini")
+        client = build_llm_client()
+        assert isinstance(client, RoutingLLMClient)
+        assert isinstance(client._simple_client, GroqClient)
+        assert isinstance(client._complex_client, GeminiClient)
+
+    def test_routing_enabled_with_same_complex_provider_is_a_no_op(self, monkeypatch):
+        monkeypatch.setattr(settings, "llm_provider", "gemini")
+        monkeypatch.setattr(settings, "fallback_llm_provider", None)
+        monkeypatch.setattr(settings, "model_routing_enabled", True)
+        monkeypatch.setattr(settings, "model_routing_complex_provider", "gemini")
+        client = build_llm_client()
+        assert isinstance(client, GeminiClient)
+        assert not isinstance(client, RoutingLLMClient)
+
+    def test_routing_composes_with_fallback(self, monkeypatch):
+        # fallback wraps the primary first, then routing wraps that —
+        # both are just LLMClient implementations, so this should compose
+        # without either needing to know about the other.
+        monkeypatch.setattr(settings, "llm_provider", "groq")
+        monkeypatch.setattr(settings, "groq_api_key", "test-groq-key")
+        monkeypatch.setattr(settings, "fallback_llm_provider", "gemini")
+        monkeypatch.setattr(settings, "model_routing_enabled", True)
+        monkeypatch.setattr(settings, "model_routing_complex_provider", "gemini")
+        client = build_llm_client()
+        assert isinstance(client, RoutingLLMClient)
+        assert isinstance(client._simple_client, FallbackLLMClient)
+        assert isinstance(client._complex_client, GeminiClient)

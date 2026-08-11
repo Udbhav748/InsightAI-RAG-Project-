@@ -6,8 +6,13 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 
 from app.api.v1.routes.query import get_vector_store
 from app.core.auth import require_api_key
+from app.core import permissions
 from app.core.config import settings
-from app.core.exceptions import ConfirmationRequiredError, DocumentNotFoundError
+from app.core.exceptions import (
+    ApprovalRequiredError,
+    ConfirmationRequiredError,
+    DocumentNotFoundError,
+)
 from app.models.schemas import (
     DocumentDeleteResponse,
     DocumentListResponse,
@@ -24,10 +29,31 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-def list_uploaded_documents(request: Request) -> DocumentListResponse:
+def list_uploaded_documents(request: Request, all_tenants: bool = False) -> DocumentListResponse:
     """List the caller's documents (tenant-scoped when the DB is enabled;
-    empty when the DB is disabled)."""
+    empty when the DB is disabled).
+
+    all_tenants=true is one of two permission-gated actions in this app
+    (see app/core/permissions.py's registry — the other is DELETE
+    /documents/{id}): an admin can opt into seeing every tenant's
+    documents, for oversight, instead of only their own.
+    list_documents(None) already returns everything unfiltered (see
+    document_repository.py) — this route only needed to decide *when*
+    passing None is allowed. A non-admin passing all_tenants=true is
+    denied outright rather than silently falling back to their own
+    scope, so a caller relying on this flag finds out immediately if it
+    didn't take effect.
+    """
     tenant_id = getattr(request.state, "tenant_id", None)
+
+    if all_tenants:
+        permissions.check_permission(
+            request,
+            permissions.DOCUMENT_LIST_ALL_TENANTS,
+            message="Listing documents across all tenants requires the admin role.",
+        )
+        tenant_id = None
+
     docs = list_documents(tenant_id)
 
     logger.info(
@@ -39,6 +65,7 @@ def list_uploaded_documents(request: Request) -> DocumentListResponse:
                 "count": len(docs),
                 "client": getattr(request.state, "client_name", "unknown"),
                 "tenant_id": tenant_id,
+                "all_tenants": all_tenants,
             }
         },
     )
@@ -84,12 +111,48 @@ async def upload_document(
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
 def delete_document(
-    document_id: str, request: Request, confirm: bool = False
+    document_id: str, request: Request, confirm: bool = False, approved: bool = False
 ) -> DocumentDeleteResponse:
     if not confirm:
         raise ConfirmationRequiredError(
             "Deleting a document is irreversible. Retry with ?confirm=true to proceed."
         )
+
+    # Human-approval gate: a deployment policy (off by default), separate
+    # from the confirm check above (mistake-prevention) and the role check
+    # below (access control) — mirrors web_search_requires_approval's exact
+    # shape in rag_service.py. When enabled, the caller must explicitly opt
+    # in with approved=true on top of confirm=true.
+    if settings.document_delete_requires_approval and not approved:
+        logger.info(
+            "audit_event",
+            extra={
+                "extra_fields": {
+                    "event": "document_delete_pending_approval",
+                    "path": request.url.path,
+                    "document_id": document_id,
+                    "client": getattr(request.state, "client_name", "unknown"),
+                }
+            },
+        )
+        raise ApprovalRequiredError(
+            "Deleting this document requires approval. Retry with ?approved=true to proceed."
+        )
+
+    # Permission check (see app/core/permissions.py): only enforced when
+    # the DB is enabled (role has nowhere to live otherwise —
+    # request.state.role is None, not "member", when the DB is disabled,
+    # matching tenant_id's own None-when-disabled convention below).
+    # DOCUMENT_DELETE degrades to "allowed" when role is None, so a
+    # non-DB deployment keeps today's pre-RBAC behavior (delete always
+    # allowed) rather than silently locking everyone out because no role
+    # could be determined.
+    permissions.check_permission(
+        request,
+        permissions.DOCUMENT_DELETE,
+        message="Deleting documents requires the admin role.",
+        document_id=document_id,
+    )
 
     # Ownership check: only enforced when we can actually verify it (a
     # requesting tenant *and* a known owner). An unknown owner (no DB row —

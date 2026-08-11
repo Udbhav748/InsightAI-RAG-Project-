@@ -10,7 +10,7 @@ from fastapi import UploadFile
 from app.core.config import settings
 from app.services import s3_sync_service
 
-UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.upload_dir_name
+UPLOAD_DIR = settings.data_dir(settings.upload_dir_name)
 
 logger = logging.getLogger(__name__)
 

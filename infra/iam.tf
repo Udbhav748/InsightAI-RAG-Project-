@@ -2,13 +2,12 @@
 # — there's no separate "what launches the container" vs. "what the app
 # calls" distinction in Lambda the way there was for Fargate.
 #
-# No SSM here (unlike the superseded ecs.tf design): the app never calls
-# the SSM SDK itself — SSM only existed as a delivery conduit for ECS's
-# `secrets` field, which has no Lambda equivalent (Lambda environment
-# variables are static strings set at function-config time, with no
-# per-variable "resolve from SSM at launch" mechanism). Lambda encrypts
-# environment variables at rest by default with an AWS-managed KMS key —
-# the same at-rest protection SecureString gave, one fewer resource.
+# SSM read permission below: the app itself now calls the SSM SDK at cold
+# start to resolve secrets (backend/app/core/config.py's
+# _load_secrets_from_ssm()) — see infra/ssm.tf's header comment for why
+# this replaced the earlier "just use plain Lambda env vars" design (it
+# left secrets readable in plaintext by anything with
+# lambda:GetFunctionConfiguration, including the CI deploy role below).
 
 data "aws_iam_policy_document" "lambda_assume" {
   statement {
@@ -55,4 +54,18 @@ resource "aws_iam_role_policy" "lambda_s3_data" {
   name   = "${var.project_name}-lambda-s3-data"
   role   = aws_iam_role.lambda_execution.id
   policy = data.aws_iam_policy_document.lambda_s3_data.json
+}
+
+# Scoped to this app's own SSM path prefix only — not ssm:*, not resource "*".
+data "aws_iam_policy_document" "lambda_ssm" {
+  statement {
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_ssm" {
+  name   = "${var.project_name}-lambda-ssm"
+  role   = aws_iam_role.lambda_execution.id
+  policy = data.aws_iam_policy_document.lambda_ssm.json
 }

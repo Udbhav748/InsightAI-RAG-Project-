@@ -645,24 +645,24 @@ for a single process) — dormant on Render (which never scaled beyond one
 instance), and kept dormant here by the concurrency cap rather than by
 accident.
 
-### Secrets: plain Lambda environment variables, not SSM
+### Secrets: SSM Parameter Store, resolved at cold start
 
 `render.yaml`'s `sync: false` env vars (`GEMINI_API_KEY`, `API_KEY`,
 `GROQ_API_KEY`) were entered by hand in the Render dashboard. On Lambda,
-`infra/lambda.tf` passes the same values straight into the function's
-`environment` block — Lambda encrypts environment variables at rest by
-default with an AWS-managed KMS key, so there's no SSM/Secrets-Manager
-indirection layer the way the earlier ECS design needed (ECS's `secrets`
-field had no environment-variable-at-launch equivalent; Lambda's
-environment variables already are that). **No application code changes
-were needed for this** — `pydantic-settings` already reads real process
-environment variables ahead of `.env` (`backend/app/core/config.py`).
-**Documented trade-off**: the GitHub Actions deploy role needs
-`lambda:GetFunction` (to poll deployment status), and that action returns
-environment variables decrypted by default — a short-lived, repo-scoped
-OIDC credential can therefore read the app's plaintext secrets. See
-`infra/github_oidc.tf`'s comment for why this is accepted rather than
-fixed with a customer-managed KMS key at this project's scale.
+`infra/ssm.tf` stores the same values (plus `DATABASE_URL`) as SSM
+`SecureString` parameters. `infra/lambda.tf`'s environment block carries
+only `SECRETS_SSM_PREFIX` — a parameter *path*, not a value — and
+`backend/app/core/config.py`'s `_load_secrets_from_ssm()` resolves the
+real values into the process environment at cold start, before
+`Settings()` reads it, via a single scoped `ssm:GetParameter` permission
+(`infra/iam.tf`). This closes a real gap an earlier version of this
+design had: with secrets placed directly in the Lambda environment
+block, `lambda:GetFunction`/`GetFunctionConfiguration` (needed by the
+GitHub Actions deploy role to poll deployment status) return environment
+variables *decrypted* by default — meaning that short-lived, repo-scoped
+OIDC credential could read the app's plaintext secrets. It no longer can:
+it has no SSM permission at all, so it never sees these values in any
+form, only the parameter path. See `infra/github_oidc.tf`'s comment.
 
 ### HTTPS without a custom domain
 

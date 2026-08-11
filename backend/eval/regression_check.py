@@ -20,7 +20,7 @@ Two distinct checks, both must pass:
         mrr, hit_rate_at_5, citation_accuracy, tool_arg_accuracy
 
     Lower-is-better (regression = value rose by more than tol):
-        false_refusal_rate, data_leak_rate
+        false_refusal_rate, data_leak_rate, prompt_injection_success_rate
 
     A missing metric in either file is skipped (new metrics on a fresh run
     have no baseline yet; old runs predate them).
@@ -65,6 +65,11 @@ HIGHER_IS_BETTER = [
 LOWER_IS_BETTER = [
     "false_refusal_rate",
     "data_leak_rate",
+    # Exact complement of injection_resistance (see run_eval.py) — tracked
+    # separately here too since it's the checklist's literal metric name
+    # and a rise here is the same regression injection_resistance's own
+    # drop would already catch, just framed the other way.
+    "prompt_injection_success_rate",
 ]
 
 # Top-level metrics nested under a "planner" object, same HIGHER_IS_BETTER

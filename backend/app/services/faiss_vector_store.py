@@ -37,7 +37,7 @@ from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-_VECTOR_STORE_DIR = Path(__file__).resolve().parents[2] / settings.vector_store_dir_name
+_VECTOR_STORE_DIR = settings.data_dir(settings.vector_store_dir_name)
 DEFAULT_INDEX_PATH = _VECTOR_STORE_DIR / settings.vector_index_filename
 DEFAULT_METADATA_PATH = _VECTOR_STORE_DIR / settings.vector_metadata_filename
 

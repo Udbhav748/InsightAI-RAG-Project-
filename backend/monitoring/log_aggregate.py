@@ -7,12 +7,16 @@ totals — and fails (exit 1) if any configured threshold is breached, which a
 scheduled job (cron / GitHub Actions) can turn into an alert.
 
 This is explicitly NOT a replacement for Prometheus/Grafana: it's
-pull-on-demand over a file, with no long-term storage, no dashboards, and
-no push alerting. See docs/CHECKLIST.md §10.
+pull-on-demand over a file, with no long-term storage and no dashboard.
+It can push an alert though — see --alert-webhook-url /
+monitoring/alert_webhook.py — a best-effort Slack-compatible webhook
+POST when any threshold is breached, optional and off by default. See
+docs/CHECKLIST.md §10.
 
 Usage (from backend/):
     python monitoring/log_aggregate.py app.log
     python monitoring/log_aggregate.py app.log --window-min 30 --json
+    python monitoring/log_aggregate.py app.log --alert-webhook-url https://hooks.slack.com/services/...
 
 Exit codes: 0 = within thresholds, 1 = threshold breached.
 """
@@ -21,10 +25,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Needed whether this runs as a standalone script (`python
+# monitoring/log_aggregate.py` puts monitoring/ on sys.path, not
+# backend/) or gets imported under pytest — same reasoning as
+# dashboard.py's identical line.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from monitoring.alert_webhook import send_alert  # noqa: E402
 
 # Default thresholds (set each via --*. Values are the alert limit; breaching
 # any of them flips the run to "alert").
@@ -320,6 +333,11 @@ def main() -> None:
     parser.add_argument("--min-workflow-completion-rate", type=float, default=DEFAULT_MIN_WORKFLOW_COMPLETION_RATE)
     parser.add_argument("--min-handoff-accuracy", type=float, default=DEFAULT_MIN_HANDOFF_ACCURACY)
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human text.")
+    parser.add_argument(
+        "--alert-webhook-url",
+        default=os.environ.get("ALERT_WEBHOOK_URL"),
+        help="Slack-compatible webhook URL to POST to when a threshold is breached. Unset = no-op.",
+    )
     args = parser.parse_args()
 
     records = _load_records(args.logfile)
@@ -335,6 +353,13 @@ def main() -> None:
         args.min_workflow_completion_rate,
         args.min_handoff_accuracy,
     )
+
+    if problems:
+        send_alert(
+            args.alert_webhook_url,
+            f"InsightAI-RAG log_aggregate alert ({agg['requests']} requests scanned):\n"
+            + "\n".join(f"- {p}" for p in problems),
+        )
 
     if args.json:
         print(json.dumps({"aggregate": agg, "alerts": problems, "alert": bool(problems)}))

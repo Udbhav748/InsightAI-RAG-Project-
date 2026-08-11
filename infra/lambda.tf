@@ -8,9 +8,13 @@ resource "aws_cloudwatch_log_group" "backend" {
 }
 
 locals {
-  # Secrets go straight into plain environment variables (no SSM — see
-  # iam.tf's header comment for why that's genuinely fine for Lambda).
-  # Lambda encrypts these at rest by default with an AWS-managed KMS key.
+  # Secrets are NOT set directly here — SECRETS_SSM_PREFIX (below) is the
+  # only secret-related thing in this env block: it's a parameter *path*,
+  # not a value. backend/app/core/config.py's _load_secrets_from_ssm()
+  # resolves GEMINI_API_KEY/API_KEY/GROQ_API_KEY/DATABASE_URL from SSM
+  # SecureString parameters under this prefix at cold start, before
+  # Settings() reads the environment — see infra/ssm.tf's header comment
+  # for why plain env vars (an earlier version of this file) were replaced.
   backend_env = {
     APP_NAME              = "InsightAI-RAG"
     DEBUG                 = "false"
@@ -18,10 +22,7 @@ locals {
     HYBRID_SEARCH_ENABLED = "true"
     RERANKING_ENABLED     = "false"
     FRONTEND_URL          = var.frontend_url
-    GEMINI_API_KEY        = var.gemini_api_key
-    API_KEY               = var.api_key
-    GROQ_API_KEY          = var.groq_api_key
-    DATABASE_URL          = var.database_url
+    SECRETS_SSM_PREFIX    = local.ssm_prefix
     S3_SYNC_ENABLED       = "true"
     S3_SYNC_BUCKET_NAME   = aws_s3_bucket.data.bucket
     PORT                  = "8000"
@@ -54,7 +55,21 @@ resource "aws_lambda_function" "backend" {
   # flight gets an immediate 429 (TooManyRequestsException), not queued —
   # a real behavioral difference from a single Fargate task's own uvicorn
   # process, which queues concurrent requests in-process instead.
-  reserved_concurrent_executions = 1
+  #
+  # TEMPORARILY DISABLED, not removed for good: this AWS account is new and
+  # unverified, capping its *total* Lambda concurrency at 10 account-wide
+  # (`aws lambda get-account-settings`). AWS requires at least 10 to stay
+  # unreserved after any reservation, so reserving even 1 here is
+  # mathematically impossible on this account right now — every attempt
+  # fails with "decreases account's UnreservedConcurrentExecution below its
+  # minimum value of [10]". Until account verification completes (raises
+  # the account-wide limit, typically to 1000), concurrent writes to the
+  # S3-synced FAISS index are NOT structurally prevented — a real, accepted
+  # short-term risk at this project's current near-zero traffic, not a
+  # forgotten TODO. Re-add `reserved_concurrent_executions = 1` the moment
+  # `aws lambda get-account-settings` shows AccountLimit.ConcurrentExecutions
+  # above 10, then `terraform apply` again.
+  # reserved_concurrent_executions = 1
 
   ephemeral_storage {
     size = var.lambda_ephemeral_storage_mb
@@ -64,7 +79,12 @@ resource "aws_lambda_function" "backend" {
     variables = local.backend_env
   }
 
-  depends_on = [aws_cloudwatch_log_group.backend]
+  depends_on = [
+    aws_cloudwatch_log_group.backend,
+    aws_ssm_parameter.gemini_api_key,
+    aws_ssm_parameter.api_key,
+    aws_ssm_parameter.groq_api_key,
+  ]
 
   lifecycle {
     # CI (deploy-backend.yml) updates the running image directly via
@@ -88,4 +108,16 @@ resource "aws_lambda_function_url" "backend" {
   # No cors {} block: CORSMiddleware (main.py) already handles CORS
   # end-to-end. A Function URL CORS config here would double-handle
   # preflight OPTIONS requests.
+}
+
+# authorization_type = "NONE" above only controls how AWS evaluates
+# authorization — it does NOT by itself create a resource policy allowing
+# anyone to actually invoke the URL. Without this explicit permission,
+# every call 403s with AccessDeniedException regardless of auth_type.
+resource "aws_lambda_permission" "function_url_public" {
+  statement_id           = "AllowPublicFunctionUrlInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.backend.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 }

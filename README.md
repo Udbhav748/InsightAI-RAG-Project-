@@ -547,16 +547,17 @@ InsightAI-RAG/
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
-reasoning behind these, plus what's explicitly out of scope (encryption
-at rest, JWT/RBAC, non-document tool integrations, live metrics
-dashboards) and why.
+reasoning behind these, plus what's explicitly out of scope (JWT,
+non-document tool integrations, live metrics dashboards) and why.
 
 ## Future work
 
 - [ ] Persistent, server-side document history (backend has `GET /documents` + optional Postgres metadata; the frontend still tracks uploads per-browser in `localStorage`)
 - [ ] Multi-document collections / workspaces
 - [ ] Support for additional file types beyond PDF (currently PDF-only; scanned/image-only PDFs are handled via OCR, see Features)
-- [ ] Per-user authentication (JWT/RBAC) in place of the single shared API key
+- [ ] Per-user authentication (JWT) in place of the single shared API key
+- [x] RBAC — minimal admin/member role gates on document deletion and cross-tenant document listing (see `docs/CHECKLIST.md` §13); not a general permission/scope system
+- [x] Human approval — deployment-toggleable approval gates on web search and document deletion (see `docs/CHECKLIST.md` §1, §13); not a general approval queue
 - [x] Encryption at rest for the vector store and uploaded files — S3 default SSE + Lambda's default KMS-encrypted environment variables on AWS (see `docs/CHECKLIST.md` §13); application-level/field-level encryption remains open
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file (would also remove the reserved-concurrency=1 write-safety constraint in `infra/lambda.tf`)
 - [ ] Human-in-the-loop approval for protected actions (e.g. document deletion)

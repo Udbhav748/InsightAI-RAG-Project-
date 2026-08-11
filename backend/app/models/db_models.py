@@ -39,6 +39,14 @@ class Tenant(Base):
     # wire format to the DB's integer PK.
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "admin" | "member". Defaults to "member" (the safe default — no
+    # capability without being explicitly granted) rather than "admin",
+    # unlike every other DB-backed field here. New tenants can be granted
+    # admin without any DB access via Settings.admin_client_names (see
+    # tenant_service.resolve_tenant) — checked live on every resolve, so
+    # promoting/demoting a client is just an env var change, no migration
+    # or manual SQL needed.
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="tenant")

@@ -3,9 +3,15 @@
 Two responsibilities, both no-ops when the DB is disabled (db_enabled()
 False — see app/core/database.py):
 
-1. `resolve_tenant(client_name)` returns the tenant_id for a client,
+1. `resolve_tenant(client_name)` returns (tenant_id, role) for a client,
    creating the Tenant row on first sight (idempotent). Used by auth to
-   scope every request to a tenant.
+   scope every request to a tenant and to gate role-restricted actions
+   (see app/core/auth.py, app/api/v1/routes/documents.py's delete route).
+   role is "admin" whenever client_name is in
+   Settings.admin_client_names_set — checked fresh on every call, not
+   cached, so promoting/demoting a client via that env var takes effect
+   on next request, no DB write needed — else whatever's stored on the
+   Tenant row (default "member", see app/models/db_models.py).
 
 2. `seed_keys_from_settings()` mirrors the env-configured API keys
    (Settings.api_key_table: hash -> client_name) into the api_keys table
@@ -25,10 +31,12 @@ from app.models.db_models import ApiKey, Tenant
 
 logger = logging.getLogger(__name__)
 
-# Client -> tenant_id cache. Tenants are created once and never renamed/deleted
-# in this app, so caching a resolved id (once it exists) is safe and avoids a
-# DB query on every authenticated request. Guarded by a lock because auth runs
-# from the thread pool.
+# Client -> tenant_id cache (role deliberately excluded — see resolve_tenant's
+# docstring on why it's always re-checked against admin_client_names_set
+# rather than cached alongside the id). Tenants are created once and never
+# renamed/deleted in this app, so caching the resolved id is safe and avoids
+# a DB query on every authenticated request. Guarded by a lock because auth
+# runs from the thread pool.
 _tenant_cache: dict[str, int] = {}
 _tenant_cache_lock = threading.Lock()
 
@@ -39,21 +47,29 @@ def _session():
     return SessionLocal()
 
 
-def resolve_tenant(client_name: str) -> int | None:
-    """Return the tenant_id for a client, creating the tenant row if
+def _effective_role(client_name: str, stored_role: str) -> str:
+    return "admin" if client_name in settings.admin_client_names_set else stored_role
+
+
+def resolve_tenant(client_name: str) -> tuple[int, str] | None:
+    """Return (tenant_id, role) for a client, creating the tenant row if
     needed. Returns None when the DB is disabled."""
     if not db_enabled():
         return None
 
     with _tenant_cache_lock:
-        cached = _tenant_cache.get(client_name)
-        if cached is not None:
-            return cached
+        cached_id = _tenant_cache.get(client_name)
+
+    if cached_id is not None:
+        with _session() as db:
+            tenant = db.query(Tenant).filter(Tenant.id == cached_id).first()
+            stored_role = tenant.role if tenant is not None else "member"
+        return cached_id, _effective_role(client_name, stored_role)
 
     with _session() as db:
         tenant = db.query(Tenant).filter(Tenant.slug == client_name).first()
         if tenant is not None:
-            tenant_id = tenant.id
+            tenant_id, stored_role = tenant.id, tenant.role
         else:
             tenant = Tenant(slug=client_name, name=client_name)
             db.add(tenant)
@@ -61,26 +77,29 @@ def resolve_tenant(client_name: str) -> int | None:
             db.refresh(tenant)
             logger.info(
                 "tenant_created",
-                extra={"extra_fields": {"client_name": client_name, "tenant_id": tenant.id}},
+                extra={"extra_fields": {"client_name": client_name, "tenant_id": tenant.id, "role": tenant.role}},
             )
-            tenant_id = tenant.id
+            tenant_id, stored_role = tenant.id, tenant.role
 
     with _tenant_cache_lock:
         _tenant_cache[client_name] = tenant_id
-    return tenant_id
+    return tenant_id, _effective_role(client_name, stored_role)
 
 
-def find_api_key(key_hash: str) -> tuple[str, int] | None:
-    """Return (client_name, tenant_id) for a key_hash if present in the
-    DB, else None. Lets DB-added keys (not in the env table) authenticate.
-    """
+def find_api_key(key_hash: str) -> tuple[str, int, str] | None:
+    """Return (client_name, tenant_id, role) for a key_hash if present in
+    the DB, else None. Lets DB-added keys (not in the env table)
+    authenticate. role follows the same admin_client_names_set override
+    as resolve_tenant()."""
     if not db_enabled():
         return None
     with _session() as db:
         api_key = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
         if api_key is None:
             return None
-        return api_key.client_name, api_key.tenant_id
+        tenant = db.query(Tenant).filter(Tenant.id == api_key.tenant_id).first()
+        stored_role = tenant.role if tenant is not None else "member"
+        return api_key.client_name, api_key.tenant_id, _effective_role(api_key.client_name, stored_role)
 
 
 def seed_keys_from_settings() -> None:

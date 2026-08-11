@@ -23,7 +23,7 @@ Status legend:
 | Memory | ✅ | Session store, in-memory + optional Postgres, `backend/app/services/session_store.py:158-183`, `postgres_session_store.py`; last-6-turns into prompt, `rag_service.py:145`; frontend `session_id` in `localStorage`, `frontend/src/hooks/useChat.js:33-40`. |
 | Retry | ✅ | tenacity on LLM + embedding, `gemini_client.py:60-66`, `groq_client.py:60-66`, `embedding_service.py:91-97`. Streaming generation is deliberately not retried (`gemini_client.py:118-126`). Web search now retries transient failures too (`web_search_service.py:44-53`). |
 | Reflection | ✅ | Corrective loop `_correct`, `rag_service.py:447-523`; `REFLECTION_INSTRUCTION`, `prompt_builder.py:55-59`; capped at `_MAX_LLM_CALLS=3` (`rag_service.py:58`). |
-| Human approval | ⚠️ | Human-in-the-loop gate on the web-search tool (the agent's only outbound side-effect): with `Settings.web_search_requires_approval`, web search only fires when the client sends `confirm_web_search=true`; skipped requests log `web_search_skipped_pending_approval` (`rag_service.py:_search_web`, `schemas.py:ChatRequest`). Default off — a deployment policy, not assumed behavior. |
+| Human approval | ⚠️ | Two independent gates, same shape, both off by default: web search (`Settings.web_search_requires_approval` + `confirm_web_search=true`, `rag_service.py:_search_web`, `schemas.py:ChatRequest`) and document deletion (`Settings.document_delete_requires_approval` + `approved=true`, `app/api/v1/routes/documents.py:delete_document`). Both are deployment policies, not assumed behavior; still no general per-action approval queue. |
 | Structured output | ⚠️ | Pydantic request/response schemas (`schemas.py`) + **JSON-mode LLM output**: `generate_structured()` via `response_mime_type`/`response_format` (gemini/groq clients), `build_structured_prompt`, validated against `StructuredAnswer` by `structured_output.py`, with free-text fallback. Gated on `Settings.structured_output_enabled` + `ChatRequest.structured_response` — off by default. |
 | Error handling | ✅ | `AppError` taxonomy + one global handler, `app/core/exceptions.py`, `error_handlers.py:26-61`. |
 | Logging | ✅ | Structured JSON + `request_id` on every line, `app/core/logging.py:17-40`, `main.py:51-68`. |
@@ -70,7 +70,7 @@ framework rewrite (justified in `docs/ARCHITECTURE.md` "Framework choice").
 | State management | ⚠️ — request-scoped, no explicit state object |
 | Retry | ✅ — LLM/embedding only (§1) |
 | Conditional routing | ✅ — planner + retrieval grading |
-| Human node | ⚠️ — `confirm_web_search` approval gate on the web-search tool (off by default); no full per-action approval queue |
+| Human node | ⚠️ — `confirm_web_search` (web search) and `approved` (document deletion) approval gates, both off by default; no full per-action approval queue |
 | Parallel execution | ⚠️ — none in chat path; ingestion embeds in batch (`embedding_service.py:126`) |
 | Multi-agent design | ❌ — single agent, N/A |
 
@@ -200,7 +200,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Hallucination detected | ⚠️ | Groundedness proxies; no explicit hallucination detector |
 | Grounding verified | ✅ | Lexical + LLM-judge groundedness |
 | Task success verified | ✅ | Keyword match, `run_eval.py:448-449` |
-| Human approval enforced | ⚠️ | `confirm_web_search` gate on the web-search tool (`web_search_requires_approval`); off by default |
+| Human approval enforced | ⚠️ | `confirm_web_search` gate on the web-search tool (`web_search_requires_approval`) and `approved` gate on document deletion (`document_delete_requires_approval`); both off by default |
 | Task Success Rate | ✅ | |
 | Tool Selection Accuracy | ✅ | |
 | Average Steps | ✅ | `metrics_report.py:116-157` + `avg_steps_taken`, `run_eval.py` |
@@ -248,7 +248,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Tracing | ✅ | SSE trace + request_id |
 | Logging | ✅ | Structured JSON stdout |
 | Metrics | ⚠️ | Offline `metrics_report.py` + `monitoring/log_aggregate.py` rollup; no live metrics |
-| Alerts | ⚠️ | Threshold breaches via `log_aggregate.py` exit code; no push/webhook |
+| Alerts | ✅ | Threshold breaches via `log_aggregate.py`/`uptime_check.py` exit codes, now also pushed via `monitoring/alert_webhook.py` — a best-effort Slack-compatible webhook POST (`--alert-webhook-url`/`ALERT_WEBHOOK_URL`, off by default), wired into `monitoring.yml`'s scheduled uptime job. Previously exit-code-only — corrected. |
 | Dashboards | ✅ | Text dashboard `monitoring/dashboard.py` (availability, latency, loop/tool rates, retry activity, requests/min, per-endpoint breakdown, tokens/cost; `--json` for machine consumers). A dependency-free stand-in for a hosted Grafana-style stack, sharing `log_aggregate.aggregate` so rollups can't drift. |
 | Prompt logs | ⚠️ | Version only, not content |
 | Tool logs | ✅ | Names, latency, and input/output summaries — success `tool_invocation` events now carry a bounded `output` shape (`_summarize_output`, `tool_registry.py:201-225`), so what each tool produced is visible at a glance. |
@@ -273,7 +273,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Evaluation pipeline | ✅ | Harness + manual `eval.yml`; now includes regression gate |
 | A/B testing | ⚠️ | Manual offline before/after runs, `OPERATIONS.md:8-54` |
 | Rollback | ✅ | Documented procedure, exercised on `v0.1.0`, `OPERATIONS.md` |
-| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/log_aggregate.py` (windowed thresholds); no hosted stack |
+| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/log_aggregate.py` (windowed thresholds, now with optional webhook push — `alert_webhook.py`); no hosted dashboard/live-metrics stack |
 | Regression Rate | ✅ | `regression_check.py` gate wired into `eval.yml` (compares vs `baselines/v2_groq.json`) |
 | Acceptance Rate | ✅ | Thumbs-up ratio, `metrics_report.py:183-208` |
 | Failure Rate | ⚠️ | Error rate by category, not a single failure-rate metric |
@@ -289,10 +289,10 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Docker | ✅ | `backend/Dockerfile` |
 | AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ✅ | AWS Lambda (container image), Terraform-provisioned (`infra/lambda.tf`); see `docs/OPERATIONS.md` "Deploying to AWS" |
 | HTTPS | ✅ | Backend: Lambda Function URL's default `*.lambda-url.*.on.aws` certificate. Frontend: CloudFront default certificate. Neither needs a custom domain (`infra/lambda.tf`, `infra/cloudfront_frontend.tf`) |
-| Secrets | ✅ | Plain Lambda environment variables, encrypted at rest by Lambda's default AWS-managed KMS key (`infra/lambda.tf`) — no SSM/Secrets Manager indirection needed for Lambda, unlike the superseded ECS design |
+| Secrets | ✅ | SSM `SecureString` (`infra/ssm.tf`), resolved by the app at cold start via a scoped `ssm:GetParameter` (`infra/iam.tf`) — the Lambda environment block itself carries only the parameter path, never the values |
 | Load balancer | N/A | No ALB/NLB in this design — a Lambda Function URL needs no separate load balancer resource; Lambda's own invocation model is the request-routing layer |
 | Autoscaling | ⚠️ | Deliberately capped at 1 (`infra/lambda.tf`'s `reserved_concurrent_executions = 1`), trading Lambda's native ability to scale out for FAISS/session write-safety — see that file's comment. A second concurrent request gets an immediate `429` rather than being served in parallel |
-| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts, `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/lambda.tf`) |
+| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts (uptime probe + log rollup, both with optional webhook push on breach), `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/lambda.tf`); no hosted dashboard/live-metrics stack |
 | Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/lambda.tf`); `log_aggregate.py` remains the offline rollup tool |
 | Requests per second | ⚠️ | Not measured |
 | Latency | ✅ | P50/P95/P99 offline |
@@ -308,21 +308,21 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | PII | ✅ | Regex detection (email/phone/id), flag-and-continue, `pii_service.py`; recall evals |
 | GDPR / DPDP / HIPAA | ⚠️ | No formal compliance assessment doc |
-| RBAC | ❌ | Per-client keys only; no roles/users |
+| RBAC | ✅ | `Tenant.role` (admin/member), `Settings.admin_client_names` (`app/core/config.py`), enforced through a central permission registry (`app/core/permissions.py`: permission constants + role→permission map + one `check_permission()` function) — not two copy-pasted inline checks. Two permissions populated today, only active when `DATABASE_URL` is set: `document_delete` (gates `DELETE /documents/{id}`) and `document_list_all_tenants` (gates `GET /documents?all_tenants=true`, cross-tenant visibility for oversight). Adding a new gated action is a 2-line addition to the registry plus one `check_permission()` call at the route, not a new pattern. Small by design — proportionate to this app's actual action surface — but the *mechanism* is now genuinely reusable, which is what "not a general permission system" was flagging. |
 | Encryption | ✅ | Transport: Lambda Function URL + CloudFront HTTPS. At-rest: S3 default SSE for uploads/vector_store/feedback/frontend build (`infra/s3_data.tf`, `infra/s3_frontend.tf`), Lambda environment variables encrypted by its default AWS-managed KMS key (`infra/lambda.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
 | Consent | ❌ | No consent mechanism |
-| Secrets | ✅ | Env vars, gitignored |
+| Secrets | ✅ | SSM Parameter Store `SecureString` on the Lambda deployment (`infra/ssm.tf`), resolved by the app at cold start (`config.py:_load_secrets_from_ssm`); plain gitignored env vars locally/docker-compose. Stale "env vars, gitignored"-only claim corrected — see "Secret management" row below for the same evidence. |
 | Prompt injection | ✅ | Untrusted-excerpt markers + eval resistance metrics |
 | Jailbreak | ⚠️ | Covered via injection markers in eval, no dedicated jailbreak suite |
 | Authentication | ✅ | `X-API-Key`, SHA-256 hashed, per-client |
-| Authorization | ⚠️ | Per-client only, no RBAC |
+| Authorization | ✅ | Tenant-ownership scoping for most actions, plus a real permission registry (`app/core/permissions.py`) gating two actions (document deletion; cross-tenant document listing) — replaced two duplicated inline `if role != "admin"` blocks with one reusable, centralized enforcement function (`check_permission()`), a fixed permission vocabulary, and an explicit role→permission map, extensible by adding a constant + one call site rather than copying a block. Deliberately still a *small* permission set (2 actions, 2 roles) — that's proportionate to this app's scale, not a remaining gap; see `tests/test_permissions.py` for the registry's own unit tests, including the role=None asymmetry between the two permissions. |
 | PII detection | ✅ | |
-| Secret management | ✅ | |
-| Human approval | ❌ | See §1 |
+| Secret management | ✅ | SSM Parameter Store `SecureString` (`infra/ssm.tf`), resolved by the app at cold start, not sourced from a plain env var |
+| Human approval | ⚠️ | See §1 — web search and document deletion both gated, off by default, no general approval queue |
 | Audit logs | ✅ | `audit_event` lines + `usage_logs` table |
 | PII Recall | ✅ | `eval/pii_recall_check.py` |
-| Unauthorized Access Rate | ✅ | Auth + rate-limit unit tests (`tests/test_security.py`); desired value zero |
-| Prompt Injection Success Rate | ⚠️ | Eval-resistance computed + prompt-builder unit tests (`tests/test_security.py`); no live adversarial suite |
+| Unauthorized Access Rate | ✅ | `eval/unauthorized_access_check.py` — real HTTP delete attempts across cross-tenant and cross-role scenarios; rate = successful unauthorized actions / attempts, desired value zero. (Previously this row cited `tests/test_security.py`, which tests auth/rate-limiting but never actually computed this rate — corrected.) |
+| Prompt Injection Success Rate | ✅ | `prompt_injection_success_rate` in `run_eval.py` (successful injection attacks / adversarial attempts — the checklist's literal framing, computed as `1 - injection_resistance` from the same per-entry flags) + prompt-builder unit tests (`tests/test_security.py`); regression-gated (`regression_check.py`'s `LOWER_IS_BETTER`). Previously this row only cited `injection_resistance`, the inverse-framed metric — corrected, both are now reported. |
 | False Refusal Rate | ✅ | `run_eval.py:468-469` |
 | Data Leak Rate | ✅ | `run_eval.py:471-473` |
 
@@ -348,14 +348,14 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Area | Item | Status |
 |---|---|---|
 | Evaluation | Dataset (normal/edge/failure/adversarial) | ✅ `dataset_v1/v2.json` include all four case types |
-| Evaluation | Metrics by cost of failure | ⚠️ Metrics exist; selection rationale partial |
+| Evaluation | Metrics by cost of failure | ✅ Explicit rationale table — each metric mapped to the failure it detects and the cost of that failure shipping undetected, `eval/README.md`'s "Metric selection: cost of failure" |
 | Evaluation | Human eval rubrics | ✅ `HUMAN_EVAL.md` |
 | Debugging | Logs / Traces / Errors | ✅ / ✅ / ✅ |
 | Deployment | Docker / Cloud / Monitoring | ✅ / ✅ / ⚠️ |
-| Monitoring | Uptime probe / Log rollup / Alerts | ✅ / ✅ / ⚠️ |
-| Security | Auth / Authorization / Secrets / Encryption | ✅ / ⚠️ / ✅ / ⚠️ |
+| Monitoring | Uptime probe / Log rollup / Alerts | ✅ / ✅ / ✅ |
+| Security | Auth / Authorization / Secrets / Encryption | ✅ / ✅ / ✅ / ✅ |
 | Reliability | Retry / Timeout / Fallback / Cache | ✅ / ✅ / ✅ / ✅ |
-| Cost | Tokens / Latency / Model routing / Cache | ✅ / ✅ / ⚠️ / ✅ |
+| Cost | Tokens / Latency / Model routing / Cache | ✅ / ✅ / ✅ / ✅ |
 | Docs | README / API / Architecture / Demo / Future work | ✅ / ✅ / ✅ / ✅ / ✅ |
 
 ### Final 10-question design review
@@ -396,4 +396,8 @@ Order chosen: **Metrics+eval → LLMOps+CI → Docs+drift → Monitoring → Too
 - ✅ Monitoring scaffold (`monitoring/uptime_check.py`, `monitoring/log_aggregate.py`, `monitoring.yml`)
 - ✅ Tool hardening (`app/services/tool_registry.py` formal I/O schemas + `@track_tool` success-rate logging; web-search retry; per-request cost rollup via `app/core/usage_tracking.py`; `tests/test_tool_registry.py`)
 - ✅ Human approval + structured output (`confirm_web_search` gate; `generate_structured` JSON-mode + `StructuredAnswer` validation with free-text fallback; `tests/test_human_approval_structured_output.py`) — both config-gated off by default
+- ✅ RBAC/Secrets/Unauthorized Access Rate closure (`Tenant.role` + `Settings.admin_client_names` gating `DELETE /documents/{id}`; SSM `SecureString` secret resolution at cold start; `eval/unauthorized_access_check.py`)
+- ✅ Second round: human approval for document deletion (`Settings.document_delete_requires_approval` + `approved=true`, mirrors `confirm_web_search`'s shape); Prompt Injection Success Rate metric added under its literal checklist name (`run_eval.py`, `regression_check.py`); RBAC generalized to a second action (`GET /documents?all_tenants=true`, admin-only)
+- ✅ Third round: Authorization/RBAC enforcement centralized into a real permission registry (`app/core/permissions.py`) — replaced the two duplicated inline role checks with one `check_permission()` function, a fixed permission vocabulary, and an explicit role→permission map; `tests/test_permissions.py` added
+- ✅ Fourth round (§14 Production Readiness): metrics-by-cost-of-failure rationale table (`eval/README.md`); monitoring push alerts (`monitoring/alert_webhook.py`, wired into `uptime_check.py`/`log_aggregate.py`/`monitoring.yml`, off by default); dynamic model routing by prompt complexity/risk (`app/services/routing_llm_client.py`, `Settings.model_routing_enabled`, composes with the existing fallback wrapper in `llm_provider.py`)
 - ⏭ Final status pass + commit (user review: pytest, live eval + regression gate, then commit)

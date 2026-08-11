@@ -42,3 +42,9 @@ jobs:
           # appending "health" directly (no extra slash) is correct.
           BACKEND_URL: ${{ vars.LAMBDA_FUNCTION_URL }}health
           FRONTEND_URL: https://${{ vars.FRONTEND_CLOUDFRONT_DOMAIN }}
+          # Optional. A Slack (or Discord/Teams-compatible) incoming
+          # webhook URL — set as a repo Secret to get a push notification
+          # on top of the failed-job signal this step already gives.
+          # Unset = uptime_check.py's send_alert() is a no-op, unchanged
+          # behavior. See backend/monitoring/alert_webhook.py.
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}

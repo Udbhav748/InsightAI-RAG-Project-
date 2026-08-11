@@ -68,16 +68,17 @@ data "aws_iam_policy_document" "github_actions_deploy" {
       "lambda:GetFunctionConfiguration",
     ]
     resources = [aws_lambda_function.backend.arn]
-    # Documented trade-off, not fixed here: GetFunction/GetFunctionConfiguration
-    # both return Lambda environment variables *decrypted* by default, so this
-    # role (needed for `aws lambda wait function-updated`, which polls
-    # GetFunction) can read the app's plaintext secrets. Closing this
-    # properly needs a customer-managed KMS key with kms:Decrypt withheld
-    # from this role — real complexity for unverified benefit at this
-    # project's scale (a personal AWS account, a short-lived OIDC-issued
-    # credential scoped to this one repo). Accepted and stated plainly,
-    # the same way the FAISS-concurrency caveat is accepted and documented
-    # rather than silently glossed over.
+    # GetFunction/GetFunctionConfiguration return Lambda environment
+    # variables decrypted by default — this role needs GetFunction for
+    # `aws lambda wait function-updated` to poll deploy status. That used
+    # to mean this role could read the app's plaintext secrets, back when
+    # they lived directly in the environment block. Not anymore: secrets
+    # now resolve from SSM at cold start (see infra/ssm.tf,
+    # backend/app/core/config.py's _load_secrets_from_ssm()) — the
+    # environment block only carries SECRETS_SSM_PREFIX (a parameter
+    # path, not a value), and this role has no ssm:* permission at all,
+    # so it never sees the secrets in any form. Gap closed, not just
+    # documented as accepted.
   }
 
   statement {

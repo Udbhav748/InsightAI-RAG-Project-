@@ -407,7 +407,9 @@ class TestDeleteDocument:
         # patching resolve_tenant (what require_api_key calls) and
         # get_document_owner (what the route calls) directly, the same
         # boundary-mocking style the rest of this fixture already uses.
-        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        # role="admin" so these ownership-focused tests aren't incidentally
+        # blocked by the separate role gate (see TestRoleBasedAccessControl).
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
         monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 2)
 
         response = client.delete(
@@ -422,7 +424,9 @@ class TestDeleteDocument:
         assert seeded_vector_store.get_chunks_by_document(SEEDED_DOCUMENT_ID) != []
 
     def test_same_tenant_can_delete_document(self, client, monkeypatch):
-        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        # role="admin" so these ownership-focused tests aren't incidentally
+        # blocked by the separate role gate (see TestRoleBasedAccessControl).
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
         monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 1)
 
         response = client.delete(
@@ -434,11 +438,120 @@ class TestDeleteDocument:
     def test_unknown_owner_does_not_block_delete(self, client, monkeypatch):
         # No DB row for this document (legacy upload, or uploaded with the
         # DB disabled) — unknown ownership isn't treated as a mismatch.
-        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: 1)
+        # role="admin" so these ownership-focused tests aren't incidentally
+        # blocked by the separate role gate (see TestRoleBasedAccessControl).
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
         monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: None)
 
         response = client.delete(
             f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
         )
+
+        assert response.status_code == 200
+
+
+class TestRoleBasedAccessControl:
+    """The role gate on DELETE /documents/{id} — see documents.py's
+    delete_document. Distinct from TestDeleteDocument's tenant-ownership
+    tests above, which all pin role="admin" specifically to isolate
+    ownership behavior from this gate."""
+
+    def test_member_role_cannot_delete_document(self, client, monkeypatch, seeded_vector_store):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "member"))
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 403
+        # A denied request must never have touched the vector store.
+        assert seeded_vector_store.get_chunks_by_document(SEEDED_DOCUMENT_ID) != []
+
+    def test_admin_role_can_delete_document(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 200
+
+    def test_no_role_info_does_not_block_delete(self, client):
+        # DB disabled (this fixture's default) means request.state.role is
+        # always None — the pre-RBAC behavior (delete always allowed) is
+        # preserved rather than locking everyone out because no role could
+        # be determined.
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 200
+
+
+class TestDocumentDeleteApprovalGate:
+    """Settings.document_delete_requires_approval — same human-in-the-loop
+    shape as web_search_requires_approval (see
+    test_human_approval_structured_output.py), applied to document
+    deletion. Distinct from confirm=true (mistake-prevention) and the role
+    gate above (access control): this is a deployment policy toggle."""
+
+    def test_gate_off_by_default_deletes_without_approved(self, client):
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+        assert response.status_code == 200
+
+    def test_gate_on_and_not_approved_returns_400(self, client, monkeypatch, seeded_vector_store):
+        monkeypatch.setattr(settings, "document_delete_requires_approval", True)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 400
+        # A denied request must never have touched the vector store.
+        assert seeded_vector_store.get_chunks_by_document(SEEDED_DOCUMENT_ID) != []
+
+    def test_gate_on_and_approved_deletes(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "document_delete_requires_approval", True)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}",
+            params={"confirm": "true", "approved": "true"},
+            headers=VALID_HEADERS,
+        )
+
+        assert response.status_code == 200
+
+
+class TestListDocumentsAllTenants:
+    """The second RBAC-gated action (see documents.py's
+    list_uploaded_documents): an admin can opt into a cross-tenant view via
+    all_tenants=true. DB disabled (this fixture's default) means
+    request.state.role is always None, so all_tenants=true is denied
+    outright rather than silently falling back to normal scoping."""
+
+    def test_default_scoping_unaffected(self, client):
+        response = client.get("/documents", headers=VALID_HEADERS)
+        assert response.status_code == 200
+
+    def test_all_tenants_denied_without_admin_role(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "member"))
+
+        response = client.get("/documents", params={"all_tenants": "true"}, headers=VALID_HEADERS)
+
+        assert response.status_code == 403
+
+    def test_all_tenants_denied_with_no_role_info(self, client):
+        # DB disabled: role is always None, not "admin" — denied, not a
+        # silent fallback to normal scoping.
+        response = client.get("/documents", params={"all_tenants": "true"}, headers=VALID_HEADERS)
+
+        assert response.status_code == 403
+
+    def test_all_tenants_allowed_for_admin(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
+
+        response = client.get("/documents", params={"all_tenants": "true"}, headers=VALID_HEADERS)
 
         assert response.status_code == 200

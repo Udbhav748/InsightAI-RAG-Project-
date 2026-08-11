@@ -5,31 +5,44 @@ set -e
 # real Lambda execution environment and never set locally or in
 # docker-compose.yml — so this whole block is a no-op outside Lambda.
 if [ -n "$AWS_LAMBDA_FUNCTION_NAME" ]; then
-  # Lambda's container filesystem is read-only outside /tmp. This app's
-  # three write paths (upload_service.py, faiss_vector_store.py,
-  # feedback_service.py) always resolve to /app/<name> — never a
-  # configurable absolute path — so they're redirected onto /tmp here,
-  # once, at container start, instead of by changing application code.
-  # Python's file I/O follows symlinks transparently, so no code changes
-  # are needed for this to work.
-  mkdir -p /tmp/uploads /tmp/vector_store /tmp/feedback
-  rm -rf /app/uploads /app/vector_store /app/feedback
-  ln -s /tmp/uploads /app/uploads
-  ln -s /tmp/vector_store /app/vector_store
-  ln -s /tmp/feedback /app/feedback
+  # Lambda's container filesystem is read-only everywhere except /tmp —
+  # including the empty uploads/vector_store/feedback directories already
+  # baked into the image, which can't even be deleted at runtime to make
+  # room for a symlink (an earlier version of this script tried exactly
+  # that: `rm -rf /app/uploads && ln -s ...`, and the rm failed with
+  # "Read-only file system", which combined with `set -e` above crashed
+  # the container before uvicorn ever started). Settings.data_dir()
+  # (app/core/config.py) is the actual fix — DATA_DIR_OVERRIDE=/tmp below
+  # makes upload_service.py/faiss_vector_store.py/feedback_service.py
+  # resolve their directories under /tmp directly, so nothing here needs
+  # to touch /app at all.
+  export DATA_DIR_OVERRIDE=/tmp
 
   # huggingface_hub writes a filelock next to cached model weights even on
   # a pure read — fails under /app's now-read-only filesystem even though
   # the model (baked into the image at build time) needs no re-download.
   # Copying the already-baked cache into /tmp once per cold start keeps
-  # the "no network fetch at startup" property while giving the lock file
-  # somewhere writable to live.
+  # the model available locally while giving the lock file somewhere
+  # writable to live.
   mkdir -p /tmp/hf_cache
   cp -r /app/.cache/huggingface /tmp/hf_cache/huggingface
   export HF_HOME=/tmp/hf_cache/huggingface
   export TRANSFORMERS_CACHE=/tmp/hf_cache/huggingface
   export SENTENCE_TRANSFORMERS_HOME=/tmp/hf_cache/huggingface
-  export HF_HUB_OFFLINE=1
+
+  # Deliberately NOT setting HF_HUB_OFFLINE=1 here (an earlier version of
+  # this script did). Verified directly: with it set, transformers'
+  # AutoConfig.from_pretrained -> cached_files() offline-resolution path
+  # raised LocalEntryNotFoundError ("we couldn't connect... and couldn't
+  # find them in the cached files") even though the copied cache was
+  # confirmed byte-for-byte identical to the source, including intact
+  # blob symlinks and the correct refs/main revision pointer — an
+  # offline-cache-resolution quirk in this transformers/huggingface_hub
+  # version, not a real "no network" situation. Lambda functions outside
+  # a VPC (this one is) have normal internet access, so the default,
+  # already-proven-working path — a quick network check, then load from
+  # the local cache, matching local dev's own behavior exactly — is both
+  # simpler and correct. Confirmed working via direct test.
 fi
 
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
