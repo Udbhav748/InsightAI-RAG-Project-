@@ -67,6 +67,18 @@ class SourceReference(BaseModel):
         None,
         description="Source URL, present only for web-sourced citations (document_id='web').",
     )
+    content_type: str = Field(
+        "text",
+        description="What kind of content this citation was derived from: 'text' (default, "
+        "ordinary chunked document text), 'image_caption' (multi-modal RAG — a Gemini-generated "
+        "caption of an extracted figure), or 'table' (a table reduced to markdown text). "
+        "Read straight off the underlying chunk's metadata.",
+    )
+    page_number: int | None = Field(
+        None,
+        description="1-based source page, when known — always present for image_caption/table "
+        "citations, generally absent for ordinary text chunks (which aren't tracked per-page).",
+    )
 
 
 class DiagnosisInfo(BaseModel):

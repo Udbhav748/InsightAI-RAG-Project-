@@ -187,6 +187,12 @@ class TestChat:
                 "chunk_id": "chunk-1",
                 "excerpt": SEEDED_CHUNK_TEXT,
                 "url": None,
+                # Multi-modal RAG citation fields (rag_service._source_references) —
+                # this fixture's seeded chunk carries no content_type/page_number
+                # metadata, so both fall back to their defaults, same as any
+                # ordinary pre-multi-modal chunk would.
+                "content_type": "text",
+                "page_number": None,
             }
         ]
         assert payload["steps_taken"] >= 4  # plan + retrieve + grade + generate
@@ -239,6 +245,8 @@ class TestChatStream:
                 "chunk_id": "chunk-1",
                 "excerpt": SEEDED_CHUNK_TEXT,
                 "url": None,
+                "content_type": "text",
+                "page_number": None,
             }
         ]
 

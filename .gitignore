@@ -53,6 +53,12 @@ Thumbs.db
 # Local-only, not for GitHub
 PROJECT_NOTES.md
 CLAUDE.md
+SESSION_*.md
+
+# Local SQLite test databases (e.g. DATABASE_URL=sqlite:///./db.sqlite3
+# during manual/local testing) — never meant to be committed.
+*.sqlite3
+*.sqlite3-journal
 
 # Terraform (infra/) — state and secrets never committed; the provider
 # lock file (.terraform.lock.hcl) IS committed, for reproducible versions.

@@ -1,7 +1,18 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, FileText } from 'lucide-react'
+import { ChevronDown, FileText, Image as ImageIcon, Table2 } from 'lucide-react'
 import { getDocumentName } from '../../services/documentService'
+
+// Multi-modal RAG: a citation's content_type (SourceReference.content_type,
+// default "text") says what kind of content it was actually derived from —
+// an ordinary chunk, a Gemini-generated caption of an extracted figure, or
+// a table reduced to markdown. Icon + label per type, falling back to the
+// original FileText/"Uploaded document" look for anything unrecognized so
+// a future content_type value degrades gracefully instead of breaking.
+const CONTENT_TYPE_META = {
+  image_caption: { icon: ImageIcon, label: 'Figure' },
+  table: { icon: Table2, label: 'Table' },
+}
 
 // expandedIds/onToggle/sourceRefs are optional — when omitted, this manages
 // its own expand state (the original, standalone behavior). CitedAnswer
@@ -39,6 +50,11 @@ export default function SourceReferences({ sources = [], expandedIds, onToggle, 
         // when possible; otherwise show a generic label rather than a raw
         // UUID fragment.
         const documentName = getDocumentName(source.document_id) ?? 'Uploaded document'
+        const { icon: TypeIcon, label: typeLabel } = CONTENT_TYPE_META[source.content_type] ?? {
+          icon: FileText,
+          label: documentName,
+        }
+        const pageSuffix = source.page_number != null ? ` · page ${source.page_number}` : ''
 
         return (
           <div
@@ -56,9 +72,10 @@ export default function SourceReferences({ sources = [], expandedIds, onToggle, 
                   {source.number}
                 </span>
               )}
-              <FileText size={12} className="shrink-0 text-slate-400 dark:text-ink-muted" />
+              <TypeIcon size={12} className="shrink-0 text-slate-400 dark:text-ink-muted" />
               <span className="flex-1 truncate font-medium text-slate-600 dark:text-ink-secondary">
-                {documentName}
+                {typeLabel}
+                {pageSuffix}
               </span>
               <motion.span
                 animate={{ rotate: isExpanded ? 180 : 0 }}

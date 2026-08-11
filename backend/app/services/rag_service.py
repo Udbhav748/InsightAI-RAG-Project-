@@ -206,7 +206,17 @@ def _source_references(chunks: list[RetrievedChunk], start: int = 1) -> list[Sou
     """
     return [
         SourceReference(
-            number=i, document_id=chunk.document_id, chunk_id=chunk.chunk_id, excerpt=_excerpt(chunk.text)
+            number=i,
+            document_id=chunk.document_id,
+            chunk_id=chunk.chunk_id,
+            excerpt=_excerpt(chunk.text),
+            # Defaults ("text"/None) cover ordinary chunks untouched by
+            # multi-modal RAG; image-caption/table chunks carry these in
+            # their own metadata (see chunking_service.chunk_text) and
+            # just pass through here — this file's ownership of the
+            # RAG/citation surface, not multi-modal RAG's.
+            content_type=chunk.metadata.get("content_type", "text"),
+            page_number=chunk.metadata.get("page_number"),
         )
         for i, chunk in enumerate(chunks, start=start)
     ]

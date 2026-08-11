@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowUpDown, FileText, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowUpDown, FileText, Image as ImageIcon, Table2, Trash2, UploadCloud } from 'lucide-react'
 import SearchInput from '../components/ui/SearchInput'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
@@ -143,6 +143,26 @@ export default function Documents() {
                 <span className="w-28 shrink-0 text-xs text-slate-500 dark:text-ink-muted">
                   {doc.total_pages != null ? `${doc.total_pages} pg · ${doc.total_chunks} chunks` : '—'}
                 </span>
+                {/* Multi-modal extraction badges — only present once
+                    images_captioned/total_tables exist on a stored upload
+                    result, so this renders nothing for documents uploaded
+                    before those fields existed or with the features off. */}
+                {doc.images_captioned > 0 && (
+                  <span
+                    title={`${doc.images_captioned} image(s) captioned`}
+                    className="flex shrink-0 items-center gap-1 text-slate-400 dark:text-ink-muted"
+                  >
+                    <ImageIcon size={13} strokeWidth={1.75} />
+                  </span>
+                )}
+                {doc.total_tables > 0 && (
+                  <span
+                    title={`${doc.total_tables} table(s) extracted`}
+                    className="flex shrink-0 items-center gap-1 text-slate-400 dark:text-ink-muted"
+                  >
+                    <Table2 size={13} strokeWidth={1.75} />
+                  </span>
+                )}
                 <StatusBadge status={effectiveStatus(doc)} />
                 <button
                   type="button"
