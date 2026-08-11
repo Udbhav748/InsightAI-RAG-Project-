@@ -9,19 +9,20 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
-from app.core.auth import require_api_key
-from app.core.exceptions import VectorStoreNotFoundError
+from app.core.auth import require_auth
+from app.core.exceptions import SessionNotFoundError, VectorStoreNotFoundError
 from app.models.schemas import ChatRequest, ChatResponse, FeedbackRequest, FeedbackResponse
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
+from app.services.session_repository import get_session_owner, list_sessions, set_session_title_if_unset
 from app.services.session_store import get_session_store
 from app.services.validation_service import validate_image_upload
 from app.services.vector_store import VectorStore
 
-router = APIRouter(tags=["Chat"], dependencies=[Depends(require_api_key)])
+router = APIRouter(tags=["Chat"], dependencies=[Depends(require_auth)])
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +69,10 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
 
     # Resolve session_id: use provided, or create new if none/not found
     session_id = session_store.get_or_create_session(payload.session_id, tenant_id=tenant_id)
+    # Best-effort, no-op after the first call for a given session — see
+    # session_repository.py. Gives the history-list UI (GET
+    # /chat/sessions) something to show besides a raw UUID.
+    set_session_title_if_unset(session_id, payload.query)
 
     # Get server-side history (takes precedence over client-sent history)
     history = session_store.get_history(session_id)
@@ -144,7 +149,7 @@ def _sse_line(event: dict) -> str:
 
 @router.post("/chat/stream")
 def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
-    # Same auth (router-level Depends(require_api_key)) and request body
+    # Same auth (router-level Depends(require_auth)) and request body
     # as POST /chat — this is the same pipeline, just fanning out its
     # progress as Server-Sent Events instead of returning one response at
     # the end. POST /chat itself is untouched; this is an additive route.
@@ -154,6 +159,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
 
     # Resolve session_id: use provided, or create new if none/not found
     session_id = session_store.get_or_create_session(payload.session_id, tenant_id=tenant_id)
+    set_session_title_if_unset(session_id, payload.query)
 
     # Get server-side history (takes precedence over client-sent history)
     history = session_store.get_history(session_id)
@@ -274,7 +280,7 @@ async def diagnose(
 
 @router.post("/chat/feedback", response_model=FeedbackResponse)
 def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResponse:
-    # reviewer_id comes from the authenticated caller (require_api_key,
+    # reviewer_id comes from the authenticated caller (require_auth,
     # the router-level dependency), never from the request body — a
     # client-supplied reviewer identity would let one API key pose as
     # multiple reviewers and fabricate Inter-Annotator Agreement.
@@ -304,39 +310,80 @@ def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResp
     return FeedbackResponse(status="recorded")
 
 
-@router.delete("/chat/session")
-def delete_chat_session(request: Request) -> dict:
-    """Delete the current chat session (server-side history).
-    
-    Called when user clicks "New chat" to clear server-side session.
-    Session ID is read from request body (JSON) or header.
-    """
+@router.get("/chat/sessions")
+def list_chat_sessions(request: Request) -> dict:
+    """List the caller's own past conversations (title, timestamps),
+    newest-accessed first — the history sidebar's data source. []
+    when the DB is disabled: session listing needs durable storage that
+    the in-memory store, tied to one process, can't provide anyway."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    sessions = list_sessions(tenant_id)
+
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "sessions_listed",
+                "path": request.url.path,
+                "count": len(sessions),
+                "client": getattr(request.state, "client_name", "unknown"),
+            }
+        },
+    )
+    return {"sessions": sessions, "total": len(sessions)}
+
+
+def _check_session_ownership(request: Request, session_id: str) -> None:
+    """Same "unknown isn't a mismatch, but a known mismatch is a 404"
+    pattern documents.py's delete route already uses for
+    get_document_owner — a non-owner sees the same response a
+    genuinely missing session_id would give, never a 403 that would
+    confirm the session exists."""
+    requester_tenant_id = getattr(request.state, "tenant_id", None)
+    if requester_tenant_id is None:
+        return
+    owner_tenant_id = get_session_owner(session_id)
+    if owner_tenant_id is not None and owner_tenant_id != requester_tenant_id:
+        raise SessionNotFoundError(f"No session found with id {session_id}")
+
+
+@router.get("/chat/sessions/{session_id}")
+def get_chat_session(session_id: str, request: Request) -> dict:
+    """Full turn history for one session — what the frontend calls to
+    resume a past conversation from the history list."""
+    _check_session_ownership(request, session_id)
+
     session_store = get_session_store()
-    
-    # Try to get session_id from request body (JSON) or header
-    import json
-    session_id = None
-    try:
-        body = request.headers.get("X-Session-ID")
-        if body:
-            session_id = body
-    except Exception:
-        pass
-    
-    if session_id:
-        deleted = session_store.delete_session(session_id)
-        if deleted:
-            logger.info(
-                "audit_event",
-                extra={
-                    "extra_fields": {
-                        "event": "session_deleted",
-                        "path": request.url.path,
-                        "session_id": session_id,
-                        "client": getattr(request.state, "client_name", "unknown"),
-                    }
-                },
-            )
-            return {"status": "deleted", "session_id": session_id}
-    
+    history = session_store.get_history(session_id)
+    if history is None:
+        raise SessionNotFoundError(f"No session found with id {session_id}")
+
+    return {"session_id": session_id, "turns": history}
+
+
+@router.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: str, request: Request) -> dict:
+    """Delete one session by id — replaces the old header-based
+    DELETE /chat/session (which read X-Session-ID and had a dead-code
+    path that tried, and failed, to also read a JSON body). A path
+    param is the natural shape once a history list UI exists: each row
+    has its own delete action."""
+    _check_session_ownership(request, session_id)
+
+    session_store = get_session_store()
+    deleted = session_store.delete_session(session_id)
+    if deleted:
+        logger.info(
+            "audit_event",
+            extra={
+                "extra_fields": {
+                    "event": "session_deleted",
+                    "path": request.url.path,
+                    "session_id": session_id,
+                    "client": getattr(request.state, "client_name", "unknown"),
+                }
+            },
+        )
+        return {"status": "deleted", "session_id": session_id}
+
     return {"status": "not_found", "session_id": session_id}

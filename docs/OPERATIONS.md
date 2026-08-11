@@ -550,8 +550,8 @@ Build settings, identical on either platform:
 - Output directory: `dist`
 - Env vars (build-time — Vite inlines `VITE_*` at build time, not runtime,
   see `frontend/Dockerfile`'s existing comment on why): `VITE_API_BASE_URL`
-  = the Render backend's URL, `VITE_API_KEY` = the same value as the
-  backend's `API_KEY` secret.
+  = the Render backend's URL. No API key needed — the web app authenticates
+  via individual user login (JWT) at runtime, not a build-time secret.
 
 Once the frontend has a real URL, go back to the Render dashboard and set
 `FRONTEND_URL` to it — this is the CORS allowlist `main.py` checks against.

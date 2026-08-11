@@ -10,7 +10,7 @@ from app.core.database import db_enabled, init_db
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.request_context import request_id_var
-from app.api.v1.routes import documents, health, query
+from app.api.v1.routes import auth, documents, health, query
 from app.services import s3_sync_service
 from app.services.demo_seed_service import seed_if_empty
 from app.services.tenant_service import seed_keys_from_settings
@@ -109,5 +109,6 @@ async def usage_log_middleware(request: Request, call_next):
 register_exception_handlers(app)
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(query.router)

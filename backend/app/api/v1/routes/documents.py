@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 
 from app.api.v1.routes.query import get_vector_store
-from app.core.auth import require_api_key
+from app.core.auth import require_auth
 from app.core import permissions
 from app.core.config import settings
 from app.core.exceptions import (
@@ -24,7 +24,7 @@ from app.services.document_repository import delete_document_metadata, get_docum
 from app.services.upload_service import UPLOAD_DIR
 from app.services.validation_service import validate_pdf_upload
 
-router = APIRouter(tags=["Documents"], dependencies=[Depends(require_api_key)])
+router = APIRouter(tags=["Documents"], dependencies=[Depends(require_auth)])
 logger = logging.getLogger(__name__)
 
 

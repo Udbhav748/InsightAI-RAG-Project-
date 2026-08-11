@@ -52,6 +52,17 @@ class DocumentNotFoundError(AppError):
     error_code = "DOCUMENT_NOT_FOUND"
 
 
+class SessionNotFoundError(AppError):
+    """Mirrors DocumentNotFoundError's shape: a non-owner requesting
+    another tenant's session sees the same 404 a genuinely missing
+    session_id would give, never a 403 that would confirm the session
+    exists."""
+
+    status_code = 404
+    taxonomy_category = "input"
+    error_code = "SESSION_NOT_FOUND"
+
+
 class ConfirmationRequiredError(AppError):
     status_code = 400
     taxonomy_category = "input"
@@ -175,6 +186,24 @@ class PromptGenerationError(AppError):
     status_code = 400
     taxonomy_category = "prompt"
     error_code = "PROMPT_GENERATION_ERROR"
+
+
+class AuthConfigurationError(AppError):
+    """JWT_SECRET_KEY isn't set — same "fail loud" shape as
+    LLMConfigurationError's missing-API-key case. Raised by the /auth
+    routes, never by require_auth (an unconfigured deployment simply
+    never receives a JWT to begin with, since signup/login can't have
+    issued one)."""
+
+    status_code = 500
+    taxonomy_category = "deployment"
+    error_code = "AUTH_CONFIGURATION_ERROR"
+
+
+class EmailAlreadyRegisteredError(AppError):
+    status_code = 409
+    taxonomy_category = "input"
+    error_code = "EMAIL_ALREADY_REGISTERED"
 
 
 class ChatServiceError(AppError):

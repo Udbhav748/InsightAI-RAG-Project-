@@ -88,6 +88,13 @@ variable "database_url" {
   default     = ""
 }
 
+variable "jwt_secret_key" {
+  description = "Optional. Signing secret for individual-user-login JWTs (see backend/app/core/auth.py's require_auth). Empty = user login (POST /auth/signup, /auth/login) unavailable; API-key auth is unaffected either way."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "frontend_url" {
   description = <<-EOT
     The frontend CloudFront domain, e.g. "https://dxxxxx.cloudfront.net" — used

@@ -186,3 +186,33 @@ class DocumentListItem(BaseModel):
 class DocumentListResponse(BaseModel):
     documents: list[DocumentListItem]
     total: int
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=255)
+    # Literal[True], not bool — Pydantic rejects consent=false or a
+    # missing field with a 422 automatically, so the route doesn't need
+    # a manual check. Signup is the first place this app stores real PII
+    # (email, password hash); this confirms the user was shown and
+    # agreed to that before an account is created.
+    consent: Literal[True] = Field(
+        ...,
+        description="Must be true — confirms the user agreed to how their email/password are stored.",
+    )
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=1, max_length=255)
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class CurrentUserResponse(BaseModel):
+    email: str
+    tenant_id: int
+    role: str

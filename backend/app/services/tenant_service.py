@@ -47,7 +47,11 @@ def _session():
     return SessionLocal()
 
 
-def _effective_role(client_name: str, stored_role: str) -> str:
+def effective_role(client_name: str, stored_role: str) -> str:
+    """Public (not module-private) because app/services/user_service.py
+    also calls this for JWT-authenticated users — Settings.admin_client_names
+    applies to a user's email exactly the same way it applies to an
+    API-key client_name, one shared admin-override mechanism either way."""
     return "admin" if client_name in settings.admin_client_names_set else stored_role
 
 
@@ -64,7 +68,7 @@ def resolve_tenant(client_name: str) -> tuple[int, str] | None:
         with _session() as db:
             tenant = db.query(Tenant).filter(Tenant.id == cached_id).first()
             stored_role = tenant.role if tenant is not None else "member"
-        return cached_id, _effective_role(client_name, stored_role)
+        return cached_id, effective_role(client_name, stored_role)
 
     with _session() as db:
         tenant = db.query(Tenant).filter(Tenant.slug == client_name).first()
@@ -83,7 +87,7 @@ def resolve_tenant(client_name: str) -> tuple[int, str] | None:
 
     with _tenant_cache_lock:
         _tenant_cache[client_name] = tenant_id
-    return tenant_id, _effective_role(client_name, stored_role)
+    return tenant_id, effective_role(client_name, stored_role)
 
 
 def find_api_key(key_hash: str) -> tuple[str, int, str] | None:
@@ -99,7 +103,7 @@ def find_api_key(key_hash: str) -> tuple[str, int, str] | None:
             return None
         tenant = db.query(Tenant).filter(Tenant.id == api_key.tenant_id).first()
         stored_role = tenant.role if tenant is not None else "member"
-        return api_key.client_name, api_key.tenant_id, _effective_role(api_key.client_name, stored_role)
+        return api_key.client_name, api_key.tenant_id, effective_role(api_key.client_name, stored_role)
 
 
 def seed_keys_from_settings() -> None:

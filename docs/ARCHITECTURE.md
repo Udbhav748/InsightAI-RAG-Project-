@@ -16,7 +16,7 @@ flowchart TD
     end
 
     subgraph API["FastAPI backend"]
-        Auth["X-API-Key auth<br/>(core/auth.py)"]
+        Auth["Auth: JWT or X-API-Key<br/>(core/auth.py)"]
         Planner["Planner<br/>ChatService._plan<br/>(rag_service.py)"]
         Retrieval["Retrieval tool<br/>retrieval_service.py<br/>+ embedding_service.py"]
         Grading["Retrieval grading<br/>ChatService._grade_retrieval<br/>(insufficient / weak / good)"]
@@ -29,7 +29,7 @@ flowchart TD
     Gemini["Gemini API<br/>(gemini_client.py)"]
     DDG["DuckDuckGo<br/>(duckduckgo_search)"]
 
-    UI -- "axios, X-API-Key header" --> Auth
+    UI -- "axios, Authorization: Bearer JWT" --> Auth
     Auth --> Planner
 
     Planner -- "conversational" --> UI
@@ -118,31 +118,52 @@ see the README for running both services together locally.
 
 ## Components
 
-**React frontend** (`frontend/src/`). A Vite + Tailwind SPA with five
-routes (Home, Upload, Chat, Documents, Settings). `services/api.js` holds
-a shared axios instance that attaches the `X-API-Key` header
-(`VITE_API_KEY`) to every request. `hooks/useChat.js` owns chat state
-client-side and sends the running conversation as `history` on each
-`/chat` call; `services/documentService.js` tracks upload history in
-`localStorage` (the backend's `GET /documents` is a later addition the
-frontend doesn't consume yet).
+**React frontend** (`frontend/src/`). A Vite + Tailwind SPA with routes
+for Home, Chat, History, Diagnose, Upload, Documents, Settings, plus
+Login/Signup (unauthenticated, outside the protected route tree — see
+`App.jsx`'s `ProtectedRoute`). `services/api.js` holds a shared axios
+instance whose request interceptor attaches `Authorization: Bearer
+<token>` from `localStorage` (`contexts/AuthContext.jsx` owns
+login/signup/logout and hydrates the current user from a stored token
+on load); a response interceptor clears the token and redirects to
+`/login` on a 401. `hooks/useChat.js` owns chat state client-side and
+sends the running conversation as `history` on each `/chat` call, and
+can also hydrate itself from a past conversation (`loadSession`, used
+by `pages/History.jsx`) instead of starting fresh;
+`services/documentService.js` tracks upload history in `localStorage`
+(the backend's `GET /documents` is a later addition the frontend
+doesn't consume yet).
 
-**Auth** (`app/core/auth.py`). A small keys table loaded from
-`Settings.api_key_table` — a JSON map of `client_name -> sha256_hash`
-parsed from `API_KEYS` (with a single `API_KEY` fallback for backward
-compatibility). The `require_api_key` dependency checks the incoming
-`X-API-Key` header against the hashed table; when the database is enabled
-it also checks `api_keys` for any key added directly in Postgres (the env
-table stays the fast path and is mirrored into `api_keys` at startup). On
-success, it sets `request.state.client_name` (and `request.state.tenant_id`
-when a tenant is known) for downstream audit logging. It's applied at
-the router level to the documents and chat routers (`/health` stays open).
-This is a per-client gate (not per-user — no JWT, tokens, or sessions),
-the smallest real improvement over one shared secret that's demonstrably
-per-client. A minimal admin/member role (`Tenant.role`) is enforced
-through a central permission registry (`app/core/permissions.py`, not
-duplicated inline checks), gating two actions today — document deletion
-and cross-tenant document listing (`all_tenants=true`) — see
+**Auth** (`app/core/auth.py`). Two parallel paths, both real, resolving
+to the same `request.state.{client_name, tenant_id, role}` shape so
+nothing downstream (permissions, audit logs, rate limiting) needs to
+know which one fired:
+
+- **API key** (`require_api_key`): a small keys table loaded from
+  `Settings.api_key_table` — a JSON map of `client_name -> sha256_hash`
+  parsed from `API_KEYS` (with a single `API_KEY` fallback for backward
+  compatibility). Checks the incoming `X-API-Key` header against the
+  hashed table; when the database is enabled it also checks `api_keys`
+  for any key added directly in Postgres. Meant for non-browser/service
+  clients (scripts, CI).
+- **Individual user login** (`app/services/user_service.py`,
+  `app/api/v1/routes/auth.py`): `POST /auth/signup`/`POST /auth/login`
+  create/verify a `User` row (bcrypt-hashed password — deliberately not
+  the SHA-256 convention above, which only suits already-high-entropy
+  API keys) and issue a JWT. Each signed-up user gets their own personal
+  `Tenant` (1:1), which is what makes documents/chat-history private per
+  user without any schema change to those tables — they were already
+  `tenant_id`-scoped. Meant for the web frontend.
+
+`require_auth` is the actual router-level dependency: it checks
+`Authorization: Bearer <jwt>` first, and falls through to
+`require_api_key` unchanged if that header is absent — every existing
+API-key caller keeps working exactly as before. Applied at the router
+level to the documents and chat routers (`/health` and `/auth/*` stay
+open). A minimal admin/member role (`Tenant.role`) is enforced through a
+central permission registry (`app/core/permissions.py`, not duplicated
+inline checks), gating two actions today — document deletion and
+cross-tenant document listing (`all_tenants=true`) — see
 `docs/NOT_APPLICABLE.md` for why a large-scale multi-role permission
 system isn't the next step at this scale.
 

@@ -12,9 +12,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 def _load_secrets_from_ssm() -> None:
     """If SECRETS_SSM_PREFIX is set (the Lambda deployment — see
     infra/lambda.tf/infra/ssm.tf), resolve GEMINI_API_KEY/API_KEY/
-    GROQ_API_KEY/DATABASE_URL from SSM SecureString parameters under that
-    prefix into the process environment, before Settings() below reads
-    it. A no-op everywhere else (local dev, docker-compose, Render):
+    GROQ_API_KEY/DATABASE_URL/JWT_SECRET_KEY from SSM SecureString
+    parameters under that prefix into the process environment, before
+    Settings() below reads it. A no-op everywhere else (local dev, docker-compose, Render):
     SECRETS_SSM_PREFIX is never set there, so this returns immediately
     without importing boto3 or making any AWS call.
 
@@ -32,7 +32,7 @@ def _load_secrets_from_ssm() -> None:
     import boto3
 
     client = boto3.client("ssm")
-    for env_name in ("GEMINI_API_KEY", "API_KEY", "GROQ_API_KEY", "DATABASE_URL"):
+    for env_name in ("GEMINI_API_KEY", "API_KEY", "GROQ_API_KEY", "DATABASE_URL", "JWT_SECRET_KEY"):
         if os.environ.get(env_name):
             continue
         parameter_name = f"{ssm_prefix}/{env_name.lower()}"
@@ -142,6 +142,30 @@ class Settings(BaseSettings):
     # DELETE /documents/{id}) fall back to their pre-RBAC, ungated
     # behavior, same as tenant-scoping already does.
     admin_client_names: str = ""
+
+    # --- Individual user login (JWT), alongside API-key auth ----------
+    # Secret used to sign/verify JWTs issued by POST /auth/login and
+    # POST /auth/signup (see app/api/v1/routes/auth.py). Resolved through
+    # _load_secrets_from_ssm above on the Lambda deployment, exactly like
+    # GEMINI_API_KEY/DATABASE_URL — never a separate secret-delivery
+    # mechanism. Empty by default: the auth routes raise a clear
+    # LLMConfigurationError-style config error if a token is requested
+    # while this is unset, rather than signing with an empty/weak secret
+    # silently (same "fail loud, not silently insecure" posture
+    # groq_api_key's own missing-key check already uses).
+    jwt_secret_key: str = ""
+
+    # Signing algorithm for the JWT above. HS256 (symmetric) needs no key
+    # pair to manage, appropriate for a single backend that both issues
+    # and verifies its own tokens.
+    jwt_algorithm: str = "HS256"
+
+    # How long an issued JWT stays valid, in minutes. Default 24h — long
+    # enough that a web session survives a normal browsing gap without
+    # needing a refresh-token flow, which this app deliberately doesn't
+    # have yet (proportionate to a single-token, no-revocation-list
+    # design; revisit if session lifetime needs to shrink).
+    jwt_expiry_minutes: int = 1440
 
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"

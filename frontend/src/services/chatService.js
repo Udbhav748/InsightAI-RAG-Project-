@@ -1,11 +1,12 @@
-import api from './api'
+import api, { AUTH_TOKEN_KEY } from './api'
 
 // Mirrors api.js's own fallback/env resolution — fetch-based SSE can't
 // reuse the axios instance directly (axios has no streaming-body request
-// mode), so the base URL and API key are resolved the same way here
-// rather than reaching into api.defaults' internal header shape.
+// mode), so the base URL is resolved the same way here rather than
+// reaching into api.defaults' internal shape. The auth token is read
+// fresh per call (same reasoning as api.js's request interceptor: a
+// login/logout between calls must take effect immediately).
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-const API_KEY = import.meta.env.VITE_API_KEY
 
 /**
  * Send a chat query to the RAG pipeline.
@@ -49,11 +50,12 @@ export async function sendChatMessage(query, options = {}) {
 export async function streamChatMessage(query, options = {}, callbacks = {}) {
   const { onTrace, onChunk, onDone, onError } = callbacks
 
+  const token = window.localStorage.getItem(AUTH_TOKEN_KEY)
   const response = await fetch(`${API_BASE_URL}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': API_KEY,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(buildChatPayload(query, options)),
   })
@@ -101,25 +103,32 @@ export async function streamChatMessage(query, options = {}, callbacks = {}) {
 }
 
 /**
- * Delete the server-side chat session.
+ * Delete the server-side chat session by id (DELETE /chat/sessions/{id}).
  * @param {string} sessionId
  * @returns {Promise<{status: string, session_id: string}>}
  */
 export async function deleteChatSession(sessionId) {
-  const response = await fetch(`${API_BASE_URL}/chat/session`, {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': API_KEY,
-    },
-    body: JSON.stringify({ session_id: sessionId }),
-  })
+  const { data } = await api.delete(`/chat/sessions/${encodeURIComponent(sessionId)}`)
+  return data
+}
 
-  if (!response.ok) {
-    const error = new Error(`Request failed with status ${response.status}`)
-    error.response = { status: response.status, data: await response.json().catch(() => null) }
-    throw error
-  }
+/**
+ * List the caller's own past conversations (title, timestamps),
+ * newest-accessed first — the history sidebar's data source.
+ * @returns {Promise<{sessions: {session_id: string, title: string|null, created_at: string|null, last_accessed_at: string|null}[], total: number}>}
+ */
+export async function listSessions() {
+  const { data } = await api.get('/chat/sessions')
+  return data
+}
 
-  return response.json()
+/**
+ * Full turn history for one session — used to resume a past
+ * conversation from the history list.
+ * @param {string} sessionId
+ * @returns {Promise<{session_id: string, turns: {role: string, content: string}[]}>}
+ */
+export async function getSession(sessionId) {
+  const { data } = await api.get(`/chat/sessions/${encodeURIComponent(sessionId)}`)
+  return data
 }

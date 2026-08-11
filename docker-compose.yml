@@ -25,13 +25,13 @@ services:
       args:
         # Vite bakes VITE_* values into the JS bundle at build time, and
         # that bundle runs in the browser on the host — not inside the
-        # Docker network — so these must point wherever the browser can
+        # Docker network — so this must point wherever the browser can
         # reach the backend (localhost:8000 via the port mapping above),
         # not the in-network hostname "backend". Override with a root
-        # .env or `VITE_API_KEY=... docker compose up --build` if needed
-        # (VITE_API_KEY must match backend/.env's API_KEY).
+        # .env or `VITE_API_BASE_URL=... docker compose up --build` if
+        # needed. No API key build arg: the web app authenticates via
+        # individual user login (JWT) at runtime, not a build-time secret.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
-        VITE_API_KEY: ${VITE_API_KEY:-}
     ports:
       - "8080:80"
     depends_on:

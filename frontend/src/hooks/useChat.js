@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamChatMessage, deleteChatSession } from '../services/chatService'
+import { streamChatMessage, deleteChatSession, getSession } from '../services/chatService'
 import getErrorMessage from '../utils/errorMessage'
 
 let idCounter = 0
@@ -39,16 +39,53 @@ function getOrCreateSessionId() {
   return sessionId
 }
 
-export default function useChat() {
+export default function useChat(initialSessionId) {
   const [messages, setMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
+  const [isLoadingSession, setIsLoadingSession] = useState(Boolean(initialSessionId))
   const lastQueryRef = useRef('')
   const messagesRef = useRef([])
   const sessionIdRef = useRef(null)
 
-  // Initialize session_id from localStorage on mount
+  // Resume a past conversation (opened from the History page) instead of
+  // starting/continuing the localStorage-tracked session — additive to
+  // the existing flow below, which is unchanged when no id is passed.
+  const loadSession = useCallback(async (sessionId) => {
+    setIsLoadingSession(true)
+    try {
+      const data = await getSession(sessionId)
+      sessionIdRef.current = sessionId
+      localStorage.setItem(SESSION_KEY, sessionId)
+      setMessages(
+        data.turns.map((turn) => ({
+          id: nextId(),
+          role: turn.role,
+          content: turn.content,
+          sources: [],
+          trace: [],
+        }))
+      )
+    } catch (error) {
+      console.warn('Failed to load session:', error)
+    } finally {
+      setIsLoadingSession(false)
+    }
+  }, [])
+
+  // Initialize session_id on mount: resume initialSessionId if given
+  // (navigated here from History), otherwise the existing
+  // localStorage-tracked session/fresh-session behavior, unchanged.
   useEffect(() => {
-    sessionIdRef.current = getOrCreateSessionId()
+    if (initialSessionId) {
+      loadSession(initialSessionId)
+    } else {
+      sessionIdRef.current = getOrCreateSessionId()
+    }
+    // Only ever run once per mount — Chat.jsx already remounts this
+    // hook via location.key on navigation, so initialSessionId/loadSession
+    // changing identity across re-renders (without a real navigation)
+    // must not re-trigger a reload mid-conversation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -167,5 +204,5 @@ export default function useChat() {
     setMessages([])
   }, [])
 
-  return { messages, isSending, ask, regenerate, clearSession }
+  return { messages, isSending, isLoadingSession, ask, regenerate, clearSession, loadSession }
 }

@@ -55,3 +55,16 @@ resource "aws_ssm_parameter" "database_url" {
   type  = "SecureString"
   value = var.database_url
 }
+
+resource "aws_ssm_parameter" "jwt_secret_key" {
+  # Same conditional-creation shape as database_url above: individual
+  # user login (POST /auth/signup, /auth/login) is optional — a
+  # deployment that only uses API-key auth never sets this, and the app
+  # degrades to "user login unavailable" (AuthConfigurationError) rather
+  # than needing a placeholder secret.
+  count = var.jwt_secret_key != "" ? 1 : 0
+
+  name  = "${local.ssm_prefix}/jwt_secret_key"
+  type  = "SecureString"
+  value = var.jwt_secret_key
+}

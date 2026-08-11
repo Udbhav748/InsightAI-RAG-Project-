@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import { MessageCircle, Plus } from 'lucide-react'
 import ChatBubble from '../components/chat/ChatBubble'
@@ -13,7 +14,11 @@ const SUGGESTIONS = [
 ]
 
 export default function Chat() {
-  const { messages, isSending, ask, regenerate, clearSession } = useChat()
+  // Opened from the History page with { sessionId } in navigation state
+  // resumes that conversation; otherwise unchanged (localStorage-tracked
+  // session, or a fresh one).
+  const location = useLocation()
+  const { messages, isSending, ask, regenerate, clearSession } = useChat(location.state?.sessionId)
   const bottomRef = useRef(null)
 
   useEffect(() => {

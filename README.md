@@ -216,8 +216,11 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | Variable | Default | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | — | **Required.** Your Google Gemini API key. |
-| `API_KEY` | — | **Required.** Shared secret clients must send in the `X-API-Key` header to reach the documents/chat routers. |
-| `DATABASE_URL` | — | Optional PostgreSQL connection string (e.g. `postgresql://user:pass@host:5432/db`). When set, document metadata, tenants, API keys, chat sessions, and usage logs are persisted in Postgres (tables auto-created at startup; Alembic migrations in `backend/alembic/`). When empty, the app falls back to the legacy in-memory/file stores — those are S3-synced on the AWS Lambda deployment (see `docs/OPERATIONS.md`), but still bound to a single execution environment for correctness (in-memory sessions) and safe concurrent writes (FAISS), enforced by `reserved_concurrent_executions = 1`. |
+| `API_KEY` | — | **Required.** Shared secret clients must send in the `X-API-Key` header to reach the documents/chat routers — the auth path for non-browser/service clients (scripts, CI). The web frontend uses individual user login (JWT) instead; see `JWT_SECRET_KEY` below. |
+| `DATABASE_URL` | — | Optional PostgreSQL connection string (e.g. `postgresql://user:pass@host:5432/db`). When set, document metadata, tenants, users, API keys, chat sessions, and usage logs are persisted in Postgres (tables auto-created at startup; Alembic migrations in `backend/alembic/`). When empty, the app falls back to the legacy in-memory/file stores — those are S3-synced on the AWS Lambda deployment (see `docs/OPERATIONS.md`), but still bound to a single execution environment for correctness (in-memory sessions) and safe concurrent writes (FAISS), enforced by `reserved_concurrent_executions = 1`. Individual user login and chat-history browsing both require this to be set — there's nowhere to persist a `User`/personal `Tenant` otherwise. |
+| `JWT_SECRET_KEY` | — | Signing secret for JWTs issued by `POST /auth/signup`/`/auth/login`. Unset = user login unavailable (`AuthConfigurationError`); `X-API-Key` auth is unaffected either way. |
+| `JWT_ALGORITHM` | `HS256` | Signing algorithm for the JWT above. |
+| `JWT_EXPIRY_MINUTES` | `1440` | How long an issued JWT stays valid. |
 | `FRONTEND_URL` | `http://localhost:5173` | Origin allowed by CORS. |
 | `MAX_UPLOAD_SIZE_MB` | `20` | Maximum accepted PDF size. |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Characters per chunk / overlap between chunks. |
@@ -249,22 +252,34 @@ The frontend reads from `frontend/.env`:
 | Variable | Default | Description |
 |---|---|---|
 | `VITE_API_BASE_URL` | `http://localhost:8000` | Backend base URL. |
-| `VITE_API_KEY` | — | Sent as the `X-API-Key` header on every request; must match the backend's `API_KEY`. |
+
+No API key needed here — the web app authenticates via individual user
+login (sign up / log in), which attaches a JWT to every request
+automatically (`services/api.js`).
 
 ## API reference
 
-Every endpoint except `/health` requires an `X-API-Key` header matching
-the backend's `API_KEY` setting — a missing or wrong key returns `401`.
+Every endpoint except `/health` and `/auth/signup`/`/auth/login`
+requires authentication — either an `X-API-Key` header matching the
+backend's `API_KEY` setting, or an `Authorization: Bearer <jwt>` header
+from `POST /auth/login`/`/auth/signup`. A missing or invalid credential
+returns `401`.
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | `GET` | `/health` | — | Liveness check. |
+| `POST` | `/auth/signup` | — | Create an account (email, password, consent) — returns a JWT. |
+| `POST` | `/auth/login` | — | Log in — returns a JWT. |
+| `GET` | `/auth/me` | required | Current caller's identity (email, tenant, role). |
 | `POST` | `/upload` | required | Upload a PDF — extracts, chunks, embeds, and indexes it. |
 | `DELETE` | `/documents/{document_id}?confirm=true` | required | Remove a document and its vectors from the index. |
 | `POST` | `/chat` | required | Ask a question; returns an answer grounded in retrieved chunks. |
 | `POST` | `/chat/stream` | required | Same as `/chat`, but streamed as Server-Sent Events — pipeline progress and the answer as it's generated, instead of one response at the end. |
 | `POST` | `/chat/diagnose` | required | Upload a plant leaf photo; classifies it via LeafSense, then returns a grounded, cited answer for the predicted disease. |
 | `POST` | `/chat/feedback` | required | Record a thumbs up/down (and optional comment) on a previous answer. |
+| `GET` | `/chat/sessions` | required | List the caller's own past conversations (title, timestamps). Requires `DATABASE_URL`. |
+| `GET` | `/chat/sessions/{session_id}` | required | Full turn history for one session — how the frontend resumes a past conversation. |
+| `DELETE` | `/chat/sessions/{session_id}` | required | Delete one conversation. |
 
 **`DELETE /documents/{document_id}`** requires the `confirm=true` query
 parameter as an explicit confirmation step — omitting it returns `400`
@@ -359,9 +374,9 @@ with a `type`:
 - exactly one final `{"type": "done", "payload": {...}}` on success —
   `payload` is the identical `ChatResponse` shape `POST /chat` returns.
 
-`EventSource` (the browser's built-in SSE client) can't send the
-`X-API-Key` header or a POST body, so the frontend consumes this with
-`fetch` + a manually-parsed `ReadableStream` instead (see
+`EventSource` (the browser's built-in SSE client) can't send an
+`Authorization` header or a POST body, so the frontend consumes this
+with `fetch` + a manually-parsed `ReadableStream` instead (see
 `frontend/src/services/chatService.js`'s `streamChatMessage`).
 
 **`POST /chat/diagnose`** — `multipart/form-data`, not JSON (FastAPI
@@ -488,17 +503,28 @@ InsightAI-RAG/
   no per-tenant isolation. Concurrent writes are guarded by a `threading.Lock`
   in `FAISSVectorStore` (covers both async `/upload` and sync `DELETE` routes),
   so index/metadata corruption from concurrent writers is prevented.
-- **Per-client API keys, not per-user.** No key rotation API, no expiration,
-  no revocation without `.env` edit + restart. Basic rate limiting added
-  (60 req/min per key, in-memory sliding window).
-- **Document history is per-browser, not server-side.** There's no
-  document-listing endpoint; the Documents page reads `localStorage`, so
-  a different browser or device shows nothing even though the documents
-  are indexed server-side.
-- **Chat history is server-side per `session_id`, bounded by LRU.**
-  In-memory store capped at 1000 sessions with LRU eviction; each session's
-  history capped at 50 turns. No TTL. A page refresh no longer loses the
-  conversation, but server restart wipes all sessions.
+- **Two auth paths: API keys for service clients, JWT login for the web
+  app.** Individual user accounts (`POST /auth/signup`/`/auth/login`) now
+  exist for the frontend — each user gets a private tenant, so documents
+  and chat history are scoped per-person, not shared across everyone
+  holding one API key. No key rotation API, no expiration, no revocation
+  without `.env` edit + restart for the API-key side; no password reset
+  or refresh-token flow yet for the JWT side (a token is valid for
+  `JWT_EXPIRY_MINUTES`, 24h by default, then the user logs in again).
+  Basic rate limiting (60 req/min per identity, in-memory sliding window)
+  applies to both paths.
+- **Document history is per-browser, not server-side.** `GET /documents`
+  exists and is tenant/user-scoped, but the Documents page still reads
+  `localStorage` rather than calling it — a different browser or device
+  shows nothing even though the documents are indexed server-side.
+- **Chat history is server-side per `session_id`, bounded by LRU — and
+  now browsable, not just an internal store.** In-memory (or Postgres,
+  when `DATABASE_URL` is set) store capped at 1000 sessions with LRU
+  eviction; each session's history capped at 50 turns, no TTL. When
+  Postgres is enabled, `GET /chat/sessions` lists a user's past
+  conversations and `GET /chat/sessions/{id}` resumes one (History page)
+  — with the DB disabled, sessions still work for the active conversation
+  but there's nothing to list.
 - **OCR is a best-effort fallback, not equivalent to real text.** It only
   runs on pages with no extractable text layer at all — it doesn't
   improve or re-check pages PyMuPDF already got text from. Accuracy
@@ -547,20 +573,20 @@ InsightAI-RAG/
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
-reasoning behind these, plus what's explicitly out of scope (JWT,
-non-document tool integrations, live metrics dashboards) and why.
+reasoning behind these, plus what's explicitly out of scope
+(non-document tool integrations, live metrics dashboards) and why.
 
 ## Future work
 
-- [ ] Persistent, server-side document history (backend has `GET /documents` + optional Postgres metadata; the frontend still tracks uploads per-browser in `localStorage`)
+- [ ] Persistent, server-side document history in the *frontend* (backend has `GET /documents` + optional Postgres metadata; the Documents page still tracks uploads per-browser in `localStorage`)
 - [ ] Multi-document collections / workspaces
 - [ ] Support for additional file types beyond PDF (currently PDF-only; scanned/image-only PDFs are handled via OCR, see Features)
-- [ ] Per-user authentication (JWT) in place of the single shared API key
+- [x] Per-user authentication (JWT) alongside the existing shared/per-client API key — self-serve signup/login, each user gets a private tenant (see `docs/CHECKLIST.md` §13, `docs/NOT_APPLICABLE.md`'s JWT row); API keys remain for non-browser/service clients, not replaced
+- [x] Chat history browsing — `GET /chat/sessions` (list) and `GET /chat/sessions/{id}` (resume), a History page in the frontend; requires `DATABASE_URL` (session listing needs durable storage the in-memory store can't provide)
 - [x] RBAC — minimal admin/member role gates on document deletion and cross-tenant document listing (see `docs/CHECKLIST.md` §13); not a general permission/scope system
 - [x] Human approval — deployment-toggleable approval gates on web search and document deletion (see `docs/CHECKLIST.md` §1, §13); not a general approval queue
 - [x] Encryption at rest for the vector store and uploaded files — S3 default SSE + Lambda's default KMS-encrypted environment variables on AWS (see `docs/CHECKLIST.md` §13); application-level/field-level encryption remains open
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file (would also remove the reserved-concurrency=1 write-safety constraint in `infra/lambda.tf`)
-- [ ] Human-in-the-loop approval for protected actions (e.g. document deletion)
 
 ## License
 

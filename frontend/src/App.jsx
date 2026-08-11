@@ -1,18 +1,34 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import AppLayout from './layouts/AppLayout'
 import LoadingSpinner from './components/ui/LoadingSpinner'
 import ThemeProvider from './contexts/ThemeContext'
 import ToastProvider from './contexts/ToastContext'
+import AuthProvider from './contexts/AuthContext'
+import useAuth from './hooks/useAuth'
 
 const Home = lazy(() => import('./pages/Home'))
 const Chat = lazy(() => import('./pages/Chat'))
 const Diagnose = lazy(() => import('./pages/Diagnose'))
 const Upload = lazy(() => import('./pages/Upload'))
 const Documents = lazy(() => import('./pages/Documents'))
+const History = lazy(() => import('./pages/History'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Login = lazy(() => import('./pages/Login'))
+const Signup = lazy(() => import('./pages/Signup'))
 const NotFound = lazy(() => import('./pages/NotFound'))
+
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth()
+  const location = useLocation()
+
+  if (isLoading) return <PageFallback />
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+  return children
+}
 
 function PageFallback() {
   return (
@@ -41,7 +57,30 @@ function AnimatedRoutes() {
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
-        <Route path="/" element={<AppLayout />}>
+        <Route
+          path="/login"
+          element={
+            <Page>
+              <Login />
+            </Page>
+          }
+        />
+        <Route
+          path="/signup"
+          element={
+            <Page>
+              <Signup />
+            </Page>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
           <Route
             index
             element={
@@ -86,6 +125,14 @@ function AnimatedRoutes() {
             }
           />
           <Route
+            path="history"
+            element={
+              <Page>
+                <History />
+              </Page>
+            }
+          />
+          <Route
             path="settings"
             element={
               <Page>
@@ -112,7 +159,9 @@ export default function App() {
     <ThemeProvider>
       <ToastProvider>
         <BrowserRouter>
-          <AnimatedRoutes />
+          <AuthProvider>
+            <AnimatedRoutes />
+          </AuthProvider>
         </BrowserRouter>
       </ToastProvider>
     </ThemeProvider>

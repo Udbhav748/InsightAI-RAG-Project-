@@ -10,11 +10,11 @@ COPY . .
 
 # Vite inlines VITE_* variables into the bundle at build time, not at
 # container start — they have to arrive as build args, not just runtime
-# env vars (see docker-compose.yml's build.args for this service).
+# env vars (see docker-compose.yml's build.args for this service). No
+# API key needed here: the web app authenticates via individual user
+# login (JWT), not a build-time secret — see src/services/api.js.
 ARG VITE_API_BASE_URL=http://localhost:8000
-ARG VITE_API_KEY=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-ENV VITE_API_KEY=$VITE_API_KEY
 
 RUN npm run build
 

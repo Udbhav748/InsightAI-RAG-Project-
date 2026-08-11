@@ -310,11 +310,11 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | GDPR / DPDP / HIPAA | ⚠️ | No formal compliance assessment doc |
 | RBAC | ✅ | `Tenant.role` (admin/member), `Settings.admin_client_names` (`app/core/config.py`), enforced through a central permission registry (`app/core/permissions.py`: permission constants + role→permission map + one `check_permission()` function) — not two copy-pasted inline checks. Two permissions populated today, only active when `DATABASE_URL` is set: `document_delete` (gates `DELETE /documents/{id}`) and `document_list_all_tenants` (gates `GET /documents?all_tenants=true`, cross-tenant visibility for oversight). Adding a new gated action is a 2-line addition to the registry plus one `check_permission()` call at the route, not a new pattern. Small by design — proportionate to this app's actual action surface — but the *mechanism* is now genuinely reusable, which is what "not a general permission system" was flagging. |
 | Encryption | ✅ | Transport: Lambda Function URL + CloudFront HTTPS. At-rest: S3 default SSE for uploads/vector_store/feedback/frontend build (`infra/s3_data.tf`, `infra/s3_frontend.tf`), Lambda environment variables encrypted by its default AWS-managed KMS key (`infra/lambda.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
-| Consent | ❌ | No consent mechanism |
+| Consent | ✅ | Signup (`POST /auth/signup`) requires `consent: Literal[True]` on the request schema (`schemas.py:SignupRequest`) — Pydantic rejects `consent=false` or a missing field with 422 before account creation runs. This is the app's first feature that stores real PII (email, password hash); the checkbox ships in the same change that introduces that storage, not bolted on after. Frontend: `pages/Signup.jsx`'s consent checkbox, required to submit. |
 | Secrets | ✅ | SSM Parameter Store `SecureString` on the Lambda deployment (`infra/ssm.tf`), resolved by the app at cold start (`config.py:_load_secrets_from_ssm`); plain gitignored env vars locally/docker-compose. Stale "env vars, gitignored"-only claim corrected — see "Secret management" row below for the same evidence. |
 | Prompt injection | ✅ | Untrusted-excerpt markers + eval resistance metrics |
 | Jailbreak | ⚠️ | Covered via injection markers in eval, no dedicated jailbreak suite |
-| Authentication | ✅ | `X-API-Key`, SHA-256 hashed, per-client |
+| Authentication | ✅ | Two parallel paths, both real: `X-API-Key` (SHA-256 hashed, per-client — scripts/CI/service clients) and individual user login (`POST /auth/signup`/`/auth/login`, bcrypt-hashed passwords, JWT bearer tokens — the web frontend). `app/core/auth.py`'s `require_auth` tries JWT first, falls through to the unchanged API-key path if absent. |
 | Authorization | ✅ | Tenant-ownership scoping for most actions, plus a real permission registry (`app/core/permissions.py`) gating two actions (document deletion; cross-tenant document listing) — replaced two duplicated inline `if role != "admin"` blocks with one reusable, centralized enforcement function (`check_permission()`), a fixed permission vocabulary, and an explicit role→permission map, extensible by adding a constant + one call site rather than copying a block. Deliberately still a *small* permission set (2 actions, 2 roles) — that's proportionate to this app's scale, not a remaining gap; see `tests/test_permissions.py` for the registry's own unit tests, including the role=None asymmetry between the two permissions. |
 | PII detection | ✅ | |
 | Secret management | ✅ | SSM Parameter Store `SecureString` (`infra/ssm.tf`), resolved by the app at cold start, not sourced from a plain env var |
@@ -340,7 +340,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Agent (autonomous goal) | ✅ Formal spec (`AGENT_ROLE`/`AGENT_GOAL`/`AGENT_BACKSTORY`), `prompt_builder.py` |
 | Planner (selects steps) | ✅ `_plan` |
 | Tools (documented capabilities) | ✅ README + ARCHITECTURE |
-| Memory (what/how long) | ✅ session store (bounded, LRU) |
+| Memory (what/how long) | ✅ Session store (bounded, LRU: 50 turns/session, 1000 sessions) feeds the last 6 turns into the LLM prompt; now also user-facing — `GET /chat/sessions` lists past conversations, `GET /chat/sessions/{id}` resumes one (`pages/History.jsx`), not just an internal context window |
 | RAG (why retrieval necessary) | ✅ `NOT_APPLICABLE.md` + ARCHITECTURE |
 
 ### Evaluation / Debugging / Deployment / Security / Reliability / Cost / Documentation

@@ -1,11 +1,23 @@
 import { useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, FileText, MessageSquarePlus, Settings, Sparkles, UploadCloud, X } from 'lucide-react'
+import {
+  Camera,
+  FileText,
+  History,
+  LogOut,
+  MessageSquarePlus,
+  Settings,
+  Sparkles,
+  UploadCloud,
+  X,
+} from 'lucide-react'
 import ThemeToggle from '../ui/ThemeToggle'
+import useAuth from '../../hooks/useAuth'
 
 const NAV_ITEMS = [
   { to: '/chat', label: 'New Chat', icon: MessageSquarePlus },
+  { to: '/history', label: 'History', icon: History },
   { to: '/diagnose', label: 'Leaf Diagnosis', icon: Camera },
   { to: '/upload', label: 'Upload Document', icon: UploadCloud },
   { to: '/documents', label: 'Documents', icon: FileText },
@@ -19,6 +31,8 @@ const navItemClass = ({ isActive }) =>
   }`
 
 function SidebarContent({ onNavigate }) {
+  const { user, logout } = useAuth()
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-5 pb-6 pt-6">
@@ -49,6 +63,16 @@ function SidebarContent({ onNavigate }) {
           Appearance
           <ThemeToggle />
         </div>
+        {user && (
+          <button
+            type="button"
+            onClick={logout}
+            className="flex w-full items-center gap-3 rounded-lg py-2.5 pl-[10px] pr-3 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-900/5 hover:text-slate-800 dark:text-ink-muted dark:hover:bg-white/[0.03] dark:hover:text-ink-secondary"
+          >
+            <LogOut size={17} strokeWidth={1.75} />
+            <span className="truncate">{user.email}</span>
+          </button>
+        )}
       </div>
     </div>
   )

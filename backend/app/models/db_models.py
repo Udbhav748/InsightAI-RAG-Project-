@@ -51,6 +51,7 @@ class Tenant(Base):
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="tenant")
     documents: Mapped[list["Document"]] = relationship(back_populates="tenant")
+    users: Mapped[list["User"]] = relationship(back_populates="tenant")
 
 
 class ApiKey(Base):
@@ -67,6 +68,29 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="api_keys")
+
+
+class User(Base):
+    """An individual login-based account, distinct from a Tenant/ApiKey
+    (a "client"). Each self-signup User gets its own personal Tenant
+    (1:1, created alongside the User row at signup) — this is what makes
+    "fully private per user" free: Document/ChatSession are already
+    scoped by tenant_id, so a dedicated tenant per user gives full
+    privacy through the exact same columns and ownership-check code
+    that already exist for API-key clients, no schema change to either
+    table needed. Role lives on Tenant, not here — resolve_tenant()'s
+    existing admin/member logic (Settings.admin_client_names) applies
+    unchanged to a JWT-authenticated user's tenant."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="users")
 
 
 class Document(Base):
@@ -101,6 +125,11 @@ class ChatSession(Base):
 
     session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    # Populated from the first user turn (truncated) once one exists —
+    # null for a session with no turns yet, or one created before this
+    # column existed. Purely a display label for a history list; nothing
+    # else derives meaning from it.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
