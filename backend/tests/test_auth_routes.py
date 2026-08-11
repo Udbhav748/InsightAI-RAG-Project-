@@ -146,3 +146,45 @@ class TestMe:
 
         assert response.status_code == 200
         assert response.json()["email"] == "a@example.com"
+
+
+class TestRolePermissionParityAcrossAuthMethods:
+    """permissions.py's check_permission() only ever reads
+    request.state.role — it has no idea whether that role came from an
+    API key (tenant_service.resolve_tenant) or a JWT
+    (user_service.get_user_by_id). This class proves that structural
+    guarantee holds end-to-end via the JWT path specifically, mirroring
+    test_main.py's TestRoleBasedAccessControl assertions for the
+    API-key path exactly — same route, same expected status codes, only
+    the auth method differs."""
+
+    def test_jwt_admin_passes_the_permission_gate(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
+        monkeypatch.setattr("app.core.auth.get_user_by_id", lambda user_id: ("admin@example.com", 10, "admin"))
+
+        response = client.delete(
+            "/documents/does-not-exist",
+            params={"confirm": "true"},
+            headers={"Authorization": "Bearer fake-jwt-token"},
+        )
+
+        # 404 (unknown document), not 403 (permission denied) — proves
+        # the role check passed and the route moved on to look the
+        # document up, the same outcome an API-key admin gets (see
+        # test_main.py::TestDeleteDocument::test_unknown_document_returns_404).
+        assert response.status_code == 404
+
+    def test_jwt_member_is_denied_the_same_way_api_key_member_is(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
+        monkeypatch.setattr("app.core.auth.get_user_by_id", lambda user_id: ("member@example.com", 10, "member"))
+
+        response = client.delete(
+            "/documents/does-not-exist",
+            params={"confirm": "true"},
+            headers={"Authorization": "Bearer fake-jwt-token"},
+        )
+
+        # 403, matching test_main.py::TestRoleBasedAccessControl::
+        # test_member_role_cannot_delete_document's API-key equivalent
+        # exactly — same denial, same status code, different auth path in.
+        assert response.status_code == 403
