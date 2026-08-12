@@ -71,3 +71,4 @@ infra/crash.log
 infra/*.tfplan
 infra/tfplan.binary
 infra/tfplan_output.txt
+.aider*

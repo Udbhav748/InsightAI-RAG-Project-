@@ -1,10 +1,28 @@
 # Monitoring
 
-A lightweight, dependency-free observability stand-in for the deployed
+A lightweight, dependency-free observability story for the deployed
 backend — the Render free tier ships no hosted uptime monitor, metrics, or
-alerting, so these scripts close the gap cheaply. They are NOT a
-replacement for Prometheus/Grafana/Loki/CloudWatch: on-demand, pull-based,
-no long-term storage, no dashboards. See `docs/CHECKLIST.md` §10.
+alerting, so these close the gap cheaply. Two complementary layers, both
+pull-based:
+
+1. **Live, in-process metrics** — `GET /metrics` on the backend itself
+   (`app/core/metrics.py` + `app/api/v1/routes/metrics.py`) emits the
+   same signal the offline rollups compute, but scraped live at any moment
+   via a real Prometheus text exposition format — request latency
+   histograms (p50/p95/p99 via `histogram_quantile`), `http_requests_total`
+   by method/path/status (dynamic ids normalized to `{id}`), per-tool
+   invocation counts + latency, LLM call/token/cost totals, corrective-loop
+   cap count, retrieval timeouts, and error counts by `taxonomy_category`.
+   Any Prometheus/Grafana Cloud / CloudWatch-agent scraper can collect it;
+   optional `METRICS_BEARER_TOKEN` auth. See `backend/monitoring/README.md`
+   "Metrics endpoint" below.
+2. **Offline rollups + alerts** — the scripts below, run on a schedule or
+   in CI against a captured log / a live probe.
+
+These are NOT a replacement for Prometheus/Grafana/Loki/CloudWatch: the
+scripts are on-demand, pull-based, with no long-term storage. `GET
+/metrics` closes the "no live data" gap — the scraper/store is still yours
+to choose. See `docs/CHECKLIST.md` §10.
 
 ## Files
 
@@ -26,6 +44,36 @@ no long-term storage, no dashboards. See `docs/CHECKLIST.md` §10.
   above call: POSTs a Slack-compatible `{"text": ...}` payload via stdlib
   `urllib`. Best-effort — a broken or unset webhook never fails the check
   it's reporting through; the check's own exit code remains the real signal.
+
+## Metrics endpoint
+
+`GET /metrics` (see `app/api/v1/routes/metrics.py`) is the live, in-process
+half of this story — the same events the offline scripts read from logs are
+also bumped into a thread-safe registry at their emit site:
+
+| Metric | Family |
+|---|---|
+| Request count by method/path/status | `http_requests_total` |
+| Request latency (percentiles via `histogram_quantile`) | `http_request_duration_seconds` histogram |
+| Tool calls by tool + success/error, plus latency | `tool_invocations_total`, `tool_invocation_duration_seconds` |
+| LLM calls, tokens (prompt/completion), estimated cost | `llm_generations_total`, `llm_tokens_total`, `llm_cost_usd_total` |
+| Corrective-loop cap hits | `loop_capped_total` |
+| Retrieval degradation to empty results | `retrieval_timeouts_total` |
+| Errors by error-taxonomy category | `errors_total` |
+| Process up-time | `insightai_uptime_seconds` |
+
+Unauthenticated by default (metrics carry no payload; scrape cost is
+trivial). To require a token, set `METRICS_BEARER_TOKEN` — scrapers must
+then send `Authorization: Bearer <token>`, compared constant-time
+(`hmac.compare_digest`), never logged.
+
+Example scrape:
+
+```bash
+curl -s http://localhost:8000/metrics           # unauthenticated
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/metrics
+promtool check metrics <(curl -s http://localhost:8000/metrics)   # validate
+```
 
 ## Usage
 
@@ -76,4 +124,10 @@ python monitoring/log_aggregate.py app.log --alert-webhook-url https://hooks.sla
   alerts on every iteration, not just the first transition into failure.
   Not an issue for the scheduled CI run, which only checks once per
   invocation.
-- Latency figures are from the probing machine's network, not server-side.
+- Latency figures from `uptime_check.py` are from the probing machine's
+  network, not server-side. `GET /metrics` latency is server-side but
+  in-process only — its registry is per-process, so on a multi-instance
+  deployment each instance reports its own counters (scrape every instance;
+  no multi-instance dedup is attempted).
+- The `GET /metrics` registry resets on process restart (no long-term
+  storage by design) — for durable trends, scrape into a real store.

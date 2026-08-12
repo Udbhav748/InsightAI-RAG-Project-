@@ -82,6 +82,7 @@ A chat message doesn't go straight to the LLM — it goes through a small hand-r
 - **Corrective RAG loop** — retrieval is graded (insufficient/weak/good) right after it runs; a weak or insufficient grade can pull in a web search fallback (off by default) alongside document context. An ungrounded answer regenerates once with an explicit "you didn't use the context" instruction, then — if still ungrounded and web search wasn't already used — escalates to one more, web-augmented regeneration; every path is capped at 3 total generation calls per request before falling back to a clear "couldn't find that" reply. See `docs/ARCHITECTURE.md`'s "Framework choice" section for how this stays plain Python rather than a graph runtime.
 - **Conversational query routing** — small talk and meta-questions are handled without spending a retrieval + generation round trip on them.
 - **Document management** — browse everything you've uploaded, see page/chunk counts, and delete a document (which also removes its vectors from the index).
+- **Multi-modal ingestion (off by default, opt-in per deployment)** — embedded figures are extracted and persisted (`IMAGE_EXTRACTION_ENABLED`), captioned by a vision-capable Gemini call into searchable `source="image_caption"` chunks (`IMAGE_CAPTIONING_ENABLED`), tables are reduced to markdown and indexed as `source="table"` text (`TABLE_EXTRACTION_ENABLED`), and questions that score weak on retrieval can route to a vision-grounded answer over the page raster (`VISION_QA_ENABLED`). Extracted images are browsable via `GET /documents/{id}/images`, and `/health` reports which capabilities a deployment has on.
 - **Light & dark themes**, keyboard-friendly chat input, and toast notifications throughout.
 - **Structured JSON logging** and a typed exception hierarchy that maps domain errors (corrupted PDF, empty vector store, LLM timeout, ...) to the correct HTTP status code.
 
@@ -176,26 +177,44 @@ cd backend
 pytest
 ```
 
-### Running with LeafSense (image diagnosis)
+### Leaf Diagnosis (optional)
 
 `POST /chat/diagnose` lets a user upload a plant leaf photo instead of
 typing a question — InsightAI calls out to LeafSense (a separate
-repo/process, its own TensorFlow/Keras stack) over HTTP to classify it,
-then runs the predicted disease through the normal retrieval + grounding
-pipeline. This is optional: if you never hit `/chat/diagnose`, LeafSense
-doesn't need to be running at all.
+repo/process with its own TensorFlow/Keras stack) over HTTP to classify
+it, then runs the predicted disease through the normal retrieval +
+grounding pipeline. This is **optional**: the rest of the app works fully
+without it, and if you never hit `/chat/diagnose`, LeafSense doesn't need
+to be running at all.
 
-LeafSense's own default port is **8000** — the same default this backend
-uses — so start it on a different port when running both locally:
+To enable it, run the app as documented above (backend in one terminal,
+frontend in another), then start LeafSense in a **third terminal** with
+its one-command launcher:
 
-```bash
+```powershell
 # in the LeafSense repo
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --port 8001
+backend/start.ps1
 ```
 
-Then point this backend at it (`backend/.env`):
+Or start all three together in one command: from this repo's root (on
+Windows), `.\start-local.ps1` opens backend, frontend, and (if `../LeafSense`
+is checked out alongside this repo) LeafSense each in their own console
+window. This exists specifically because a forgotten third terminal was
+the recurring cause of Diagnose showing "the plant diagnosis service
+isn't running right now" — LeafSense is optional and easy to forget to
+start on its own.
+
+`start.ps1` creates a dedicated venv (`LeafSense/backend/.venv`) on first
+run, installs its requirements into it, and serves on port **8001** —
+LeafSense's own default of 8000 would collide with this backend's default
+port, and InsightAI's config already points at 8001. There's no
+docker-compose entry for LeafSense, by design: TensorFlow's install
+footprint is several hundred MB, which conflicts with this project's
+low-local-storage constraint — a native two-terminal workflow gets the
+same result without baking that into a container image everyone pulls.
+
+InsightAI already expects the vision service at that default port, so no
+`backend/.env` change is needed unless you run LeafSense elsewhere:
 
 ```bash
 VISION_SERVICE_URL=http://localhost:8001
@@ -246,12 +265,22 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `VISION_SERVICE_URL` | `http://localhost:8001` | Base URL of the LeafSense vision service (separate repo/process). Not LeafSense's own default of `8000` — that collides with this backend's own default port. |
 | `VISION_SERVICE_TIMEOUT_SECONDS` | `15` | Timeout for calls to the vision service. |
 | `VISION_CONFIDENCE_THRESHOLD` | `0.5` | Below this confidence, a diagnosis is flagged `low_confidence: true` rather than presented as certain. |
+| `IMAGE_EXTRACTION_ENABLED` | `false` | Extracts embedded figures (and full-page rasters of low-text pages) from uploaded PDFs and persists the bytes under `IMAGE_STORAGE_DIR_NAME`. |
+| `IMAGE_CAPTIONING_ENABLED` | `false` | Captions each extracted image with a vision-capable Gemini call and indexes the caption as a searchable chunk (`source="image_caption"`, citable as "a figure on page N"). Requires `IMAGE_EXTRACTION_ENABLED` and a configured `GEMINI_API_KEY` — with it off (the default), uploads never build an LLM client at all. |
+| `TABLE_EXTRACTION_ENABLED` | `false` | Detects ruled-line tables and indexes each as markdown text chunks (`source="table"`), so tables are searchable exactly like body text. |
+| `VISION_QA_ENABLED` | `false` | When a question's retrieval grades weak/insufficient, sends the relevant page raster(s) to the vision-capable Gemini model and answers from the image directly (covers scanned/image-only pages). Requires `IMAGE_EXTRACTION_ENABLED`. |
+| `IMAGE_STORAGE_DIR_NAME` | `extracted_images` | Directory (under the data dir) where extracted image bytes and the per-document listing manifest live. |
+| `IMAGE_MIN_SIDE_PX` | `50` | Images smaller than this on either side are skipped (icons, dividers, noise). |
+| `IMAGE_MAX_COUNT_PER_DOCUMENT` | `50` | Cap on extracted image records per document. |
+| `IMAGE_CAPTION_MAX_CHARS` | `600` | Captions are truncated to this many characters. |
+| `VISION_QA_MAX_PAGES` | `3` | Max page rasters sent to the vision model per vision-QA request. |
+| `TABLE_MAX_COUNT_PER_DOCUMENT` | `50` | Cap on tables extracted per document. |
 
 The frontend reads from `frontend/.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8000` | Backend base URL. |
+| `VITE_API_BASE_URL` | `/api` (dev proxy) | Backend API origin. Leave **unset** in dev — API calls go same-origin through Vite's `/api` proxy (`vite.config.js`), so there's no CORS and no need for the browser to reach the backend host directly (works from localhost and LAN IPs). Set it to the real backend origin only when building for production. |
 
 No API key needed here — the web app authenticates via individual user
 login (sign up / log in), which attaches a JWT to every request
@@ -259,20 +288,27 @@ automatically (`services/api.js`).
 
 ## API reference
 
-Every endpoint except `/health` and `/auth/signup`/`/auth/login`
+Every endpoint except `/health`, `/metrics`, and `/auth/signup`/`/auth/login`
 requires authentication — either an `X-API-Key` header matching the
 backend's `API_KEY` setting, or an `Authorization: Bearer <jwt>` header
 from `POST /auth/login`/`/auth/signup`. A missing or invalid credential
 returns `401`.
 
+¹ `/metrics` is unauthenticated by default like `/health` (metrics carry
+no payload data); set `METRICS_BEARER_TOKEN` to require an
+`Authorization: Bearer <token>` header from scrapers.
+
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| `GET` | `/health` | — | Liveness check. |
+| `GET` | `/health` | — | Liveness + readiness: LLM provider config (booleans, never a key) and enabled multi-modal capabilities. |
+| `GET` | `/metrics` | —¹ | Live metrics in Prometheus text exposition format — request latency (p50/p95/p99), tool and LLM call counts, tokens/cost, loop-capped rate, retrieval timeouts. See `backend/monitoring/README.md`. |
 | `POST` | `/auth/signup` | — | Create an account (email, password, consent) — returns a JWT. |
 | `POST` | `/auth/login` | — | Log in — returns a JWT. |
 | `GET` | `/auth/me` | required | Current caller's identity (email, tenant, role). |
 | `POST` | `/upload` | required | Upload a PDF — extracts, chunks, embeds, and indexes it. |
 | `DELETE` | `/documents/{document_id}?confirm=true` | required | Remove a document and its vectors from the index. |
+| `GET` | `/documents/{document_id}/images` | required | List images extracted from a document (metadata + a `url` per image) — multi-modal RAG. |
+| `GET` | `/documents/{document_id}/images/{image_id}` | required | Fetch one extracted image's bytes, served inline with its MIME type. |
 | `POST` | `/chat` | required | Ask a question; returns an answer grounded in retrieved chunks. |
 | `POST` | `/chat/stream` | required | Same as `/chat`, but streamed as Server-Sent Events — pipeline progress and the answer as it's generated, instead of one response at the end. |
 | `POST` | `/chat/diagnose` | required | Upload a plant leaf photo; classifies it via LeafSense, then returns a grounded, cited answer for the predicted disease. |
@@ -284,6 +320,65 @@ returns `401`.
 **`DELETE /documents/{document_id}`** requires the `confirm=true` query
 parameter as an explicit confirmation step — omitting it returns `400`
 (`Confirmation Required`) instead of deleting.
+
+**`GET /health`** reports more than liveness — deployment readiness at a
+glance:
+
+```json
+{
+  "status": "ok",
+  "llm": {
+    "provider": "gemini",
+    "provider_configured": true,
+    "fallback_provider": "groq",
+    "fallback_configured": false,
+    "model_routing_enabled": false
+  },
+  "multimodal": {
+    "image_extraction_enabled": false,
+    "image_captioning_enabled": false,
+    "table_extraction_enabled": false,
+    "vision_qa_enabled": false,
+    "ocr_available": true
+  }
+}
+```
+
+`provider_configured`/`fallback_configured` are booleans, never the key
+itself — `/health` is unauthenticated. `"database": "connected"` is added
+when `DATABASE_URL` is set. The frontend surfaces this on the Settings
+page's "System status" card.
+
+**`GET /documents/{document_id}/images`** returns the images extracted at
+ingestion (read from a per-document manifest, never a re-extraction of
+the PDF):
+
+```json
+{
+  "document_id": "ae845151-86b1-41e8-a63b-69289b88c67a",
+  "total": 2,
+  "images": [
+    {
+      "image_id": "ae845151-86b1-41e8-a63b-69289b88c67a_img_4",
+      "document_id": "ae845151-86b1-41e8-a63b-69289b88c67a",
+      "page_number": 3,
+      "content_type": "figure",
+      "mime_type": "image/png",
+      "width": 640,
+      "height": 480,
+      "byte_size": 23104,
+      "url": "/documents/ae845151-86b1-41e8-a63b-69289b88c67a/images/ae845151-86b1-41e8-a63b-69289b88c67a_img_4"
+    }
+  ]
+}
+```
+
+`content_type` is `"figure"` (an embedded image) or `"page"` (a
+rasterized full-page render of a low-text page, used by vision QA).
+`GET /documents/{document_id}/images/{image_id}` serves the bytes inline
+with the image's MIME type; it 404s for an unknown document, unknown
+image, or missing file. Both endpoints are tenant-scoped like the rest of
+the documents router.
 
 **`POST /chat`** request body:
 
@@ -487,7 +582,7 @@ InsightAI-RAG/
 │       ├── api/v1/routes/     # health, documents, query
 │       ├── core/              # config, logging, exceptions, error handlers
 │       ├── models/            # Pydantic schemas
-│       └── services/          # chunking, embedding, FAISS store, RAG pipeline, Gemini client
+│       └── services/          # chunking, embedding, FAISS store, RAG pipeline, Gemini client, multi-modal (images/captions/tables/vision QA)
 └── frontend/
     └── src/
         ├── pages/              # Home, Upload, Chat, Documents, Settings
@@ -537,6 +632,12 @@ InsightAI-RAG/
   only regenerates when chunks/web-results were available but the answer
   came back empty/fallback — it doesn't catch subtly wrong answers, only
   the "context existed but got ignored" pattern.
+- **Extracted-image listing reads a per-document manifest, not the DB.**
+  `GET /documents/{id}/images` lists what was persisted at ingestion from
+  `{document_id}_images.json` in the image storage dir; documents ingested
+  before manifests existed (or with a corrupt/unreadable manifest) list as
+  empty even if their bytes are still on disk. Listing is best-effort —
+  it never re-extracts the PDF and never fails the request.
 - **Retrieval grading is a score threshold, not a semantic judgment.**
   `_grade_retrieval` compares the top chunk's similarity score against
   `RETRIEVAL_GRADE_THRESHOLD` — a chunk can score high while being
@@ -586,6 +687,7 @@ reasoning behind these, plus what's explicitly out of scope
 - [x] RBAC — minimal admin/member role gates on document deletion and cross-tenant document listing (see `docs/CHECKLIST.md` §13); not a general permission/scope system
 - [x] Human approval — deployment-toggleable approval gates on web search and document deletion (see `docs/CHECKLIST.md` §1, §13); not a general approval queue
 - [x] Encryption at rest for the vector store and uploaded files — S3 default SSE + Lambda's default KMS-encrypted environment variables on AWS (see `docs/CHECKLIST.md` §13); application-level/field-level encryption remains open
+- [x] Multi-modal RAG — image extraction (`GET /documents/{id}/images` listing), Gemini figure captioning into searchable chunks, table extraction to markdown, and vision QA over page rasters; all config-gated and off by default (see Features/Configuration)
 - [ ] A multi-tenant / shardable vector store, replacing the single FAISS file (would also remove the reserved-concurrency=1 write-safety constraint in `infra/lambda.tf`)
 
 ## License

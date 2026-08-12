@@ -145,6 +145,10 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Source display | ✅ | `ChatResponse.sources`, `schemas.py:45-52,67-68`; `SourceReferences.jsx` |
 | Hybrid search | ✅ | BM25 + FAISS fusion 0.6/0.4, `hybrid_search.py` |
 | Re-ranking | ✅ | Opt-in cross-encoder, `reranking_service.py` |
+| Image extraction | ✅ | Embedded figures + low-text page rasters via PyMuPDF, `document_service.py` `extract_images_from_pdf` (gated: `image_extraction_enabled`) |
+| Image captioning | ✅ | Gemini vision captions indexed as `source="image_caption"` chunks, `image_captioning_service.py` (gated: `image_captioning_enabled`) |
+| Table extraction | ✅ | PyMuPDF `find_tables` → structured markdown chunks, `table_extraction_service.py` (gated: `table_extraction_enabled`) |
+| Vision-grounded QA | ✅ | Weak-retrieval vision fallback over low-text page rasters, `vision_qa_service.py` + `rag_service.py` (gated: `vision_qa_enabled`) |
 
 ### Metrics
 
@@ -247,13 +251,13 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | Tracing | ✅ | SSE trace + request_id |
 | Logging | ✅ | Structured JSON stdout |
-| Metrics | ⚠️ | Offline `metrics_report.py` + `monitoring/log_aggregate.py` rollup; no live metrics |
+| Metrics | ✅ | Live `GET /metrics` (Prometheus text exposition, in-process registry at `app/core/metrics.py`, emitted by `app/api/v1/routes/metrics.py`) — request latency histogram, `http_requests_total` by method/path/status, per-tool invocations/latency, LLM call/token/cost, loop-capped, retrieval timeouts, errors by taxonomy; optional `METRICS_BEARER_TOKEN`. Offline `metrics_report.py` + `monitoring/log_aggregate.py` remain for post-hoc/long-window rollups. |
 | Alerts | ✅ | Threshold breaches via `log_aggregate.py`/`uptime_check.py` exit codes, now also pushed via `monitoring/alert_webhook.py` — a best-effort Slack-compatible webhook POST (`--alert-webhook-url`/`ALERT_WEBHOOK_URL`, off by default), wired into `monitoring.yml`'s scheduled uptime job. Previously exit-code-only — corrected. |
 | Dashboards | ✅ | Text dashboard `monitoring/dashboard.py` (availability, latency, loop/tool rates, retry activity, requests/min, per-endpoint breakdown, tokens/cost; `--json` for machine consumers). A dependency-free stand-in for a hosted Grafana-style stack, sharing `log_aggregate.aggregate` so rollups can't drift. |
 | Prompt logs | ⚠️ | Version only, not content |
 | Tool logs | ✅ | Names, latency, and input/output summaries — success `tool_invocation` events now carry a bounded `output` shape (`_summarize_output`, `tool_registry.py:201-225`), so what each tool produced is visible at a glance. |
 | Token usage | ✅ | Per generation |
-| Latency | ✅ | P50/P95/P99 in `metrics_report.py:67-94`; live probe latency in `monitoring/uptime_check.py` |
+| Latency | ✅ | P50/P95/P99 in `metrics_report.py:67-94`; live scrape latency via `http_request_duration_seconds` histogram on `GET /metrics` (quantile via `histogram_quantile`); live probe latency in `monitoring/uptime_check.py` |
 | Errors | ✅ | By taxonomy category |
 | Cost | ✅ | `estimated_cost_usd` per generation; summed in `metrics_report.py:160-180` |
 | User feedback | ✅ | Thumbs + comment endpoint |
@@ -292,7 +296,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Secrets | ✅ | SSM `SecureString` (`infra/ssm.tf`), resolved by the app at cold start via a scoped `ssm:GetParameter` (`infra/iam.tf`) — the Lambda environment block itself carries only the parameter path, never the values |
 | Load balancer | N/A | No ALB/NLB in this design — a Lambda Function URL needs no separate load balancer resource; Lambda's own invocation model is the request-routing layer |
 | Autoscaling | ⚠️ | Deliberately capped at 1 (`infra/lambda.tf`'s `reserved_concurrent_executions = 1`), trading Lambda's native ability to scale out for FAISS/session write-safety — see that file's comment. A second concurrent request gets an immediate `429` rather than being served in parallel |
-| Monitoring | ⚠️ | Stand-in `metrics_report.py` + `monitoring/*.py` scripts (uptime probe + log rollup, both with optional webhook push on breach), `monitoring.yml` uptime schedule; CloudWatch metrics also available once deployed (`infra/lambda.tf`); no hosted dashboard/live-metrics stack |
+| Monitoring | ✅ | Live `GET /metrics` endpoint in the app itself (Prometheus text format — `app/core/metrics.py`, `app/api/v1/routes/metrics.py`), for any Prometheus/Grafana Cloud / CloudWatch agent to scrape; plus the offline stand-ins `metrics_report.py` + `monitoring/*.py` scripts (uptime probe + log rollup, both with optional webhook push on breach) and `monitoring.yml`'s uptime schedule; CloudWatch metrics also available once deployed. No hosted dashboard stack of our own — but a live, scrapeable endpoint is now on the wire, which is what "no live metrics" was flagging. |
 | Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/lambda.tf`); `log_aggregate.py` remains the offline rollup tool |
 | Requests per second | ⚠️ | Not measured |
 | Latency | ✅ | P50/P95/P99 offline |
@@ -347,7 +351,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 
 | Area | Item | Status |
 |---|---|---|
-| Evaluation | Dataset (normal/edge/failure/adversarial) | ✅ `dataset_v1/v2.json` include all four case types |
+| Evaluation | Dataset (normal/edge/failure/adversarial) | ✅ `dataset_v1/v2.json` include all four case types; `dataset_v3.json` adds multi-modal case types (`image_caption`, `table_lookup`, `vision_qa`) |
 | Evaluation | Metrics by cost of failure | ✅ Explicit rationale table — each metric mapped to the failure it detects and the cost of that failure shipping undetected, `eval/README.md`'s "Metric selection: cost of failure" |
 | Evaluation | Human eval rubrics | ✅ `HUMAN_EVAL.md` |
 | Debugging | Logs / Traces / Errors | ✅ / ✅ / ✅ |
@@ -355,7 +359,7 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Monitoring | Uptime probe / Log rollup / Alerts | ✅ / ✅ / ✅ |
 | Security | Auth / Authorization / Secrets / Encryption | ✅ / ✅ / ✅ / ✅ |
 | Reliability | Retry / Timeout / Fallback / Cache | ✅ / ✅ / ✅ / ✅ |
-| Cost | Tokens / Latency / Model routing / Cache | ✅ / ✅ / ✅ / ✅ |
+| Cost | Tokens / Latency / Model routing / Cache / Vision | ✅ / ✅ / ✅ / ✅ / ✅ — per-request `estimated_cost_usd` covers every `generate*` call including image captioning / vision QA (gated off by default) |
 | Docs | README / API / Architecture / Demo / Future work | ✅ / ✅ / ✅ / ✅ / ✅ |
 
 ### Final 10-question design review

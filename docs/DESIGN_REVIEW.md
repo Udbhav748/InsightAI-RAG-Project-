@@ -104,11 +104,22 @@ don't need LLM-driven planning to decide between them.
   decline"; both look identical from the system's point of view (empty
   `retrieved_chunks` above the score threshold vs. genuinely no
   matching content). This is a real detection gap — see Q10.
-- **Prompt injection** — no runtime detector; `backend/eval/dataset_v1.json`
-  has two adversarial entries and `run_eval.py` reports an **Injection
-  Resistance** metric (did the model comply with the injected
-  instruction), but that's an offline eval signal, not something that
-  fires in production traffic.
+- **Prompt injection** — a lightweight heuristic detector now runs in
+  production traffic (`app/services/prompt_injection_service.py`): the
+  query (`ChatService._route`) and every retrieved chunk
+  (`retrieval_service.retrieve`) are checked against a small set of
+  common override-phrasing patterns, logging `possible_injection_detected`
+  when one matches — flag-and-continue, the same policy shape
+  `pii_service.py` already uses, not a block. This is detection, not
+  defense (the defense is still the delimiter/instruction wrapping below),
+  and the pattern set is deliberately narrow/heuristic, not a classifier —
+  false positives on legitimate text that happens to discuss these topics
+  are expected and acceptable since nothing here changes behavior.
+  `backend/eval/dataset_v1.json`'s two adversarial entries and
+  `run_eval.py`'s **Injection Resistance** metric (did the model comply
+  with the injected instruction) remain the offline signal for whether the
+  *defense* holds; this detector is the separate, narrower signal for
+  whether an *attempt* was even made, now visible in production logs too.
 - **Planner misroute** — no runtime detector either (there's no ground
   truth at request time to compare against); only visible offline via
   the eval harness's planner confusion matrix/accuracy, run manually
@@ -145,17 +156,35 @@ don't need LLM-driven planning to decide between them.
 
 ## 6. How do you know the new version is better?
 
-Not automatically — there's no CI-gated regression check. The process
-is manual and offline, documented in
-[`docs/OPERATIONS.md`](OPERATIONS.md)'s "A/B testing prompt and model
-changes" section: run `eval/run_eval.py` before a change (saved as a
-timestamped JSON in `backend/eval/results/`), change one variant
-(`GEMINI_MODEL_NAME` or `PROMPT_VERSION`), re-run, and diff
-`task_success_rate`, `groundedness_proxy`, `injection_resistance`, and
-the planner's accuracy/F1 between the two files. This isn't run in CI
-because it needs a live Gemini key, spends real quota, and requires an
-already-indexed document (`.github/workflows/ci.yml` has a TODO noting
-exactly this).
+**A CI-gated regression check now exists** — `.github/workflows/eval.yml`
+(manual `workflow_dispatch`, not on every push: it needs a live LLM key
+and spends real quota, same constraint noted below) runs `run_eval.py`
+against the demo corpus, then its "Regression gate" step runs
+`backend/eval/regression_check.py` against a committed baseline
+(`eval/baselines/v2_groq.json`) and **fails the job** (exit 1) if any
+tracked metric regresses beyond tolerance. Two checks, both gating:
+aggregate metrics (`task_success_rate`, `groundedness_proxy`,
+`injection_resistance`, planner accuracy/F1, precision/recall/MRR,
+citation accuracy, and the lower-is-better rates, each with a default
+0.05 absolute tolerance) and a case-level **Regression Rate** — the
+fraction of previously-passing cases (matched by query text) that now
+fail, gated at 0 tolerance by default. This is a genuinely finer check
+than the aggregate alone: an aggregate can hold steady while individual
+cases flip (some regress, others newly pass), which only the case-level
+check catches. `run_eval.py`'s and `regression_check.py`'s own docstrings
+have the full detail.
+
+The underlying comparison procedure is still also available manually/
+offline, documented in [`docs/OPERATIONS.md`](OPERATIONS.md)'s "A/B
+testing prompt and model changes" section, for exploratory before/after
+comparisons that aren't a pass/fail gate — e.g. deciding whether to flip
+`HYBRID_SEARCH_ENABLED` or compare `GEMINI_MODEL_NAME` variants, where
+"better" is a judgment call across metrics, not a threshold. What
+doesn't exist yet: this gate isn't wired to run automatically on every
+push to `main` (`ci.yml`'s own TODO still notes exactly this) — it's a
+deliberate, manually-triggered gate, not a merge-blocking check, because
+of the live-API-cost/pre-indexed-document constraints in the paragraph
+below.
 
 **A concrete before/after pair exists today**, and it's a useful
 illustration of the harness catching an *infrastructure* failure rather
@@ -331,14 +360,25 @@ constraints beyond it:
   sharding and no per-tenant isolation — every document lives in the
   same global index, so a multi-user deployment would need a proper
   vector database (namespaced/multi-tenant) rather than this file.
-  Concurrent *writes* are guarded, though:
-  `FAISSVectorStore.add_embeddings`/`delete_document`/`save` share a
-  `threading.Lock`, so two uploads or an upload racing a delete at the
-  same instant can no longer corrupt the index/metadata pairing (see
-  `faiss_vector_store.py`). Reads (`search`, `get_chunks_by_document`,
-  `load`) aren't locked, so a read concurrent with a write can still
-  observe a mid-rebuild index — a narrower gap than the unguarded-writes
-  one, but still open.
+  Concurrency within that single index is guarded, though:
+  `FAISSVectorStore`'s reads (`search`, `search_bm25`,
+  `get_chunks_by_document`, `list_document_ids`, `first_chunk_vector`,
+  `total_vectors`) and writes (`add_embeddings`, `delete_document`,
+  `save`, `load`) all share one `threading.Lock`, so a search can no
+  longer observe a mid-rebuild index (`self._index` and `self._metadata`
+  are two separate attribute reassignments in `delete_document`, not one
+  atomic step — a read landing between them could previously score
+  against the *new*, rebuilt index but resolve positions against the
+  *old*, now-mismatched metadata list, either an `IndexError` or, worse,
+  silently the wrong document's chunk) and two uploads or an upload
+  racing a delete can no longer corrupt the index/metadata pairing
+  either (see `faiss_vector_store.py`). This serializes all index access
+  through one lock rather than allowing concurrent reads (a reader-writer
+  lock would), a deliberate simplicity-over-throughput call proportionate
+  to this app's already-documented single-process, largely
+  single-request-at-a-time traffic profile — see `backend/Dockerfile`'s
+  own comment on why concurrency headroom isn't being left on the table
+  by choosing this.
 - **Single API key (per-client, not per-user).** `app/core/auth.py` checks the `X-API-Key` header against a keys table (`Settings.api_key_table`) loaded from `API_KEYS` (JSON map of `client_name -> key`) or a single fallback `API_KEY`. Keys are hashed with SHA-256 at startup; only hashes are kept in memory. 
 
   **No built-in key rotation or revocation.** To rotate a compromised key:
@@ -381,8 +421,8 @@ would *not* trust it yet as a multi-user product handling other people's
 data: one shared API key instead of per-user auth, no encryption at
 rest, PII is flagged but never scrubbed or blocked, cost figures are
 config-derived estimates rather than billed usage (Q8), the eval
-harness that would catch a quality regression isn't gated in CI (Q6),
-and the FAISS index still has no per-tenant isolation (Q9 — its write
+regression gate is manually-triggered rather than running on every push
+(Q6), and the FAISS index still has no per-tenant isolation (Q9 — its write
 race is closed, but sharding isn't). Those are exactly the gaps this
 document and
 [`docs/NOT_APPLICABLE.md`](NOT_APPLICABLE.md) already name — the honest
