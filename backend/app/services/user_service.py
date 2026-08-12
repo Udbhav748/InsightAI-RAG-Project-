@@ -21,7 +21,12 @@ import jwt
 
 from app.core.config import settings
 from app.core.database import SessionLocal, db_enabled
-from app.core.exceptions import AuthConfigurationError, EmailAlreadyRegisteredError, UnauthorizedError
+from app.core.exceptions import (
+    AuthConfigurationError,
+    DatabaseNotConfiguredError,
+    EmailAlreadyRegisteredError,
+    UnauthorizedError,
+)
 from app.models.db_models import Tenant, User
 from app.services.tenant_service import effective_role
 
@@ -30,7 +35,17 @@ logger = logging.getLogger(__name__)
 
 def _session():
     if not db_enabled():
-        raise RuntimeError("Database not configured")
+        # Unlike tenant_service.py's identically-shaped _session() (whose
+        # callers all check db_enabled() themselves first, so this branch
+        # never actually fires there), every public function in this
+        # module calls straight through to here — so this is the one
+        # place that actually raises when DATABASE_URL is unset. A real
+        # AppError, not a bare RuntimeError: individual user login being
+        # unavailable in a DB-less deployment is a config gap the caller
+        # should see clearly (503), not a generic 500.
+        raise DatabaseNotConfiguredError(
+            "Individual user login requires DATABASE_URL to be configured."
+        )
     return SessionLocal()
 
 

@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: insightai
+      POSTGRES_PASSWORD: insightai-dev-password
+      POSTGRES_DB: insightai
+    ports:
+      # Published so a backend running natively on the host (not through
+      # this compose file — e.g. `uvicorn app.main:app --reload` directly,
+      # the usual dev loop) can also reach it at localhost:5432. Matches
+      # backend/.env's own DATABASE_URL, which targets that same host port.
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insightai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -6,6 +26,16 @@ services:
       - "8000:8000"
     env_file:
       - backend/.env
+    environment:
+      # Overrides backend/.env's DATABASE_URL specifically for this
+      # container: "postgres" (the service name above) resolves inside
+      # the compose network, but "localhost" — what backend/.env has, for
+      # the natively-run case above — would not (a container's own
+      # localhost isn't this network's postgres service).
+      DATABASE_URL: postgresql+psycopg2://insightai:insightai-dev-password@postgres:5432/insightai
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - backend_uploads:/app/uploads
       - backend_vector_store:/app/vector_store
@@ -41,3 +71,4 @@ services:
 volumes:
   backend_uploads:
   backend_vector_store:
+  postgres_data:

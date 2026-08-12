@@ -111,6 +111,9 @@ class Document(Base):
     total_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_embeddings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     pages_ocred: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Optional user-assigned tag grouping documents into a named collection
+    # ("doc set") that chats can be scoped to (Agent 3.1). Null = no group.
+    collection: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     upload_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="documents")

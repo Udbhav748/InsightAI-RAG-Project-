@@ -76,3 +76,43 @@ class VisionPrediction(BaseModel):
     low_confidence: bool = Field(
         ..., description="True if confidence is below Settings.vision_confidence_threshold."
     )
+
+
+class ExtractedImage(BaseModel):
+    """One image extracted from an uploaded PDF (Phase 1 of multi-modal
+    RAG). Carries enough provenance to be cited and re-located on disk:
+    which page it came from, its original dimensions, and a storage
+    path that survives restarts (delete_document's cleanups know how to
+    remove it alongside the upload's own files)."""
+
+    image_id: str = Field(..., description="Stable identifier for this image, unique within the document.")
+    document_id: str = Field(..., description="Identifier of the document this image was extracted from.")
+    page_number: int = Field(
+        ..., ge=1, description="1-based page this image appeared on — the page number the OCR/vision paths report."
+    )
+    content_type: str = Field(
+        "figure",
+        description="What this image is: 'figure' (an embedded image), 'page' (a rasterized "
+        "full-page render of a low-text page, produced for vision QA).",
+    )
+    storage_path: str = Field(
+        ..., description="Filesystem path (relative to Settings.image_storage_dir_name) where the bytes are persisted."
+    )
+    mime_type: str = Field("image/png", description="MIME type of the persisted bytes.")
+    width: int = Field(..., ge=1, description="Image width in pixels.")
+    height: int = Field(..., ge=1, description="Image height in pixels.")
+    byte_size: int = Field(..., ge=0, description="Size of the persisted bytes.")
+
+
+class ExtractedTable(BaseModel):
+    """One table extracted from a PDF page, already reduced to structured
+    text (markdown) so it can flow through the existing text chunking/
+    embedding pipeline exactly like body text — the vector store never
+    needs to know it was ever a table."""
+
+    table_id: str = Field(..., description="Stable identifier for this table, unique within the document.")
+    document_id: str = Field(..., description="Identifier of the document this table was extracted from.")
+    page_number: int = Field(..., ge=1, description="1-based page this table appeared on.")
+    markdown: str = Field(..., description="The table as a markdown grid (header row, separator, then data rows).")
+    row_count: int = Field(..., ge=0, description="Number of data rows in the table (header excluded).")
+    column_count: int = Field(..., ge=0, description="Number of columns in the table.")

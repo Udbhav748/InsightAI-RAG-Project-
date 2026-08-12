@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.core.exceptions import AppError
+from app.core.metrics import get_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
+        get_metrics().record_error(
+            taxonomy_category=exc.taxonomy_category, status_code=exc.status_code
+        )
         logger.warning(
             "request_failed",
             extra={
@@ -47,6 +51,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        get_metrics().record_error(taxonomy_category="internal", status_code=500)
         logger.error(
             "unhandled_exception",
             exc_info=exc,

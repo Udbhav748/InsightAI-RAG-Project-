@@ -51,6 +51,16 @@ class ChatRequest(BaseModel):
         description="Request a JSON-mode structured answer. Only takes effect when "
         "Settings.structured_output_enabled is true; otherwise ignored.",
     )
+    persona: str | None = Field(
+        None,
+        description="Optional tone/style preset for the answer (see prompt_builder.PERSONAS). "
+        "Only affects HOW the answer is phrased — never whether it's grounded or cited.",
+    )
+    document_ids: list[str] | None = Field(
+        None,
+        description="When set, retrieval is scoped to exactly these document_ids — chat "
+        "against a named collection instead of the whole library.",
+    )
 
 
 class SourceReference(BaseModel):
@@ -115,6 +125,25 @@ class ChatResponse(BaseModel):
         "Client should store this (e.g. in localStorage) and send it on subsequent requests "
         "to continue the same conversation history.",
     )
+    retrieval_confidence: Literal["good", "weak", "insufficient"] = Field(
+        "good",
+        description="How confident retrieval was that it found on-topic context: 'good' "
+        "(top score cleared the grade threshold), 'weak' (chunks survived the score floor "
+        "but weren't confidently on-topic), or 'insufficient' (nothing survived). Surfaced "
+        "so the user can double-check a weak/insufficient-grounded answer against the source.",
+    )
+    is_clarifying_question: bool = Field(
+        False,
+        description="True when, instead of the canned 'couldn't find that' fallback, the "
+        "answer is one short clarifying question the app asked because retrieval graded "
+        "'insufficient' and no grounded answer was possible.",
+    )
+    follow_up_questions: list[str] = Field(
+        default_factory=list,
+        description="Up to 3 short, suggested follow-up questions the user might ask next "
+        "(the 'related questions' pattern). Empty when the feature is off or the model "
+        "produced nothing parseable.",
+    )
 
 
 class RubricScores(BaseModel):
@@ -173,6 +202,28 @@ class DocumentProcessingResponse(BaseModel):
     pages_ocred: int = Field(
         0, description="Number of pages that had no extractable text layer and were recovered via OCR."
     )
+    total_images: int = Field(
+        0, description="Embedded images extracted from the PDF (multi-modal RAG, Phase 1)."
+    )
+    images_captioned: int = Field(
+        0,
+        description="Extracted images successfully captioned by the vision LLM and indexed "
+        "as image-derived chunks (Phase 2).",
+    )
+    total_tables: int = Field(
+        0, description="Tables extracted and indexed as structured markdown text (Phase 5)."
+    )
+    collection: str | None = Field(
+        None,
+        description="Optional named collection ('doc set') this document was tagged into "
+        "at upload time. Empty/None = the default, unscoped library.",
+    )
+    possible_duplicate_of: str | None = Field(
+        None,
+        description="When duplicate-document detection is enabled and this upload closely "
+        "resembles an already-indexed same-tenant document, that other document's "
+        "document_id. The upload always succeeds — this is a warning, never a block.",
+    )
     processing_time: float
     status: str
 
@@ -193,11 +244,35 @@ class DocumentListItem(BaseModel):
     total_embeddings: int
     pages_ocred: int
     upload_timestamp: datetime
+    collection: str | None = None
 
 
 class DocumentListResponse(BaseModel):
     documents: list[DocumentListItem]
     total: int
+
+
+class DocumentImageItem(BaseModel):
+    """One image extracted from a document (multi-modal RAG, Phase 1) —
+    metadata only; the bytes are fetched separately via `url`."""
+
+    image_id: str = Field(..., description="Stable identifier for this image, unique within the document.")
+    document_id: str = Field(..., description="Identifier of the document this image was extracted from.")
+    page_number: int = Field(..., ge=1, description="1-based page this image appeared on.")
+    content_type: str = Field(
+        ..., description="'figure' (an embedded image) or 'page' (a rasterized full-page render of a low-text page)."
+    )
+    mime_type: str = Field(..., description="MIME type of the persisted bytes.")
+    width: int = Field(..., ge=1, description="Image width in pixels.")
+    height: int = Field(..., ge=1, description="Image height in pixels.")
+    byte_size: int = Field(..., ge=0, description="Size of the persisted bytes.")
+    url: str = Field(..., description="API path at which the image bytes can be fetched.")
+
+
+class DocumentImagesResponse(BaseModel):
+    document_id: str
+    total: int
+    images: list[DocumentImageItem]
 
 
 class SignupRequest(BaseModel):
@@ -228,3 +303,27 @@ class CurrentUserResponse(BaseModel):
     email: str
     tenant_id: int
     role: str
+
+
+class HighlightResponse(BaseModel):
+    """Rectangles on one PDF page where `text` appears (PyMuPDF
+    search_for), used by the in-app PDF citation preview to draw a
+    highlight over the cited passage."""
+
+    page_number: int
+    page_width: float
+    page_height: float
+    rects: list[list[float]] = Field(
+        default_factory=list,
+        description="[x0, y0, x1, y1] float coordinates of each text occurrence on the page.",
+    )
+
+
+class UsageSummaryRow(BaseModel):
+    day: str
+    request_count: int
+    avg_latency_ms: float
+
+
+class UsageSummaryResponse(BaseModel):
+    rows: list[UsageSummaryRow] = Field(default_factory=list)

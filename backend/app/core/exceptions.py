@@ -104,6 +104,29 @@ class TextExtractionError(AppError):
     error_code = "TEXT_EXTRACTION_ERROR"
 
 
+class ImageExtractionError(AppError):
+    status_code = 500
+    taxonomy_category = "tool"
+    error_code = "IMAGE_EXTRACTION_ERROR"
+
+
+class ImageCaptioningError(AppError):
+    """A caption generation call failed at the LLM/provider layer. Raised
+    per-image by image_captioning_service's client call; the service
+    catches it and degrades to "no caption chunk" for that image rather
+    than failing the whole upload (see its module docstring)."""
+
+    status_code = 502
+    taxonomy_category = "tool"
+    error_code = "IMAGE_CAPTIONING_ERROR"
+
+
+class TableExtractionError(AppError):
+    status_code = 500
+    taxonomy_category = "tool"
+    error_code = "TABLE_EXTRACTION_ERROR"
+
+
 class EmbeddingModelLoadError(AppError):
     status_code = 500
     taxonomy_category = "deployment"
@@ -198,6 +221,21 @@ class AuthConfigurationError(AppError):
     status_code = 500
     taxonomy_category = "deployment"
     error_code = "AUTH_CONFIGURATION_ERROR"
+
+
+class DatabaseNotConfiguredError(AppError):
+    """Raised by user_service.py's _session() when an /auth route is hit
+    but DATABASE_URL isn't set — individual user login has nowhere to
+    persist a User/Tenant. 503, not 500: the server is fine, this one
+    action just isn't available in the current deployment (the same
+    "not a bug, a config gap" signal AuthConfigurationError gives for a
+    missing JWT_SECRET_KEY). Distinct from that error because the fix is
+    different: JWT_SECRET_KEY is a value to set, DATABASE_URL is a whole
+    dependency that has to exist first."""
+
+    status_code = 503
+    taxonomy_category = "deployment"
+    error_code = "DATABASE_NOT_CONFIGURED"
 
 
 class EmailAlreadyRegisteredError(AppError):

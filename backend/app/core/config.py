@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     # DB keeps working exactly as before).
     database_url: str = ""
 
+    # Timeout, in seconds, for the startup database connection attempt
+    # (passed as connect_args["connect_timeout"] to create_engine in
+    # app/core/database.py). When Postgres is unreachable (Docker Desktop
+    # not running, the insightai-postgres container down), startup used to
+    # hang on an unbounded OS-level connect attempt; this bounds it so
+    # init_db() fails fast with an actionable error. Matches the per-service
+    # timeout-field convention used across this file.
+    database_connect_timeout_seconds: int = 5
+
     # Required. Google Gemini API key (used by the future RAG/generation pipeline).
     gemini_api_key: str
 
@@ -142,6 +151,14 @@ class Settings(BaseSettings):
     # DELETE /documents/{id}) fall back to their pre-RBAC, ungated
     # behavior, same as tenant-scoping already does.
     admin_client_names: str = ""
+
+    # Optional. When set, GET /metrics requires this token via the
+    # Authorization: Bearer header (compared constant-time; see
+    # app/api/v1/routes/metrics.py). Left empty (the default), /metrics is
+    # unauthenticated like /health — metrics carry no payload data and the
+    # route cost is trivial, but a publicly-exposed deployment can tighten
+    # this without handing out a full API key to its scrapers.
+    metrics_bearer_token: str = ""
 
     # --- Individual user login (JWT), alongside API-key auth ----------
     # Secret used to sign/verify JWTs issued by POST /auth/login and
@@ -445,6 +462,144 @@ class Settings(BaseSettings):
     # impossible anyway, since deleting anything under a read-only mount
     # (including the empty directories baked into the image) fails too.
     data_dir_override: str = ""
+
+    # --- Multi-modal RAG (off by default) --------------------------------
+    # Extracts embedded images from uploaded PDFs (see
+    # document_service.extract_images_from_pdf) and stores them on disk
+    # under image_storage_dir_name, so later phases (captioning, vision QA)
+    # have the bytes to work with. Local PyMuPDF work only — no new
+    # dependency and no external call. Off by default like every feature
+    # here; image-caption chunks are only produced when the downstream
+    # captioning flag is also on.
+    image_extraction_enabled: bool = False
+
+    # Captions each extracted image via Gemini's vision input
+    # (gemini_client.generate_with_image) and indexes the captions into the
+    # *existing* text vector store, metadata-tagged as image-derived
+    # (source="image_caption") so citations can say "from a figure on page
+    # N". Requires image_extraction_enabled and a vision-capable LLM
+    # client; a caption failure degrades to "no caption chunk" for that
+    # image, never a failed upload. Off by default — each caption is a paid
+    # Gemini vision call.
+    image_captioning_enabled: bool = False
+
+    # Extracts tabular regions via PyMuPDF's built-in table detection
+    # (page.find_tables) and feeds the tables into the same chunking/
+    # embedding pipeline as structured markdown text (source="table").
+    # Off by default — table detection is heuristic and opt-in.
+    table_extraction_enabled: bool = False
+
+    # Vision-grounded QA on full-page images: when a chat query's retrieval
+    # is graded weak/insufficient, the low-text pages (the same
+    # ocr_min_chars_per_page decision point extraction uses) of the most
+    # relevant document are sent to Gemini directly instead of relying on
+    # OCR'd text alone (see vision_qa_service.py). Requires
+    # image_extraction_enabled (page rasters are produced there). Off by
+    # default — another paid Gemini vision call per weak-retrieval query.
+    vision_qa_enabled: bool = False
+
+    # Directory (relative to backend/) where extracted images are persisted
+    # (filename shape: {document_id}_{page_number}_{image_id}.{ext}).
+    image_storage_dir_name: str = "extracted_images"
+
+    # Images whose smaller side is below this many pixels are dropped
+    # (icons, dividers, noise) rather than captioned or QA'd.
+    image_min_side_px: int = 50
+
+    # Upper bound on images extracted from one document — a pathological
+    # PDF (thousands of vector tiles) must not balloon ingestion.
+    image_max_count_per_document: int = 50
+
+    # Hard cap on the characters of a caption that actually get chunked —
+    # captions are short by nature; a runaway caption is truncated.
+    image_caption_max_chars: int = 600
+
+    # Most full-page images sent to Gemini in one vision-QA attempt.
+    vision_qa_max_pages: int = 3
+
+    # Upper bound on tables extracted from one document.
+    table_max_count_per_document: int = 50
+
+    # --- Answer-quality / agentic / vector-store-hygiene flags ----------
+    # (docs/FEATURE_PROMPTS.md's 13-feature plan). Every one defaults False,
+    # per this codebase's convention: a new capability is off until
+    # explicitly enabled. Two exceptions ship without a flag — 1.1
+    # (retrieval_confidence banner: pure info-surfacing of a grade the app
+    # already computes internally, zero added cost) and 4.3 (keyword
+    # highlighting: pure frontend rendering) — each calls that out where it
+    # ships.
+
+    # Agent 1.2 — When True, a follow-up question (one where conversation
+    # history exists) is rewritten into a standalone question via one extra
+    # LLM call before it's used for retrieval — the raw follow-up text alone
+    # ("what about the other one?") often retrieves poorly since it's
+    # missing the context a human reader would infer from prior turns.
+    # Off by default: it's one additional LLM call, only on follow-up
+    # turns (never on a first message, since there's no history to use).
+    query_contextualization_enabled: bool = False
+
+    # Agent 1.3 — When True, a generated answer's [N] citation markers are
+    # checked against their cited chunks via one extra LLM call before the
+    # answer is accepted — catching a claim that cites a real chunk but
+    # misstates what it says (something _is_ungrounded's empty/fallback
+    # check can't detect). Bounded to one combined call per answer, never
+    # one call per citation. Off by default: real added cost on every
+    # answer that has citations.
+    citation_verification_enabled: bool = False
+
+    # Agent 1.4 — When True, if retrieval graded "insufficient" and the
+    # corrective loop still couldn't produce a grounded answer, the app
+    # asks the user one short clarifying question instead of returning the
+    # fixed "couldn't find that" line — a better outcome when the real
+    # problem is an ambiguous question, not missing content. Degrades to
+    # today's exact fallback behavior on any LLM failure. Off by default:
+    # one extra LLM call, only in this specific (rare) end state.
+    clarifying_question_enabled: bool = False
+
+    # Agent 2.2 — When True, one extra small LLM call after the main answer
+    # suggests up to 3 short follow-up questions the user might ask next
+    # (the "related questions" pattern). Parsed defensively — any failure
+    # degrades to an empty list, never affects the main answer. Off by
+    # default: added latency + one extra LLM call per request.
+    follow_up_questions_enabled: bool = False
+
+    # Agent 2.3 — When True, a weak/insufficient-retrieval query gets
+    # handed to LocalResearchAgent (local_research_agent.py) instead of (or
+    # ahead of) the web-search research agent: it decomposes the query into
+    # sub-queries and runs multiple local retrieve() passes, merging the
+    # results — useful for questions that need combining content from
+    # different parts of a document. Off by default: adds LLM planning
+    # + multiple retrieval calls per weak-retrieval query.
+    local_research_agent_enabled: bool = False
+
+    # Agent 2.3 — Max sub-queries LocalResearchAgent's planning step may emit.
+    local_research_max_subqueries: int = 3
+
+    # Agent 3.2 — When True, a new chunk whose embedding is a near-duplicate
+    # (cosine similarity >= chunk_dedup_similarity_threshold) of an
+    # already-indexed chunk from the SAME document is skipped rather than
+    # indexed — this is what prevents the exact scoring bug observed this
+    # session, where two near-identical chunks starve each other out via
+    # hybrid search's min-max score normalization. Off by default: a
+    # linear-scan comparison cost per new chunk within its own document.
+    chunk_dedup_enabled: bool = False
+
+    # Agent 3.2 — Cosine-similarity threshold above which two chunks from
+    # the same document are treated as duplicates. High (0.97) — this
+    # catches true near-duplicates, not just topically-similar chunks.
+    chunk_dedup_similarity_threshold: float = 0.97
+
+    # Agent 3.3 — When True, a newly-uploaded document's first chunk's
+    # embedding is compared against other same-tenant documents'
+    # first-chunk embeddings; if similarity >=
+    # duplicate_document_similarity_threshold, the upload still succeeds
+    # (never blocked) but the response names the document it resembles.
+    # Off by default: adds one comparison pass per upload.
+    duplicate_document_detection_enabled: bool = False
+
+    # Agent 3.3 — Similarity threshold for the duplicate-document check
+    # above.
+    duplicate_document_similarity_threshold: float = 0.95
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

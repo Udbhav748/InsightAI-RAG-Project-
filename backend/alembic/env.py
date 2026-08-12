@@ -24,7 +24,12 @@ from app.models import db_models  # noqa: E402,F401  register models on Base
 
 config = context.config
 
-if config.config_file_name is not None:
+# When migrations run inside the app process (app/core/database.py's
+# run_migrations, on every startup), the alembic.ini logging config must NOT
+# be applied — fileConfig would clobber the app's already-configured
+# structured (JSON) logging. The CLI path (`alembic upgrade head`) sets no
+# attribute, so it keeps the ini's console logging exactly as before.
+if config.config_file_name is not None and not config.attributes.get("skip_logging_setup"):
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
