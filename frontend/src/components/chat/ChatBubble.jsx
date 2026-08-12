@@ -4,11 +4,12 @@ import { Check, ClipboardList, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, 
 import AgentTraceStrip from './AgentTraceStrip'
 import CitedAnswer from './CitedAnswer'
 import RubricReviewModal from './RubricReviewModal'
+import Button from '../ui/Button'
 import { sendFeedback } from '../../services/feedbackService'
 import useToast from '../../hooks/useToast'
 import getErrorMessage from '../../utils/errorMessage'
 
-export default function ChatBubble({ message, isLast, onRegenerate }) {
+export default function ChatBubble({ message, isLast, onRegenerate, onFollowUpClick, query }) {
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState(null) // null | 'up' | 'down'
   const [rubricModalOpen, setRubricModalOpen] = useState(false)
@@ -59,12 +60,14 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
           className={
             isUser
               ? 'rounded-2xl rounded-tr-md bg-slate-900/[0.04] px-4 py-3 text-sm text-slate-800 dark:bg-white/[0.06] dark:text-ink-primary'
-              : 'panel rounded-2xl rounded-tl-md px-4 py-3.5 text-sm text-slate-700 dark:text-ink-secondary'
+              : message.isClarifyingQuestion
+                ? 'rounded-2xl rounded-tl-md border border-accent-500/40 px-4 py-3.5 text-sm text-slate-700 dark:text-ink-secondary'
+                : 'panel rounded-2xl rounded-tl-md px-4 py-3.5 text-sm text-slate-700 dark:text-ink-secondary'
           }
         >
           {!isUser && <AgentTraceStrip trace={message.trace} isStreaming={message.isStreaming} />}
           {!isUser && !message.isStreaming ? (
-            <CitedAnswer text={message.content} sources={message.sources} />
+            <CitedAnswer text={message.content} sources={message.sources} query={query} />
           ) : (
             <p className="whitespace-pre-wrap leading-relaxed">
               {message.content}
@@ -73,7 +76,22 @@ export default function ChatBubble({ message, isLast, onRegenerate }) {
               )}
             </p>
           )}
+          {!isUser && !message.isStreaming && message.retrievalConfidence && message.retrievalConfidence !== 'good' && (
+            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
+              Low confidence — double-check this against the source.
+            </p>
+          )}
         </div>
+
+        {!isUser && !message.isStreaming && message.followUpQuestions?.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {message.followUpQuestions.map((q) => (
+              <Button key={q} variant="ghost" size="sm" onClick={() => onFollowUpClick?.(q)}>
+                {q}
+              </Button>
+            ))}
+          </div>
+        )}
 
         {!isUser && !message.isStreaming && (
           <div className="mt-1.5 flex items-center gap-1 px-1">

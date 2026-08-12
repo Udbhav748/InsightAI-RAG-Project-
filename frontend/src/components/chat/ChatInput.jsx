@@ -4,7 +4,7 @@ import { ArrowUp } from 'lucide-react'
 
 const MAX_HEIGHT = 200
 
-export default function ChatInput({ onSend, disabled }) {
+export default function ChatInput({ onSend, disabled, persona = '', onPersonaChange }) {
   const [value, setValue] = useState('')
   const textareaRef = useRef(null)
 
@@ -19,7 +19,7 @@ export default function ChatInput({ onSend, disabled }) {
     event.preventDefault()
     const trimmed = value.trim()
     if (!trimmed || disabled) return
-    onSend(trimmed)
+    onSend(trimmed, persona)
     setValue('')
   }
 
@@ -46,6 +46,16 @@ export default function ChatInput({ onSend, disabled }) {
         placeholder="Ask a question about your documents..."
         className="max-h-[200px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none dark:text-ink-primary dark:placeholder-ink-muted"
       />
+      <select
+        value={persona}
+        onChange={(event) => onPersonaChange?.(event.target.value)}
+        aria-label="Answer style"
+        className="input w-auto shrink-0 px-2 py-2 text-xs"
+      >
+        <option value="">Default</option>
+        <option value="concise">Concise</option>
+        <option value="eli5">Simple (ELI5)</option>
+      </select>
       <motion.button
         type="submit"
         disabled={!canSend}
