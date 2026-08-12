@@ -27,6 +27,10 @@ on:
 jobs:
   availability:
     runs-on: ubuntu-latest
+    # Skips cleanly (not a failure) until infra/ has actually been applied
+    # and LAMBDA_FUNCTION_URL populated (infra/README.md Step 6) — avoids a
+    # failure-notification email every 15 minutes before AWS is provisioned.
+    if: ${{ vars.LAMBDA_FUNCTION_URL != '' }}
     steps:
       - uses: actions/checkout@v4
 

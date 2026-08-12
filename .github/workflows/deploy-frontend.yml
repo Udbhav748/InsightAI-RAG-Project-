@@ -25,6 +25,10 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Skips cleanly (not a failure) until infra/ has actually been applied
+    # and these repo Variables populated (infra/README.md Step 6) — avoids
+    # a failure-notification email on every push before AWS is provisioned.
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_GITHUB_ACTIONS_ROLE_ARN != '' }}
     defaults:
       run:
         working-directory: frontend
