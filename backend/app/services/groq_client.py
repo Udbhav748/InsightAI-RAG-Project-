@@ -25,6 +25,7 @@ from app.core.exceptions import (
     LLMTimeoutError,
 )
 from app.core.usage_tracking import record_usage
+from app.core.metrics import get_metrics
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,14 @@ class GroqClient(LLMClient):
             estimated_cost_usd=estimated_cost_usd,
         )
 
+        get_metrics().record_llm_generation(
+            provider="groq",
+            model=settings.groq_model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
         logger.info(
             "llm_generation_completed",
             extra={
@@ -176,6 +185,14 @@ class GroqClient(LLMClient):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
+        get_metrics().record_llm_generation(
+            provider="groq",
+            model=settings.groq_model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             estimated_cost_usd=estimated_cost_usd,
         )
 

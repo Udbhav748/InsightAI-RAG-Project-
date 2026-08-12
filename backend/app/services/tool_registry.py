@@ -34,6 +34,7 @@ from typing import Any
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from app.core.exceptions import AppError, ChatServiceError
+from app.core.metrics import get_metrics
 from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,7 @@ def track_tool(name: str):
                 result = func(*args, **kwargs)
             except AppError as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
+                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
                 logger.warning(
                     "tool_invocation",
                     extra={
@@ -181,6 +183,7 @@ def track_tool(name: str):
                 raise
             except Exception as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
+                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
                 logger.warning(
                     "tool_invocation",
                     extra={
@@ -201,6 +204,7 @@ def track_tool(name: str):
                 _OUTPUT_ADAPTERS[name].validate_python(result)
             except ValidationError as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
+                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
                 logger.warning(
                     "tool_invocation",
                     extra={
@@ -216,6 +220,7 @@ def track_tool(name: str):
                 raise ToolOutputError(name, str(exc)) from exc
 
             latency_ms = (time.perf_counter() - start) * 1000
+            get_metrics().record_tool_invocation(tool=name, success=True, latency_ms=latency_ms)
             logger.info(
                 "tool_invocation",
                 extra={

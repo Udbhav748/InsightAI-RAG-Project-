@@ -22,6 +22,7 @@ from app.core.exceptions import (
     LLMTimeoutError,
 )
 from app.core.usage_tracking import record_usage
+from app.core.metrics import get_metrics
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,14 @@ class GeminiClient(LLMClient):
             estimated_cost_usd=estimated_cost_usd,
         )
 
+        get_metrics().record_llm_generation(
+            provider="gemini",
+            model=settings.gemini_model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
         logger.info(
             "llm_generation_completed",
             extra={
@@ -178,6 +187,14 @@ class GeminiClient(LLMClient):
             estimated_cost_usd=estimated_cost_usd,
         )
 
+        get_metrics().record_llm_generation(
+            provider="gemini",
+            model=settings.gemini_model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
         logger.info(
             "llm_generation_completed",
             extra={
@@ -192,6 +209,100 @@ class GeminiClient(LLMClient):
                     "total_tokens": total_tokens,
                     "estimated_cost_usd": estimated_cost_usd,
                     "structured": True,
+                }
+            },
+        )
+
+        return text
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((LLMTimeoutError, LLMAPIError)),
+        reraise=True,
+        before_sleep=_log_retry,
+    )
+    def generate_with_image(
+        self, prompt: str, image_bytes: bytes, mime_type: str = "image/png"
+    ) -> str:
+        """Multi-modal counterpart to generate(): a prompt plus one image
+        sent to Gemini's native vision input (an inline_data part), used
+        by image_captioning_service and vision_qa_service.
+
+        Mirrors generate() exactly — same retry policy, same error
+        mapping, same usage logging and cost tracking — the only
+        difference is the request shape (a Content with the image part
+        alongside the text prompt instead of a bare prompt string).
+        """
+        start = time.perf_counter()
+
+        contents = [
+            types.Content(
+                parts=[
+                    types.Part(
+                        inline_data=types.Blob(mime_type=mime_type, data=image_bytes)
+                    ),
+                    types.Part(text=prompt),
+                ]
+            )
+        ]
+
+        try:
+            response = self._client.models.generate_content(
+                model=settings.gemini_model_name,
+                contents=contents,
+            )
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(
+                f"Gemini request timed out after {settings.gemini_timeout_seconds}s: {exc}"
+            ) from exc
+        except genai_errors.APIError as exc:
+            raise LLMAPIError(f"Gemini API request failed: {exc}") from exc
+        except Exception as exc:
+            raise LLMAPIError(f"Unexpected error calling Gemini: {exc}") from exc
+
+        text = (response.text or "").strip()
+        if not text:
+            raise LLMEmptyResponseError("Gemini returned an empty response to image input.")
+
+        processing_duration = time.perf_counter() - start
+
+        usage = getattr(response, "usage_metadata", None)
+        prompt_tokens = getattr(usage, "prompt_token_count", None) or 0
+        completion_tokens = getattr(usage, "candidates_token_count", None) or 0
+        total_tokens = prompt_tokens + completion_tokens
+        estimated_cost_usd = round((total_tokens / 1000) * settings.cost_per_1k_tokens, 6)
+
+        record_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
+        get_metrics().record_llm_generation(
+            provider="gemini",
+            model=settings.gemini_model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+
+        logger.info(
+            "llm_generation_completed",
+            extra={
+                "extra_fields": {
+                    "provider": "gemini",
+                    "model_name": settings.gemini_model_name,
+                    "prompt_length": len(prompt),
+                    "response_length": len(text),
+                    "processing_duration": round(processing_duration, 4),
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "estimated_cost_usd": estimated_cost_usd,
+                    "image_input": True,
+                    "mime_type": mime_type,
                 }
             },
         )

@@ -4,12 +4,13 @@ Independent of FAISS, retrieval, and Gemini: this service only turns chunk
 text into embedding vectors.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 import uuid
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
@@ -50,7 +51,15 @@ def get_embedding_model() -> SentenceTransformer:
     cache), so concurrent first calls block on one load instead of racing
     to load the model independently. A failed load isn't cached, so the
     next call retries rather than staying permanently broken.
+
+    Imported here rather than at module top: `sentence_transformers` pulls
+    in torch/transformers, a 30-45s cold import that used to block uvicorn
+    from binding the port on every single startup. Deferring it into this
+    function means the model loads only on first real use (embedding a
+    chunk/query), the same once-per-process lru_cache lifecycle as before.
     """
+    from sentence_transformers import SentenceTransformer
+
     try:
         return SentenceTransformer(settings.embedding_model_name)
     except Exception as exc:

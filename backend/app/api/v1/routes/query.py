@@ -103,6 +103,8 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         confirm_web_search=payload.confirm_web_search,
         structured_response=payload.structured_response,
         tenant_id=tenant_id,
+        persona=payload.persona,
+        document_ids=payload.document_ids,
     )
 
     # Append this turn to server-side history
@@ -191,6 +193,8 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
             session_id=session_id,
             confirm_web_search=payload.confirm_web_search,
             tenant_id=tenant_id,
+            persona=payload.persona,
+            document_ids=payload.document_ids,
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
@@ -229,11 +233,23 @@ async def diagnose(
     # request, so /chat's existing ChatRequest JSON body and a File() param
     # can't coexist on one route without breaking every current JSON caller.
     chat_service = get_chat_service()
+    session_store = get_session_store()
     tenant_id = getattr(request.state, "tenant_id", None)
 
     contents = await image.read()
     await image.seek(0)
     validate_image_upload(image, contents)
+
+    # Same session_store dance /chat and /chat/stream already do (see
+    # `chat()` above) — previously missing here entirely, so a diagnosis
+    # was never actually written to session history: the session_id in the
+    # response was just echoed back from whatever the client sent (or "" if
+    # nothing was sent), never created, read, or appended to. That meant a
+    # frontend "continue chatting in this session" flow would resume into
+    # an empty conversation with no memory of the diagnosis at all.
+    session_id = session_store.get_or_create_session(session_id, tenant_id=tenant_id)
+    set_session_title_if_unset(session_id, query or "Leaf diagnosis")
+    history = session_store.get_history(session_id)
 
     logger.info(
         "diagnose_request_received",
@@ -242,6 +258,8 @@ async def diagnose(
                 "filename": image.filename,
                 "content_type": image.content_type,
                 "has_accompanying_query": query is not None,
+                "session_id": session_id,
+                "history_turns": len(history) if history else 0,
             }
         },
     )
@@ -258,10 +276,30 @@ async def diagnose(
         image.filename or "upload",
         image.content_type or "application/octet-stream",
         query=query,
+        history=history,
         session_id=session_id,
         confirm_web_search=confirm_web_search,
         tenant_id=tenant_id,
     )
+
+    # Append this turn to server-side history, same shape /chat uses. The
+    # "user" turn has no raw text to store (the input was an image, not a
+    # message) — reconstructed from the diagnosis result instead, so a
+    # resumed conversation reads sensibly rather than showing a blank user
+    # turn or just the assistant's answer with no visible question.
+    if response.diagnosis is not None:
+        diagnosis_label = (
+            f"{response.diagnosis.disease} on {response.diagnosis.crop}"
+            if response.diagnosis.disease != "healthy"
+            else f"healthy {response.diagnosis.crop}"
+        )
+        user_turn = f"[Uploaded a leaf photo — diagnosed: {diagnosis_label}]"
+        if query:
+            user_turn += f" {query}"
+    else:
+        user_turn = query or "[Uploaded a leaf photo for diagnosis]"
+    session_store.append_turn(session_id, "user", user_turn)
+    session_store.append_turn(session_id, "assistant", response.answer)
 
     logger.info(
         "diagnose_response_sent",
@@ -271,11 +309,18 @@ async def diagnose(
                 "retrieved_chunk_count": len(response.retrieved_chunks),
                 "processing_time": response.processing_time,
                 "client": getattr(request.state, "client_name", "unknown"),
+                "session_id": session_id,
             }
         },
     )
 
-    return response
+    # Attach the resolved session_id, same defensive override /chat uses —
+    # handle_diagnose already threads session_id through to _respond() on
+    # every return path, so this is redundant today, but keeps the two
+    # routes' guarantees identical rather than relying on that staying true.
+    response_data = response.model_dump()
+    response_data["session_id"] = session_id
+    return ChatResponse(**response_data)
 
 
 @router.post("/chat/feedback", response_model=FeedbackResponse)

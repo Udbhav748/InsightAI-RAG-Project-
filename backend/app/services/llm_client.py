@@ -8,6 +8,8 @@ touching calling code.
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
+from app.core.exceptions import LLMConfigurationError
+
 
 class LLMClient(ABC):
     @abstractmethod
@@ -39,3 +41,24 @@ class LLMClient(ABC):
         (GeminiClient, GroqClient) override this with real streaming.
         """
         yield self.generate(prompt)
+
+    def generate_with_image(
+        self, prompt: str, image_bytes: bytes, mime_type: str = "image/png"
+    ) -> str:
+        """Generate a text completion from a prompt plus a single image —
+        the multi-modal extension of generate() used by image captioning
+        (image_captioning_service) and vision-grounded QA
+        (vision_qa_service).
+
+        Concrete clients that support image input (GeminiClient) override
+        this; the default raises LLMConfigurationError so a client that
+        can't see images — GroqClient, a test fake — fails loudly rather
+        than silently captioning "nothing". Callers (image_captioning_
+        service) treat this error as "this provider can't do images" and
+        degrade to no caption chunk, exactly like a caption generation
+        failure.
+        """
+        raise LLMConfigurationError(
+            f"{type(self).__name__} does not support image input; "
+            "image captioning / vision QA requires a vision-capable provider (Gemini)."
+        )

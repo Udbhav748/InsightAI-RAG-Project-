@@ -58,7 +58,7 @@ class BM25Index:
         self._bm25 = BM25Okapi(corpus)
 
     def search(
-        self, query: str, top_k: int, tenant_id: int | None = None
+        self, query: str, top_k: int, tenant_id: int | None = None, document_ids: list[str] | None = None
     ) -> list[tuple[dict, float]]:
         """Return up to top_k (record, score) pairs, highest score first.
         score is BM25Okapi's raw score: unbounded above, exactly 0.0 for a
@@ -67,7 +67,9 @@ class BM25Index:
         tenant_id, when given, restricts candidates to records tagged with
         that tenant (see FAISSVectorStore.search's docstring for the same
         semantics) — applied before ranking, not after, so a wrong-tenant
-        record can never crowd out a same-tenant one within top_k."""
+        record can never crowd out a same-tenant one within top_k.
+        document_ids, when given, restricts candidates to records whose
+        document_id is in the list (Agent 3.1 collection-scoped chat)."""
         if self._bm25 is None or top_k <= 0:
             return []
 
@@ -76,6 +78,11 @@ class BM25Index:
         if tenant_id is not None:
             candidate_positions = [
                 i for i in candidate_positions if self._records[i]["metadata"].get("tenant_id") == tenant_id
+            ]
+        if document_ids is not None:
+            allowed = set(document_ids)
+            candidate_positions = [
+                i for i in candidate_positions if self._records[i]["document_id"] in allowed
             ]
         ranked_positions = sorted(candidate_positions, key=lambda i: scores[i], reverse=True)[:top_k]
         return [(self._records[i], float(scores[i])) for i in ranked_positions]
@@ -101,6 +108,7 @@ def hybrid_search(
     top_k: int,
     candidate_k: int | None = None,
     tenant_id: int | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     """Fuse FAISS semantic search with BM25 lexical search.
 
@@ -128,8 +136,15 @@ def hybrid_search(
     start = time.perf_counter()
 
     query_vector = embed_query(query)
-    semantic_results = vector_store.search(query_vector, resolved_candidate_k, tenant_id=tenant_id)
-    bm25_results = vector_store.search_bm25(query, resolved_candidate_k, tenant_id=tenant_id)
+    search_kwargs = {}
+    if document_ids is not None:
+        search_kwargs["document_ids"] = document_ids
+    semantic_results = vector_store.search(
+        query_vector, resolved_candidate_k, tenant_id=tenant_id, **search_kwargs
+    )
+    bm25_results = vector_store.search_bm25(
+        query, resolved_candidate_k, tenant_id=tenant_id, **search_kwargs
+    )
 
     semantic_norm = _min_max_normalize([chunk.score for chunk in semantic_results])
     bm25_norm = _min_max_normalize([chunk.score for chunk in bm25_results])

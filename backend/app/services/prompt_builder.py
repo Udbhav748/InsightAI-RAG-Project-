@@ -57,6 +57,15 @@ _NO_CONTEXT_NOTE = "No documents were retrieved for this question."
 
 FALLBACK_REPLY = "I couldn't find that information in the uploaded documents."
 
+# Tone/style presets a user can select per request. These may only
+# affect HOW an answer is phrased — never whether it's grounded. Kept
+# as short, additive instruction fragments appended after
+# _INSTRUCTIONS, never as a replacement for it.
+PERSONAS: dict[str, str] = {
+    "concise": "Keep your answer to 2-3 sentences unless the question genuinely needs more.",
+    "eli5": "Explain your answer in plain, simple language, as if to someone new to the topic.",
+}
+
 _INSTRUCTIONS = (
     "You are InsightAI, an intelligent document assistant.\n\n"
     "Answer the user's question naturally and conversationally using ONLY "
@@ -166,6 +175,7 @@ def build_prompt(
     history: list[dict] | None = None,
     extra_instruction: str | None = None,
     web_results: list[WebSearchResult] | None = None,
+    persona: str | None = None,
 ) -> str:
     if not query or not query.strip():
         raise PromptGenerationError("Cannot build a prompt from an empty query.")
@@ -173,6 +183,8 @@ def build_prompt(
     context = _build_context(chunks, web_results)
 
     instructions = _INSTRUCTIONS
+    if persona and persona in PERSONAS:
+        instructions = f"{instructions}\n\n{PERSONAS[persona]}"
     if web_results:
         instructions = f"{instructions}\n\n{_WEB_RESULTS_INSTRUCTION}"
     if extra_instruction:
@@ -211,6 +223,7 @@ def build_structured_prompt(
     chunks: list[RetrievedChunk],
     history: list[dict] | None = None,
     web_results: list[WebSearchResult] | None = None,
+    persona: str | None = None,
 ) -> str:
     """Build the JSON-mode counterpart of build_prompt: same context
     assembly and trust boundary, but the model is told to emit ONLY a JSON
@@ -222,6 +235,8 @@ def build_structured_prompt(
     context = _build_context(chunks, web_results)
 
     instructions = _INSTRUCTIONS
+    if persona and persona in PERSONAS:
+        instructions = f"{instructions}\n\n{PERSONAS[persona]}"
     if web_results:
         instructions = f"{instructions}\n\n{_WEB_RESULTS_INSTRUCTION}"
     structured_instruction = (

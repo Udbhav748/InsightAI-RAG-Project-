@@ -31,6 +31,7 @@ def persist_document(
     total_chunks: int,
     total_embeddings: int,
     pages_ocred: int,
+    collection: str | None = None,
 ) -> None:
     """Insert a document metadata row. Best-effort: a DB failure logs and
     does not fail the upload that already succeeded (the document is still
@@ -51,6 +52,7 @@ def persist_document(
                     total_chunks=total_chunks,
                     total_embeddings=total_embeddings,
                     pages_ocred=pages_ocred,
+                    collection=collection,
                     upload_timestamp=_utcnow(),
                 )
             )
@@ -98,9 +100,10 @@ def delete_document_metadata(document_id: str) -> None:
         )
 
 
-def list_documents(tenant_id: int | None) -> list[dict]:
+def list_documents(tenant_id: int | None, collection: str | None = None) -> list[dict]:
     """Return all documents for a tenant (or all when tenant_id is None,
-    e.g. pre-multi-tenant). Returns [] when the DB is disabled."""
+    e.g. pre-multi-tenant), optionally filtered to one collection. Returns
+    [] when the DB is disabled."""
     if not db_enabled():
         return []
 
@@ -108,6 +111,8 @@ def list_documents(tenant_id: int | None) -> list[dict]:
         query = db.query(Document).order_by(Document.upload_timestamp.desc())
         if tenant_id is not None:
             query = query.filter(Document.tenant_id == tenant_id)
+        if collection:
+            query = query.filter(Document.collection == collection)
         return [
             {
                 "document_id": doc.document_id,
@@ -118,6 +123,7 @@ def list_documents(tenant_id: int | None) -> list[dict]:
                 "total_chunks": doc.total_chunks,
                 "total_embeddings": doc.total_embeddings,
                 "pages_ocred": doc.pages_ocred,
+                "collection": doc.collection,
                 "upload_timestamp": doc.upload_timestamp,
             }
             for doc in query.all()

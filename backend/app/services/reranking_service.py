@@ -11,11 +11,11 @@ Lazy-loaded and cached the same way embedding_service.get_embedding_model()
 is: a CrossEncoder is a real model load, done once per process and reused.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from functools import lru_cache
-
-from sentence_transformers import CrossEncoder
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
@@ -32,7 +32,16 @@ def get_reranker() -> CrossEncoder:
     concurrent first-call loads instead of racing, and a failed load isn't
     cached, so the next call retries rather than staying permanently
     broken.
+
+    Imported here rather than at module top for the same reason as
+    embedding_service.get_embedding_model: `sentence_transformers` costs
+    30-45s of import before uvicorn can bind the port. With reranking off
+    by default (settings.reranking_enabled=False) that import is pure waste
+    on every startup — deferred to first actual use, when a retrieve-action
+    request actually needs the cross-encoder.
     """
+    from sentence_transformers import CrossEncoder
+
     try:
         return CrossEncoder(settings.reranking_model_name)
     except Exception as exc:

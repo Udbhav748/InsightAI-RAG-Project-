@@ -32,6 +32,7 @@ from functools import lru_cache
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
 from app.core.usage_tracking import current_usage, reset_usage
+from app.core.metrics import get_metrics
 from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
 from app.services.llm_client import LLMClient
@@ -43,15 +44,18 @@ from app.services.prompt_builder import (
     build_structured_prompt,
     strip_sources_section,
 )
+from app.services.prompt_injection_service import detect_possible_injection
 from app.services.retrieval_service import retrieve
 from app.services.structured_output import parse_structured_answer
 from app.services.summarization_service import summarize_document
 from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
+from app.services.vision_qa_service import try_vision_qa
 from app.services.web_search_service import search_web
 from app.services.agent_events import log_agent_handoff
 from app.services.research_agent import ResearchAgent, ResearchFindings
 from app.services.router_agent import RouterAgent
+from app.services.local_research_agent import LocalResearchAgent
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +346,7 @@ class ChatService:
         # when they fail, so enabling them is strictly additive.
         self._router_agent = RouterAgent(llm_client, fallback_planner=self._plan)
         self._research_agent = ResearchAgent(llm_client)
+        self._local_research_agent = LocalResearchAgent(llm_client, vector_store)
         # Response cache: keyed by (normalized_query, session_id, doc_set_hash)
         # Only caches final responses after corrective loop completes.
         # Max 256 entries, LRU eviction.
@@ -417,6 +422,13 @@ class ChatService:
         planner can't express — and degrades to the planner's decision on
         any failure, so routing is additive, never a new failure mode.
         """
+        injection_categories = detect_possible_injection(query)
+        if injection_categories:
+            logger.warning(
+                "possible_injection_detected",
+                extra={"extra_fields": {"source": "query", "categories": injection_categories}},
+            )
+
         plan = self._plan(query, history)
         if not settings.agent_routing_enabled:
             return plan
@@ -457,9 +469,15 @@ class ChatService:
         history: list[dict] | None,
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
+        persona: str | None = None,
     ) -> str:
         prompt = build_prompt(
-            query, chunks, history=history, extra_instruction=extra_instruction, web_results=web_results
+            query,
+            chunks,
+            history=history,
+            extra_instruction=extra_instruction,
+            web_results=web_results,
+            persona=persona,
         )
         _capture_prompt(prompt, variant="reflection" if extra_instruction else "standard")
         logger.info(
@@ -482,6 +500,7 @@ class ChatService:
         history: list[dict] | None,
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
+        persona: str | None = None,
     ) -> Iterator[tuple[bool, str]]:
         """Streamed counterpart to _generate: same prompt-building and
         logging, but yields (False, piece) for each safe-to-show chunk of
@@ -492,7 +511,12 @@ class ChatService:
         regardless of how the provider happened to chunk it.
         """
         prompt = build_prompt(
-            query, chunks, history=history, extra_instruction=extra_instruction, web_results=web_results
+            query,
+            chunks,
+            history=history,
+            extra_instruction=extra_instruction,
+            web_results=web_results,
+            persona=persona,
         )
         _capture_prompt(prompt, variant="streamed")
         logger.info(
@@ -526,6 +550,7 @@ class ChatService:
         chunks: list[RetrievedChunk],
         history: list[dict] | None,
         web_results: list[WebSearchResult] | None = None,
+        persona: str | None = None,
     ) -> str:
         """Structured-output counterpart to _generate: same context assembly
         via build_structured_prompt, but the provider is asked for a JSON
@@ -535,7 +560,7 @@ class ChatService:
         free-text path (parse_structured_answer never raises) — structured
         output is a win-when-it-works enhancement, never a new failure mode.
         """
-        prompt = build_structured_prompt(query, chunks, history=history, web_results=web_results)
+        prompt = build_structured_prompt(query, chunks, history=history, web_results=web_results, persona=persona)
         _capture_prompt(prompt, variant="structured")
         logger.info(
             "generation_requested",
@@ -555,7 +580,7 @@ class ChatService:
                 "structured_output_fallback",
                 extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
             )
-            return self._generate(query, chunks, history, web_results=web_results)
+            return self._generate(query, chunks, history, web_results=web_results, persona=persona)
         logger.info(
             "structured_output_success",
             extra={
@@ -594,6 +619,84 @@ class ChatService:
             extra={"extra_fields": {"grade": grade, "top_score": top_score, "chunk_count": len(chunks)}},
         )
         return grade
+
+    def _contextualize_query(self, query: str, history: list[dict] | None) -> str:
+        """Rewrite a follow-up question into a standalone one, using
+        conversation history, before it's used for retrieval. Only called
+        when history is non-empty. Degrades to the raw query on any LLM
+        failure — this is a retrieval-quality enhancement, never a
+        dependency the request can fail on.
+        """
+        if not history:
+            return query
+        prompt = (
+            "Conversation history:\n"
+            + "\n".join(f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history)
+            + f"\n\nFollow-up question: {query}\n\n"
+            "Rewrite the follow-up question as a standalone question that "
+            "makes sense without the conversation history. Return ONLY the "
+            "rewritten question, nothing else."
+        )
+        try:
+            rewritten = self._llm_client.generate(prompt).strip()
+            return rewritten if rewritten else query
+        except Exception:
+            return query
+
+    def _verify_citations(self, answer: str, chunks: list[RetrievedChunk]) -> bool:
+        """True if every [N] citation in `answer` is actually supported by
+        its cited chunk's text. True (pass) if there are no citations to
+        check, or on any LLM/parse failure — this is a stricter check
+        layered on top of _is_ungrounded, never a stricter gate that can
+        make an otherwise-fine answer fail closed.
+        """
+        citation_numbers = sorted(set(int(n) for n in re.findall(r"\[(\d+)\]", answer)))
+        if not citation_numbers:
+            return True
+        chunk_by_number = {i + 1: chunk for i, chunk in enumerate(chunks)}
+        cited_pairs = [
+            (n, chunk_by_number[n].text) for n in citation_numbers if n in chunk_by_number
+        ]
+        if not cited_pairs:
+            return True
+        prompt = (
+            "Answer:\n" + answer + "\n\n"
+            + "\n\n".join(f"Excerpt [{n}]:\n{text}" for n, text in cited_pairs)
+            + "\n\nFor each excerpt number above, does the answer's claim "
+            "attributed to it actually match what that excerpt says? "
+            'Respond with ONLY a JSON object like {"1": true, "2": false}, '
+            "one entry per excerpt number shown."
+        )
+        try:
+            import json
+
+            raw = self._llm_client.generate(prompt).strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            result = json.loads(raw)
+            return all(result.get(str(n), True) for n, _ in cited_pairs)
+        except Exception:
+            return True
+
+    def _suggest_follow_ups(self, query: str, answer: str) -> list[str]:
+        """Suggest up to 3 short follow-up questions. Degrades to an
+        empty list on any LLM/parse failure — never blocks or fails the
+        main answer."""
+        prompt = (
+            f"Question: {query}\nAnswer: {answer}\n\n"
+            "Suggest up to 3 short, natural follow-up questions the user "
+            'might ask next. Return ONLY a JSON array of strings, e.g. '
+            '["question one?", "question two?"]. Return an empty array [] '
+            "if you can't think of good ones."
+        )
+        try:
+            import json
+
+            raw = self._llm_client.generate(prompt).strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            result = json.loads(raw)
+            return [str(q) for q in result][:3] if isinstance(result, list) else []
+        except Exception:
+            return []
 
     def _search_web(self, query: str, confirm_web_search: bool = False) -> list[WebSearchResult]:
         """Best-effort web search. A failure here degrades to an empty
@@ -642,6 +745,7 @@ class ChatService:
         llm_calls: int,
         steps_taken: int,
         confirm_web_search: bool = False,
+        persona: str | None = None,
     ) -> tuple[str, int, int, list[WebSearchResult], bool]:
         """Generalizes the old single-shot _reflect into the corrective
         RAG loop's regeneration stage.
@@ -660,10 +764,14 @@ class ChatService:
         out since this method may fetch them partway through, and the
         caller needs the final values to build sources/answer_source.
         """
-        if not self._is_ungrounded(answer, chunks, web_results):
+        ungrounded = self._is_ungrounded(answer, chunks, web_results) or (
+            settings.citation_verification_enabled and not self._verify_citations(answer, chunks)
+        )
+        if not ungrounded:
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
         if llm_calls >= _MAX_LLM_CALLS:
+            get_metrics().inc_counter("loop_capped_total", {"stage": "reflection"})
             logger.warning(
                 "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}}
             )
@@ -674,7 +782,12 @@ class ChatService:
             extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
         )
         answer = self._generate(
-            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+            query,
+            chunks,
+            history,
+            extra_instruction=REFLECTION_INSTRUCTION,
+            web_results=web_results,
+            persona=persona,
         )
         llm_calls += 1
         steps_taken += 1  # regeneration
@@ -689,6 +802,7 @@ class ChatService:
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
         if llm_calls >= _MAX_LLM_CALLS:
+            get_metrics().inc_counter("loop_capped_total", {"stage": "web_fallback"})
             logger.warning(
                 "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}}
             )
@@ -703,7 +817,12 @@ class ChatService:
 
         logger.info("web_fallback_triggered", extra={"extra_fields": {"query_length": len(query)}})
         answer = self._generate(
-            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+            query,
+            chunks,
+            history,
+            extra_instruction=REFLECTION_INSTRUCTION,
+            web_results=web_results,
+            persona=persona,
         )
         llm_calls += 1
         steps_taken += 1  # regeneration with web context
@@ -721,6 +840,7 @@ class ChatService:
         llm_calls: int,
         steps_taken: int,
         confirm_web_search: bool = False,
+        persona: str | None = None,
     ) -> Iterator[dict]:
         """Streamed counterpart to _correct — mirrors its exact branches,
         conditions, and log lines (the two must be kept in sync; a
@@ -737,10 +857,14 @@ class ChatService:
         scratch, not continue it. See README's /chat/stream section for
         the exact client-side contract.
         """
-        if not self._is_ungrounded(answer, chunks, web_results):
+        ungrounded = self._is_ungrounded(answer, chunks, web_results) or (
+            settings.citation_verification_enabled and not self._verify_citations(answer, chunks)
+        )
+        if not ungrounded:
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
         if llm_calls >= _MAX_LLM_CALLS:
+            get_metrics().inc_counter("loop_capped_total", {"stage": "reflection"})
             logger.warning(
                 "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}}
             )
@@ -753,7 +877,12 @@ class ChatService:
         yield _trace_event("reflecting", {"reason": "ungrounded_answer"})
         answer = ""
         for is_final, value in self._generate_streamed(
-            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+            query,
+            chunks,
+            history,
+            extra_instruction=REFLECTION_INSTRUCTION,
+            web_results=web_results,
+            persona=persona,
         ):
             if is_final:
                 answer = value
@@ -769,6 +898,7 @@ class ChatService:
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
         if llm_calls >= _MAX_LLM_CALLS:
+            get_metrics().inc_counter("loop_capped_total", {"stage": "web_fallback"})
             logger.warning(
                 "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}}
             )
@@ -786,7 +916,12 @@ class ChatService:
         yield _trace_event("reflecting", {"reason": "web_fallback"})
         answer = ""
         for is_final, value in self._generate_streamed(
-            query, chunks, history, extra_instruction=REFLECTION_INSTRUCTION, web_results=web_results
+            query,
+            chunks,
+            history,
+            extra_instruction=REFLECTION_INSTRUCTION,
+            web_results=web_results,
+            persona=persona,
         ):
             if is_final:
                 answer = value
@@ -807,6 +942,8 @@ class ChatService:
         confirm_web_search: bool = False,
         structured_response: bool = False,
         tenant_id: int | None = None,
+        persona: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> ChatResponse:
         start = time.perf_counter()
         steps_taken = 1  # planning
@@ -861,12 +998,46 @@ class ChatService:
                 return cached
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(
-                query, self._vector_store, top_k=top_k, min_score=min_score, tenant_id=tenant_id
-            )
+            # A follow-up question retrieves blind to conversation context
+            # unless it's first rewritten into a standalone question (see
+            # Settings.query_contextualization_enabled) — the raw follow-up
+            # text alone ("what about the other one?") is a poor query.
+            # Only the value passed into retrieve() changes; every other use
+            # of `query` (generation, citations, caching, logging) stays the
+            # original user text.
+            retrieval_query = query
+            if settings.query_contextualization_enabled and recent_history:
+                retrieval_query = self._contextualize_query(query, recent_history)
+            retrieve_kwargs: dict = {"top_k": top_k, "min_score": min_score, "tenant_id": tenant_id}
+            if document_ids is not None:
+                retrieve_kwargs["document_ids"] = document_ids
+            chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
 
             steps_taken += 1  # grading
-            grade = self._grade_retrieval(query, chunks)
+            grade = self._grade_retrieval(retrieval_query, chunks)
+
+            # Vision-grounded QA (Phase 3 of multi-modal RAG): when
+            # retrieval came back weak/insufficient, the low-text pages of
+            # the most relevant document may contain the answer as an image
+            # even though their text layer (and thus retrieval) is thin —
+            # send those page rasters straight to a vision-capable LLM. Off
+            # by default (a paid vision call per attempt); degrades to None
+            # and falls through to the web-search path below when the
+            # document has no page rasters or the provider can't see images.
+            if settings.vision_qa_enabled and grade != "good":
+                vision_answer = try_vision_qa(query, chunks, self._llm_client)
+                if vision_answer:
+                    steps_taken += 1  # vision QA
+                    return self._respond(
+                        answer=vision_answer,
+                        retrieved_chunks=chunks,
+                        query=query,
+                        query_type="document_query",
+                        tool_used="vision_qa",
+                        steps_taken=steps_taken,
+                        start=start,
+                        session_id=session_id,
+                    )
 
             # A weak/insufficient grade pulls in web context *before* the
             # first generation attempt, so the model has it alongside
@@ -886,6 +1057,28 @@ class ChatService:
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
             research_attempted = False
+            # Local Document Research Agent (Agent 2.3): when retrieval came
+            # back weak/insufficient, hand the query to a plan-decompose-
+            # search-synthesize loop pointed at this app's OWN document
+            # retrieval instead of the web — useful for questions that need
+            # combining content from different parts of a document. Checked
+            # before the web research handoff: local documents are the
+            # primary source of truth. Off by default.
+            if settings.local_research_agent_enabled and grade != "good":
+                local_findings = self._local_research_agent.run(retrieval_query, tenant_id=tenant_id)
+                if local_findings.answer:
+                    steps_taken += 1  # local research pass
+                    return self._respond(
+                        answer=local_findings.answer,
+                        retrieved_chunks=local_findings.chunks,
+                        query=query,
+                        query_type="document_query",
+                        tool_used="local_research",
+                        steps_taken=steps_taken,
+                        start=start,
+                        session_id=session_id,
+                        retrieval_confidence=grade,
+                    )
             if grade != "good" or plan.action == "research":
                 if settings.research_agent_enabled and settings.web_search_enabled:
                     research_attempted = True
@@ -912,10 +1105,12 @@ class ChatService:
 
             if settings.structured_output_enabled and structured_response:
                 answer = self._generate_structured(
-                    query, chunks, recent_history, web_results=web_results
+                    query, chunks, recent_history, web_results=web_results, persona=persona
                 )
             else:
-                answer = self._generate(query, chunks, recent_history, web_results=web_results)
+                answer = self._generate(
+                    query, chunks, recent_history, web_results=web_results, persona=persona
+                )
             llm_calls = 1
             steps_taken += 1  # generation
 
@@ -929,7 +1124,44 @@ class ChatService:
                 llm_calls,
                 steps_taken,
                 confirm_web_search=confirm_web_search,
+                persona=persona,
             )
+
+            # Agent 1.4 — Ask-instead-of-guess: retrieval graded
+            # "insufficient", the corrective loop still couldn't produce a
+            # grounded answer (we're sitting on the literal fallback line),
+            # and the flag is on — so ask one short clarifying question
+            # instead of shipping the canned "couldn't find that" reply. A
+            # better outcome when the real problem is an ambiguous question,
+            # not missing content. Degrades to today's exact fallback on any
+            # LLM failure (except clause leaves answer untouched).
+            is_clarifying_question = False
+            if (
+                settings.clarifying_question_enabled
+                and grade == "insufficient"
+                and answer.strip() == FALLBACK_REPLY
+            ):
+                try:
+                    clarifying_prompt = (
+                        f"The user asked: {query}\n\n"
+                        "No relevant information was found in their documents, and "
+                        "the question may be ambiguous or missing detail. Suggest "
+                        "ONE short clarifying question to ask them. Return ONLY the "
+                        "question, nothing else."
+                    )
+                    clarification = self._llm_client.generate(clarifying_prompt).strip()
+                    if clarification:
+                        answer = clarification
+                        is_clarifying_question = True
+                except Exception:
+                    pass  # falls through, answer stays FALLBACK_REPLY exactly as today
+
+            # Agent 2.2 — After the main answer, suggest up to 3 natural
+            # follow-up questions (the "related questions" pattern). Parsed
+            # defensively; any failure degrades to an empty list.
+            follow_up_questions = []
+            if settings.follow_up_questions_enabled:
+                follow_up_questions = self._suggest_follow_ups(query, answer)
         except AppError:
             # Already a well-formed domain exception from retrieval, prompt
             # building, summarization, or the LLM client — propagate it
@@ -952,6 +1184,9 @@ class ChatService:
             start=start,
             web_results=web_results,
             session_id=session_id,
+            retrieval_confidence=grade,
+            is_clarifying_question=is_clarifying_question,
+            follow_up_questions=follow_up_questions,
         )
         # Cache the final response (retrieve action only — a "research"
         # answer returns early, before this point, since live web state
@@ -970,6 +1205,8 @@ class ChatService:
         confirm_web_search: bool = False,
         structured_response: bool = False,
         tenant_id: int | None = None,
+        persona: str | None = None,
+        document_ids: list[str] | None = None,
     ) -> Iterator[dict]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
@@ -1063,13 +1300,17 @@ class ChatService:
                 return
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(
-                query, self._vector_store, top_k=top_k, min_score=min_score, tenant_id=tenant_id
-            )
+            retrieval_query = query
+            if settings.query_contextualization_enabled and recent_history:
+                retrieval_query = self._contextualize_query(query, recent_history)
+            retrieve_kwargs: dict = {"top_k": top_k, "min_score": min_score, "tenant_id": tenant_id}
+            if document_ids is not None:
+                retrieve_kwargs["document_ids"] = document_ids
+            chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
             yield _trace_event("retrieval", {"chunk_count": len(chunks)})
 
             steps_taken += 1  # grading
-            grade = self._grade_retrieval(query, chunks)
+            grade = self._grade_retrieval(retrieval_query, chunks)
             yield _trace_event("grading", {"grade": grade})
 
             # See handle_query for why plan.action == "research" forces
@@ -1077,6 +1318,29 @@ class ChatService:
             web_results: list[WebSearchResult] = []
             web_search_attempted = False
             research_attempted = False
+            # Local Document Research Agent (Agent 2.3) — same reasoning and
+            # ordering as handle_query: weak/insufficient retrieval gets a
+            # plan-decompose-search-synthesize pass over the app's OWN
+            # documents before the web research handoff.
+            if settings.local_research_agent_enabled and grade != "good":
+                yield _trace_event("local_research", {"query": retrieval_query})
+                local_findings = self._local_research_agent.run(retrieval_query, tenant_id=tenant_id)
+                if local_findings.answer:
+                    steps_taken += 1  # local research pass
+                    yield {"type": "answer_chunk", "text": local_findings.answer}
+                    response = self._respond(
+                        answer=local_findings.answer,
+                        retrieved_chunks=local_findings.chunks,
+                        query=query,
+                        query_type="document_query",
+                        tool_used="local_research",
+                        steps_taken=steps_taken,
+                        start=start,
+                        session_id=session_id,
+                        retrieval_confidence=grade,
+                    )
+                    yield {"type": "done", "payload": response}
+                    return
             if grade != "good" or plan.action == "research":
                 if settings.research_agent_enabled and settings.web_search_enabled:
                     research_attempted = True
@@ -1113,7 +1377,9 @@ class ChatService:
 
             yield _trace_event("generating", {})
             answer = ""
-            for is_final, value in self._generate_streamed(query, chunks, recent_history, web_results=web_results):
+            for is_final, value in self._generate_streamed(
+                query, chunks, recent_history, web_results=web_results, persona=persona
+            ):
                 if is_final:
                     answer = value
                 else:
@@ -1131,7 +1397,37 @@ class ChatService:
                 llm_calls,
                 steps_taken,
                 confirm_web_search=confirm_web_search,
+                persona=persona,
             )
+
+            # Same Agent 1.4 ask-instead-of-guess + Agent 2.2 follow-up
+            # logic as handle_query. The chunks streamed above are
+            # provisional — the done payload's answer is authoritative and
+            # the UI renders it.
+            is_clarifying_question = False
+            if (
+                settings.clarifying_question_enabled
+                and grade == "insufficient"
+                and answer.strip() == FALLBACK_REPLY
+            ):
+                try:
+                    clarifying_prompt = (
+                        f"The user asked: {query}\n\n"
+                        "No relevant information was found in their documents, and "
+                        "the question may be ambiguous or missing detail. Suggest "
+                        "ONE short clarifying question to ask them. Return ONLY the "
+                        "question, nothing else."
+                    )
+                    clarification = self._llm_client.generate(clarifying_prompt).strip()
+                    if clarification:
+                        answer = clarification
+                        is_clarifying_question = True
+                except Exception:
+                    pass  # falls through, answer stays FALLBACK_REPLY exactly as today
+
+            follow_up_questions = []
+            if settings.follow_up_questions_enabled:
+                follow_up_questions = self._suggest_follow_ups(query, answer)
         except AppError as exc:
             logger.info(
                 "chat_stream_error",
@@ -1169,6 +1465,9 @@ class ChatService:
             start=start,
             web_results=web_results,
             session_id=session_id,
+            retrieval_confidence=grade,
+            is_clarifying_question=is_clarifying_question,
+            follow_up_questions=follow_up_questions,
         )
         # Cache the final response (retrieve action only — a "research"
         # answer returns early, above, since live web state is never cached).
@@ -1314,6 +1613,9 @@ class ChatService:
         web_results: list[WebSearchResult] | None = None,
         diagnosis: DiagnosisInfo | None = None,
         session_id: str | None = None,
+        retrieval_confidence: str = "good",
+        is_clarifying_question: bool = False,
+        follow_up_questions: list[str] | None = None,
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
         web_results = web_results or []
@@ -1360,4 +1662,7 @@ class ChatService:
             answer_source=answer_source,
             diagnosis=diagnosis,
             session_id=session_id or "",
+            retrieval_confidence=retrieval_confidence,
+            is_clarifying_question=is_clarifying_question,
+            follow_up_questions=follow_up_questions or [],
         )
