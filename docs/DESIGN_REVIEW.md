@@ -286,15 +286,13 @@ by the eval script itself, never passing through
   include `error_code` (e.g. `UNAUTHORIZED`, `RATE_LIMITED`) and
   `taxonomy_category` (e.g. `input`, `tool`, `rate_limit`); frontend
   `getErrorInfo()` extracts these for programmatic handling.
-- **Encryption at rest**: on AWS (see `docs/OPERATIONS.md` "Deploying to
-  AWS"), this moved from Render's platform-level AES-256 disk encryption
-  to explicit, Terraform-declared encryption: S3 default SSE for the
-  uploads/vector_store/feedback data bucket and the frontend bucket
-  (`infra/s3_data.tf`, `infra/s3_frontend.tf`), and secrets as SSM
-  `SecureString` parameters (`infra/ssm.tf`), resolved by the app at cold
-  start rather than sourced from a plain Lambda environment variable —
-  a genuine upgrade from an implicit platform guarantee to something
-  versioned and reviewable. **Not implemented**: application-level/
+- **Encryption at rest**: not currently configured — the EC2 deployment
+  path (`docs/OPERATIONS.md` "Deploying to EC2") doesn't encrypt its EBS
+  volume by default, and Render's platform-level AES-256 disk encryption
+  applied only to that (now superseded) deployment. `app/core/config.py`'s
+  `_load_secrets_from_ssm()` can resolve secrets from AWS SSM Parameter
+  Store `SecureString` given a deployment that sets `SECRETS_SSM_PREFIX`,
+  but no current deployment does. **Not implemented**: application-level/
   field-level encryption or customer-managed keys — those remain future
   work, same as before.
 - **Not implemented**: JWT, advanced rate limiting (token bucket,
@@ -384,13 +382,9 @@ constraints beyond it:
   **No built-in key rotation or revocation.** To rotate a compromised key:
   1. Generate a new key for the client
   2. Update `API_KEYS` in `backend/.env` (e.g., `{"frontend": "new-key", "admin-script": "key2"}`)
-  2. Restart the backend service (AWS: `terraform apply` after updating
-     `infra/terraform.tfvars`' `api_key`/`api_keys` variable — Lambda
-     environment variables are set at function-config time, so a new key
-     needs a new function-config update, not a redeploy of code — still a
-     new environment replacing the old one, same limitation shape as
-     Render's redeploy/restart, now self-service via Terraform/CLI instead
-     of a dashboard click)
+  2. Restart the backend service (on the EC2 deployment: `docker compose
+     up -d --build` after updating `.env` — same limitation shape as
+     Render's redeploy/restart)
   
   There's no API to rotate keys without restart, no key expiration, and no way to revoke one client without updating the JSON and restarting. This is acceptable for the current single-user demo scale; a multi-user product would need a proper secrets manager and rotation API.
 - **Document history lives in browser localStorage, not the server.**
@@ -405,10 +399,10 @@ constraints beyond it:
 
   **Why in-memory, not a file or DB?** The live Render free-tier instance has an ephemeral filesystem — that's why the FAISS index already uses the auto-seeded demo-document workaround (see `docs/OPERATIONS.md` "The constraint that shapes everything below: an ephemeral filesystem"). A file-backed session store would face the exact same problem (wiped on every restart/redeploy), so it wouldn't actually buy more durability than an in-memory store on the current deployment — it would just add complexity for a durability guarantee this environment can't actually provide right now. Given that, an in-memory session store is the honest, proportionate choice today — same pattern as the per-client API keys decision. The swap-in point has since been built: `session_store.py` now routes to a `PostgresSessionStore` whenever `DATABASE_URL` is configured (see `docs/ARCHITECTURE.md` "Persistence (PostgreSQL, optional)"), so a deployment with a managed database gets durable history behind the same interface — Redis remains the alternative if a multi-instance scale-out (below) calls for something more than Postgres.
 
-  **Single-instance assumption (critical for correctness).** The in-memory session store is **only correct while the service runs as a single process**. On Render's free tier this was always true (1 instance, no autoscaling) — a dormant constraint, never actually exercised. **On the AWS Lambda deployment (see `docs/OPERATIONS.md` "Deploying to AWS"), it's kept true by design**: `infra/lambda.tf` sets `reserved_concurrent_executions = 1`, so at most one execution environment ever exists — a session created "on it" is never invisible to a later request, because there's never a second one running concurrently to miss it on. (Lambda idle-recycling an execution environment between requests is a *different* concern — that empties the in-memory map entirely on the next cold start, which `database_url`/`PostgresSessionStore` still fixes if session durability across cold starts matters, same swap point as before.) This is a safer default than the earlier ECS/Fargate design considered, which defaulted `autoscaling_max_capacity` to 2 and required the operator to *notice* the risk and opt into `database_url` or a lower cap.
+  **Single-instance assumption (critical for correctness).** The in-memory session store is **only correct while the service runs as a single process**. On Render's free tier this was always true (1 instance, no autoscaling) — a dormant constraint, never actually exercised. **On the current EC2 deployment (see `docs/OPERATIONS.md` "Deploying to EC2"), it's kept true the same way**: `docker-compose.yml` never scales the backend service beyond one replica, so at most one process ever exists — a session created "on it" is never invisible to a later request, because there's never a second one running concurrently to miss it on. `database_url`/`PostgresSessionStore` still fixes durability across restarts if that matters, same swap point as before.
 
   **Retention:** bounded by `max_sessions=1000` with LRU eviction (see `session_store.py`). No TTL — session count is capped to prevent OOM on the 512MB free tier. A production multi-instance deployment would need Redis with TTL instead.
-- **Deployed on AWS** — see [`docs/OPERATIONS.md`](OPERATIONS.md). Infrastructure-as-code now exists (`infra/*.tf`, Terraform). Unlike the superseded ECS/Fargate design, this Lambda deployment does *not* enable autoscaling beyond one execution environment (`reserved_concurrent_executions = 1`, `infra/lambda.tf`) — a deliberate choice, not an oversight: it keeps both single-instance assumptions above (FAISS index writes, in-memory sessions) true by construction, at the cost of Lambda's native ability to scale out under concurrent load (a second request mid-flight gets an immediate `429` instead of being served in parallel).
+- **No live cloud deployment currently** — see [`docs/OPERATIONS.md`](OPERATIONS.md) "Deploying to EC2" for the current self-hosted path. An earlier AWS Lambda deployment design (Terraform-declared, `reserved_concurrent_executions = 1` to keep the single-instance assumptions above true by construction) was fully designed but never applied to AWS, and that infrastructure has since been removed from the repo.
 
 ## 10. Would you trust the system as a customer?
 

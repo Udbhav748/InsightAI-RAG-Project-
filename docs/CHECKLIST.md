@@ -252,18 +252,18 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Tracing | ✅ | SSE trace + request_id |
 | Logging | ✅ | Structured JSON stdout |
 | Metrics | ✅ | Live `GET /metrics` (Prometheus text exposition, in-process registry at `app/core/metrics.py`, emitted by `app/api/v1/routes/metrics.py`) — request latency histogram, `http_requests_total` by method/path/status, per-tool invocations/latency, LLM call/token/cost, loop-capped, retrieval timeouts, errors by taxonomy; optional `METRICS_BEARER_TOKEN`. Offline `metrics_report.py` + `monitoring/log_aggregate.py` remain for post-hoc/long-window rollups. |
-| Alerts | ✅ | Threshold breaches via `log_aggregate.py`/`uptime_check.py` exit codes, now also pushed via `monitoring/alert_webhook.py` — a best-effort Slack-compatible webhook POST (`--alert-webhook-url`/`ALERT_WEBHOOK_URL`, off by default), wired into `monitoring.yml`'s scheduled uptime job. Previously exit-code-only — corrected. |
+| Alerts | ⚠️ | Threshold breaches via `log_aggregate.py`/`uptime_check.py` exit codes, with a best-effort Slack-compatible webhook push available (`monitoring/alert_webhook.py`, `--alert-webhook-url`/`ALERT_WEBHOOK_URL`, off by default) — but the scheduled workflow that ran these on a cron (`monitoring.yml`) was removed with the AWS deployment path, so nothing currently invokes them automatically; run manually or re-wire a schedule against a real deployment target. |
 | Dashboards | ✅ | Text dashboard `monitoring/dashboard.py` (availability, latency, loop/tool rates, retry activity, requests/min, per-endpoint breakdown, tokens/cost; `--json` for machine consumers). A dependency-free stand-in for a hosted Grafana-style stack, sharing `log_aggregate.aggregate` so rollups can't drift. |
 | Prompt logs | ⚠️ | Version only, not content |
 | Tool logs | ✅ | Names, latency, and input/output summaries — success `tool_invocation` events now carry a bounded `output` shape (`_summarize_output`, `tool_registry.py:201-225`), so what each tool produced is visible at a glance. |
 | Token usage | ✅ | Per generation |
-| Latency | ✅ | P50/P95/P99 in `metrics_report.py:67-94`; live scrape latency via `http_request_duration_seconds` histogram on `GET /metrics` (quantile via `histogram_quantile`); live probe latency in `monitoring/uptime_check.py` |
+| Latency | ✅ | P50/P95/P99 in `metrics_report.py:67-94`; live scrape latency via `http_request_duration_seconds` histogram on `GET /metrics` (quantile via `histogram_quantile`); `monitoring/uptime_check.py` can also probe latency manually against a running deployment |
 | Errors | ✅ | By taxonomy category |
 | Cost | ✅ | `estimated_cost_usd` per generation; summed in `metrics_report.py:160-180` |
 | User feedback | ✅ | Thumbs + comment endpoint |
 | P50/P95/P99 latency | ✅ | |
 | Error Rate | ✅ | `report_error_rate_by_category` |
-| Availability | ⚠️ | Probe script `monitoring/uptime_check.py` + 15-min `monitoring.yml` schedule; point-in-time only, no durable SLO |
+| Availability | ⚠️ | Probe script `monitoring/uptime_check.py` exists but its scheduled workflow (`monitoring.yml`, 15-min cron) was removed along with the AWS deployment path it monitored — run manually against a real deployment target; point-in-time only, no durable SLO |
 
 ---
 
@@ -291,18 +291,18 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 |---|---|---|
 | FastAPI | ✅ | `app/main.py` |
 | Docker | ✅ | `backend/Dockerfile` |
-| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ✅ | AWS Lambda (container image), Terraform-provisioned (`infra/lambda.tf`); see `docs/OPERATIONS.md` "Deploying to AWS" |
-| HTTPS | ✅ | Backend: Lambda Function URL's default `*.lambda-url.*.on.aws` certificate. Frontend: CloudFront default certificate. Neither needs a custom domain (`infra/lambda.tf`, `infra/cloudfront_frontend.tf`) |
-| Secrets | ✅ | SSM `SecureString` (`infra/ssm.tf`), resolved by the app at cold start via a scoped `ssm:GetParameter` (`infra/iam.tf`) — the Lambda environment block itself carries only the parameter path, never the values |
-| Load balancer | N/A | No ALB/NLB in this design — a Lambda Function URL needs no separate load balancer resource; Lambda's own invocation model is the request-routing layer |
-| Autoscaling | ⚠️ | Deliberately capped at 1 (`infra/lambda.tf`'s `reserved_concurrent_executions = 1`), trading Lambda's native ability to scale out for FAISS/session write-safety — see that file's comment. A second concurrent request gets an immediate `429` rather than being served in parallel |
-| Monitoring | ✅ | Live `GET /metrics` endpoint in the app itself (Prometheus text format — `app/core/metrics.py`, `app/api/v1/routes/metrics.py`), for any Prometheus/Grafana Cloud / CloudWatch agent to scrape; plus the offline stand-ins `metrics_report.py` + `monitoring/*.py` scripts (uptime probe + log rollup, both with optional webhook push on breach) and `monitoring.yml`'s uptime schedule; CloudWatch metrics also available once deployed. No hosted dashboard stack of our own — but a live, scrapeable endpoint is now on the wire, which is what "no live metrics" was flagging. |
-| Centralized logging | ⚠️ | Stdout JSON now also lands in CloudWatch Logs, 14-day retention, queryable via Logs Insights (`infra/lambda.tf`); `log_aggregate.py` remains the offline rollup tool |
+| AWS / EC2 / Lambda / Bedrock / SageMaker / Vertex AI / Azure AI / GPU | ⚠️ | Self-hosted via Docker Compose on a plain EC2 instance — no managed AWS compute service (Lambda/ECS/etc.); see `docs/OPERATIONS.md` "Deploying to EC2" |
+| HTTPS | ⚠️ | Optional TLS termination via the Caddy overlay (`docker-compose.caddy.yml`) once a domain is pointed at the instance — not on by default |
+| Secrets | ⚠️ | Plain gitignored `.env` files on the instance/locally; `app/core/config.py`'s `_load_secrets_from_ssm()` supports resolving from AWS SSM Parameter Store given a deployment that sets `SECRETS_SSM_PREFIX`, not exercised by the current EC2 path |
+| Load balancer | N/A | Single EC2 instance, no load balancer in front |
+| Autoscaling | N/A | Single EC2 instance, `docker-compose.yml` never scales the backend service beyond one replica |
+| Monitoring | ✅ | Live `GET /metrics` endpoint in the app itself (Prometheus text format — `app/core/metrics.py`, `app/api/v1/routes/metrics.py`), for any Prometheus/Grafana Cloud agent to scrape; plus the offline stand-ins `metrics_report.py` + `monitoring/*.py` scripts (uptime probe + log rollup, both with optional webhook push on breach). No hosted dashboard stack of our own — but a live, scrapeable endpoint is now on the wire, which is what "no live metrics" was flagging. |
+| Centralized logging | ⚠️ | Stdout JSON only; `log_aggregate.py` remains the offline rollup tool — no managed log service wired up |
 | Requests per second | ⚠️ | Not measured |
 | Latency | ✅ | P50/P95/P99 offline |
-| Availability | ⚠️ | `monitoring/uptime_check.py` probes + scheduled `monitoring.yml`; point-in-time |
-| Cost per hour | ⚠️ | Not measured live; static estimate in `infra/README.md`'s cost table (~$30-45/month) |
-| CPU/GPU/Memory utilisation | ⚠️ | Not dashboarded; Lambda publishes Duration/Invocations/ConcurrentExecutions/Errors to CloudWatch automatically at no extra cost (no Container-Insights-equivalent opt-in needed the way the superseded ECS design required) |
+| Availability | ⚠️ | `monitoring/uptime_check.py` probes exist but the scheduled workflow that ran them was removed with the AWS deployment path — point-in-time, run manually |
+| Cost per hour | ⚠️ | Not measured live; static EC2 estimate in `docs/OPERATIONS.md`'s "Deploying to EC2" §Cost (~$15-20/month) |
+| CPU/GPU/Memory utilisation | ⚠️ | Not dashboarded |
 
 ---
 
@@ -313,15 +313,15 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | PII | ✅ | Regex detection (email/phone/id), flag-and-continue, `pii_service.py`; recall evals |
 | GDPR / DPDP / HIPAA | ⚠️ | No formal compliance assessment doc |
 | RBAC | ✅ | `Tenant.role` (admin/member), `Settings.admin_client_names` (`app/core/config.py`), enforced through a central permission registry (`app/core/permissions.py`: permission constants + role→permission map + one `check_permission()` function) — not two copy-pasted inline checks. Two permissions populated today, only active when `DATABASE_URL` is set: `document_delete` (gates `DELETE /documents/{id}`) and `document_list_all_tenants` (gates `GET /documents?all_tenants=true`, cross-tenant visibility for oversight). Adding a new gated action is a 2-line addition to the registry plus one `check_permission()` call at the route, not a new pattern. Small by design — proportionate to this app's actual action surface — but the *mechanism* is now genuinely reusable, which is what "not a general permission system" was flagging. |
-| Encryption | ✅ | Transport: Lambda Function URL + CloudFront HTTPS. At-rest: S3 default SSE for uploads/vector_store/feedback/frontend build (`infra/s3_data.tf`, `infra/s3_frontend.tf`), Lambda environment variables encrypted by its default AWS-managed KMS key (`infra/lambda.tf`) — explicit and Terraform-declared, not just an implicit platform guarantee |
+| Encryption | ⚠️ | Transport: optional TLS via the Caddy overlay, not on by default. At-rest: not configured on the current EC2 path — the underlying EBS volume isn't encrypted by default and no application-level encryption exists for uploads/vector_store |
 | Consent | ✅ | Signup (`POST /auth/signup`) requires `consent: Literal[True]` on the request schema (`schemas.py:SignupRequest`) — Pydantic rejects `consent=false` or a missing field with 422 before account creation runs. This is the app's first feature that stores real PII (email, password hash); the checkbox ships in the same change that introduces that storage, not bolted on after. Frontend: `pages/Signup.jsx`'s consent checkbox, required to submit. |
-| Secrets | ✅ | SSM Parameter Store `SecureString` on the Lambda deployment (`infra/ssm.tf`), resolved by the app at cold start (`config.py:_load_secrets_from_ssm`); plain gitignored env vars locally/docker-compose. Stale "env vars, gitignored"-only claim corrected — see "Secret management" row below for the same evidence. |
+| Secrets | ⚠️ | Plain gitignored env vars locally/docker-compose/EC2. `config.py:_load_secrets_from_ssm` supports resolving from AWS SSM Parameter Store given `SECRETS_SSM_PREFIX`, but no current deployment sets it — see "Secret management" row below for the same status. |
 | Prompt injection | ✅ | Untrusted-excerpt markers + eval resistance metrics |
 | Jailbreak | ⚠️ | Covered via injection markers in eval, no dedicated jailbreak suite |
 | Authentication | ✅ | Two parallel paths, both real: `X-API-Key` (SHA-256 hashed, per-client — scripts/CI/service clients) and individual user login (`POST /auth/signup`/`/auth/login`, bcrypt-hashed passwords, JWT bearer tokens — the web frontend). `app/core/auth.py`'s `require_auth` tries JWT first, falls through to the unchanged API-key path if absent. |
 | Authorization | ✅ | Tenant-ownership scoping for most actions, plus a real permission registry (`app/core/permissions.py`) gating two actions (document deletion; cross-tenant document listing) — replaced two duplicated inline `if role != "admin"` blocks with one reusable, centralized enforcement function (`check_permission()`), a fixed permission vocabulary, and an explicit role→permission map, extensible by adding a constant + one call site rather than copying a block. Deliberately still a *small* permission set (2 actions, 2 roles) — that's proportionate to this app's scale, not a remaining gap; see `tests/test_permissions.py` for the registry's own unit tests, including the role=None asymmetry between the two permissions. |
 | PII detection | ✅ | |
-| Secret management | ✅ | SSM Parameter Store `SecureString` (`infra/ssm.tf`), resolved by the app at cold start, not sourced from a plain env var |
+| Secret management | ⚠️ | Sourced from plain gitignored env vars on every current deployment path; `_load_secrets_from_ssm()` in `app/core/config.py` exists but is unused without a deployment that sets `SECRETS_SSM_PREFIX` |
 | Human approval | ⚠️ | See §1 — web search and document deletion both gated, off by default, no general approval queue |
 | Audit logs | ✅ | `audit_event` lines + `usage_logs` table |
 | PII Recall | ✅ | `eval/pii_recall_check.py` |
@@ -355,9 +355,9 @@ Question → Embedding (`embedding_service.py`) → Vector search (`faiss_vector
 | Evaluation | Metrics by cost of failure | ✅ Explicit rationale table — each metric mapped to the failure it detects and the cost of that failure shipping undetected, `eval/README.md`'s "Metric selection: cost of failure" |
 | Evaluation | Human eval rubrics | ✅ `HUMAN_EVAL.md` |
 | Debugging | Logs / Traces / Errors | ✅ / ✅ / ✅ |
-| Deployment | Docker / Cloud / Monitoring | ✅ / ✅ / ⚠️ |
-| Monitoring | Uptime probe / Log rollup / Alerts | ✅ / ✅ / ✅ |
-| Security | Auth / Authorization / Secrets / Encryption | ✅ / ✅ / ✅ / ✅ |
+| Deployment | Docker / Cloud / Monitoring | ✅ / ⚠️ / ⚠️ |
+| Monitoring | Uptime probe / Log rollup / Alerts | ⚠️ / ✅ / ⚠️ |
+| Security | Auth / Authorization / Secrets / Encryption | ✅ / ✅ / ⚠️ / ⚠️ |
 | Reliability | Retry / Timeout / Fallback / Cache | ✅ / ✅ / ✅ / ✅ |
 | Cost | Tokens / Latency / Model routing / Cache / Vision | ✅ / ✅ / ✅ / ✅ / ✅ — per-request `estimated_cost_usd` covers every `generate*` call including image captioning / vision QA (gated off by default) |
 | Docs | README / API / Architecture / Demo / Future work | ✅ / ✅ / ✅ / ✅ / ✅ |

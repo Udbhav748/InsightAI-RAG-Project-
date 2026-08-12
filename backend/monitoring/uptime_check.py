@@ -154,10 +154,9 @@ def main() -> None:
             # Best-effort, un-debounced: a --loop run that stays down
             # alerts on every iteration, not just the first. Accepted
             # for the same reason the rest of this package stays simple
-            # — see monitoring/README.md's Known Limitations. The
-            # scheduled CI run (monitoring.yml) only runs once per
-            # invocation anyway, so this only matters for a long-lived
-            # local --loop.
+            # — see monitoring/README.md's Known Limitations. A single
+            # invocation (e.g. from a CI schedule) only runs once anyway,
+            # so this only matters for a long-lived local --loop.
             send_alert(args.alert_webhook_url, _alert_text(report))
         if args.loop <= 0:
             break

@@ -658,19 +658,19 @@ InsightAI-RAG/
   primary provider (with its own internal retries), then the fallback
   provider once — if both are down, the request fails. There's no
   health-based routing or automatic recovery back to the primary.
-- **Deployed on AWS** (backend: AWS Lambda, container image, behind a
-  Lambda Function URL; frontend: S3 + CloudFront — see `docs/OPERATIONS.md`
-  "Deploying to AWS"). Uploaded documents, the FAISS index, and feedback
-  events persist across cold starts via S3 sync (`backend/app/services/s3_sync_service.py`),
-  replacing the auto-seed-on-empty-store workaround the earlier Render
-  deployment needed for its ephemeral disk (that workaround,
-  `demo_seed_service.py`, still runs — it's just a no-op once the store
-  has real data). One caveat this introduces: FAISS index writes are only
-  safe from a single execution environment at a time — enforced by
-  `infra/lambda.tf`'s `reserved_concurrent_executions = 1`, not just
-  documented as a risk (a second concurrent request gets an immediate
-  `429` instead). If a `DATABASE_URL` is configured, document metadata,
-  sessions, and usage logs also persist in Postgres.
+- **No live cloud deployment currently.** The app has run on Render/Vercel
+  historically (see `docs/OPERATIONS.md` "Deploying to Render") and is
+  self-hostable via Docker Compose, including a production EC2 path
+  (`docker-compose.prod.yml`, `docker-compose.caddy.yml` — see
+  `docs/OPERATIONS.md` "Deploying to EC2"), where the named Docker volumes
+  give real persistent storage with no ephemeral-filesystem workaround
+  needed. `demo_seed_service.py`'s auto-seed-on-empty-store behavior still
+  runs harmlessly on first boot — a no-op once the store has real data. If
+  a `DATABASE_URL` is configured, document metadata, sessions, and usage
+  logs also persist in Postgres. An optional S3-sync integration
+  (`backend/app/services/s3_sync_service.py`) exists in the codebase for a
+  future ephemeral-filesystem deployment target but isn't exercised by any
+  current deployment path.
 
 See [`docs/DESIGN_REVIEW.md`](docs/DESIGN_REVIEW.md) and
 [`docs/NOT_APPLICABLE.md`](docs/NOT_APPLICABLE.md) for the fuller
@@ -688,7 +688,7 @@ reasoning behind these, plus what's explicitly out of scope
 - [x] Human approval — deployment-toggleable approval gates on web search and document deletion (see `docs/CHECKLIST.md` §1, §13); not a general approval queue
 - [x] Encryption at rest for the vector store and uploaded files — S3 default SSE + Lambda's default KMS-encrypted environment variables on AWS (see `docs/CHECKLIST.md` §13); application-level/field-level encryption remains open
 - [x] Multi-modal RAG — image extraction (`GET /documents/{id}/images` listing), Gemini figure captioning into searchable chunks, table extraction to markdown, and vision QA over page rasters; all config-gated and off by default (see Features/Configuration)
-- [ ] A multi-tenant / shardable vector store, replacing the single FAISS file (would also remove the reserved-concurrency=1 write-safety constraint in `infra/lambda.tf`)
+- [ ] A multi-tenant / shardable vector store, replacing the single FAISS file
 
 ## License
 

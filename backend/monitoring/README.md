@@ -109,10 +109,12 @@ python monitoring/log_aggregate.py app.log --alert-webhook-url https://hooks.sla
 
 ## CI / scheduling
 
-- `.github/workflows/monitoring.yml` runs `uptime_check.py` against the
-  deployed endpoints every 15 minutes (and on manual dispatch); a failed
-  probe fails the job, and pushes to `ALERT_WEBHOOK_URL` (a repo Secret)
-  if one is configured.
+- No scheduled CI job currently runs `uptime_check.py` — the workflow that
+  did (`monitoring.yml`, every 15 minutes against the deployed AWS
+  endpoints) was removed along with that deployment path. Run it manually
+  against whatever's currently deployed (`docs/OPERATIONS.md` "Deploying
+  to EC2"), or re-add a scheduled workflow pointed at real endpoint URLs
+  if that's needed again.
 - For log aggregation in CI, first capture a log artifact (uvicorn stdout)
   and then run `log_aggregate.py` on it — see `.github/workflows/ci.yml`.
 
@@ -122,8 +124,7 @@ python monitoring/log_aggregate.py app.log --alert-webhook-url https://hooks.sla
   trailing availability is therefore point-in-time, not a durable SLO.
 - Push alerts are un-debounced: a long-lived `--loop` run that stays down
   alerts on every iteration, not just the first transition into failure.
-  Not an issue for the scheduled CI run, which only checks once per
-  invocation.
+  Not an issue for a single CI invocation, which only checks once.
 - Latency figures from `uptime_check.py` are from the probing machine's
   network, not server-side. `GET /metrics` latency is server-side but
   in-process only — its registry is per-process, so on a multi-instance

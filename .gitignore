@@ -60,15 +60,4 @@ SESSION_*.md
 *.sqlite3
 *.sqlite3-journal
 
-# Terraform (infra/) — state and secrets never committed; the provider
-# lock file (.terraform.lock.hcl) IS committed, for reproducible versions.
-infra/.terraform/
-infra/*.tfstate
-infra/*.tfstate.*
-infra/terraform.tfvars
-infra/.terraform.lock.hcl.backup
-infra/crash.log
-infra/*.tfplan
-infra/tfplan.binary
-infra/tfplan_output.txt
 .aider*

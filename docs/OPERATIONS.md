@@ -426,11 +426,10 @@ single-instance, not-yet-deployed scale (see next section and Q9 in
 
 ## Deploying to Render (historical)
 
-Superseded by [Deploying to AWS](#deploying-to-aws-ecs-fargate--terraform)
-below — kept as-is as a historical record of the constraints that shaped
-the app early on (the 512MB OOM incident in particular is referenced
-elsewhere in the docs and shouldn't be deleted out from under those
-references).
+Superseded by [Deploying to EC2](#deploying-to-ec2-docker-compose) below —
+kept as-is as a historical record of the constraints that shaped the app
+early on (the 512MB OOM incident in particular is referenced elsewhere in
+the docs and shouldn't be deleted out from under those references).
 
 **Backend → Render (Docker). Frontend → a static host (Vercel or
 Cloudflare Pages), not a container.** `backend/Dockerfile` already builds
@@ -564,166 +563,27 @@ free-tier cap (20 requests/day) mid-eval-run — why `render.yaml` defaults
 it back in the dashboard; either way this is a config decision already
 supported today, not new engineering.
 
-**This was deployed and live on Render/Vercel; superseded by the AWS deployment below.** The pieces described above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`) still work exactly as documented — `render.yaml` and the Render/Vercel projects are what got removed, not the app's own portability.
-
-## Deploying to AWS (Lambda + Terraform)
-
-**Backend → AWS Lambda, container image (the same `backend/Dockerfile`,
-extended with the AWS Lambda Web Adapter — see `entrypoint.sh` below, not
-rewritten). Frontend → S3 + CloudFront (unchanged reasoning from the
-Render era: a CDN-backed static host has no upside gap to pay for
-container compute to close).** All infrastructure is declared in
-`infra/*.tf` (Terraform). The actual step-by-step deploy runbook lives in
-[`infra/README.md`](../infra/README.md); this section covers the
-architecture and *why*, not the commands.
-
-An earlier version of this migration targeted ECS on Fargate + an
-Application Load Balancer + EFS — fully designed and Terraform-validated,
-but never applied to AWS. It was replaced by this Lambda design because
-ALB + an always-on Fargate task + EFS have **no AWS free tier at all**
-(~$30-45/month minimum), whereas Lambda's free tier (1M requests +
-400,000 GB-seconds/month) and CloudFront's "Always Free" tier (1TB egress
-+ 10M requests/month) are both *permanent*, not 12-month-limited — the
-only realistic path to near-$0 AWS hosting for a service that doesn't run
-24/7. See `infra/README.md`'s cost table for exact numbers: genuinely
-**$0/month for the first year**, then a few cents to about a dollar a
-month after (ECR image storage loses its free tier; S3/CloudWatch storage
-stays a fraction of a cent). Stated plainly, the same way the 512MB OOM
-incident above is stated plainly — never "$0 forever, no asterisk."
-
-### Two AWS-specific facts that shape this design, not just details
-
-**Lambda's container filesystem is read-only outside `/tmp`.** This app's
-three write paths (`upload_service.py`, `faiss_vector_store.py`,
-`feedback_service.py`) always resolve to `/app/<name>` — never a
-configurable absolute path — so every write would throw `OSError:
-Read-only file system` in real Lambda without a fix. **`backend/entrypoint.sh`**
-(the new Docker `CMD`) detects real Lambda via the Lambda-reserved
-`AWS_LAMBDA_FUNCTION_NAME` env var (never set locally) and, only in that
-branch, symlinks `/app/uploads`/`/app/vector_store`/`/app/feedback` onto
-fresh directories under `/tmp` — Python's file I/O follows symlinks
-transparently, so no application code needed to change. It also copies
-the model cache baked into the image at build time into `/tmp` and
-repoints `HF_HOME` there, working around a related fact: `sentence-transformers`/
-`huggingface_hub` writes a filelock next to cached model weights even on
-a pure read, which would otherwise crash startup under the now-read-only
-`/app` even though the model itself needs no network re-download.
-
-**Lambda's execution environment is torn down when idle**, wiping `/tmp`
-— a stricter, more frequent version of the exact problem Render's free
-tier already had (see "The constraint that shapes everything below"
-above). `demo_seed_service.py`'s auto-seed-on-empty-store behavior
-already handles this for the bundled demo document; real uploads need
-more, which is what the next section covers.
-
-### Persistent storage: S3 sync replaces the ephemeral-filesystem workaround
-
-**New `backend/app/services/s3_sync_service.py`** downloads
-`uploads/`/`vector_store/`/`feedback/` from S3 on Lambda cold start
-(before anything else touches local disk — the first line of `main.py`'s
-lifespan) and uploads changes back after every write (`FAISSVectorStore.save()`,
-`upload_service.save_uploaded_file()`, `feedback_service.record_feedback()`,
-and document deletion). Entirely gated behind `Settings.s3_sync_enabled`
-(default `False`) — local dev and docker-compose never touch S3 or need
-`boto3` imported. Every sync call is best-effort: a failed sync never
-fails a request that already succeeded locally, only next-cold-start
-durability is at risk. `infra/s3_data.tf` provisions one private,
-encrypted S3 bucket with three prefixes for this.
-
-**New limitation this introduces, not present in the single-instance
-Render deployment**: `faiss_vector_store.py` protects writes with an
-in-process `threading.Lock` only, which doesn't extend across two Lambda
-execution environments concurrently writing the same synced index.
-`infra/lambda.tf` sets **`reserved_concurrent_executions = 1`**
-specifically to make that structurally impossible rather than just
-unlikely — the trade-off, stated plainly: a second request arriving while
-one is in flight gets an immediate `429`, not queued, a real behavioral
-difference from a single process's own in-process request queueing. This
-same concurrency cap also keeps `session_store.py`'s in-memory chat
-history safe (documented in `docs/DESIGN_REVIEW.md`, Q9, as correct only
-for a single process) — dormant on Render (which never scaled beyond one
-instance), and kept dormant here by the concurrency cap rather than by
-accident.
-
-### Secrets: SSM Parameter Store, resolved at cold start
-
-`render.yaml`'s `sync: false` env vars (`GEMINI_API_KEY`, `API_KEY`,
-`GROQ_API_KEY`) were entered by hand in the Render dashboard. On Lambda,
-`infra/ssm.tf` stores the same values (plus `DATABASE_URL`) as SSM
-`SecureString` parameters. `infra/lambda.tf`'s environment block carries
-only `SECRETS_SSM_PREFIX` — a parameter *path*, not a value — and
-`backend/app/core/config.py`'s `_load_secrets_from_ssm()` resolves the
-real values into the process environment at cold start, before
-`Settings()` reads it, via a single scoped `ssm:GetParameter` permission
-(`infra/iam.tf`). This closes a real gap an earlier version of this
-design had: with secrets placed directly in the Lambda environment
-block, `lambda:GetFunction`/`GetFunctionConfiguration` (needed by the
-GitHub Actions deploy role to poll deployment status) return environment
-variables *decrypted* by default — meaning that short-lived, repo-scoped
-OIDC credential could read the app's plaintext secrets. It no longer can:
-it has no SSM permission at all, so it never sees these values in any
-form, only the parameter path. See `infra/github_oidc.tf`'s comment.
-
-### HTTPS without a custom domain
-
-Neither the Render nor the AWS deployment owns a custom domain. Lambda
-Function URLs are HTTPS-only by default on their own AWS-owned domain
-(`https://<id>.lambda-url.<region>.on.aws/`) — solving the "free HTTPS
-without a domain" problem Fargate's CloudFront-in-front-of-an-ALB design
-needed, without needing CloudFront at all for the backend. (The frontend
-still uses CloudFront — `infra/cloudfront_frontend.tf`, unchanged — since
-that problem is genuinely CloudFront's to solve for a private S3 origin.)
-Trade-off, stated plainly: this loses "the backend is only reachable
-through a CDN's IP range," mitigated by `X-API-Key` already being the
-real access gate and `reserved_concurrent_executions=1` throttling bursts
-far more aggressively than an ALB ever did.
-
-### Streaming: `/chat/stream`'s SSE endpoint needs explicit config
-
-`POST /chat/stream` (`backend/app/api/v1/routes/query.py`) streams tokens
-via `StreamingResponse`. Lambda buffers responses by default; incremental
-delivery requires the Lambda Web Adapter's `AWS_LWA_INVOKE_MODE=RESPONSE_STREAM`
-env var (`infra/lambda.tf`) to exactly match the Function URL's own
-`invoke_mode = "RESPONSE_STREAM"` setting — the two are configured
-independently and silently disagree (buffered instead of incremental) if
-they don't match. `infra/README.md`'s smoke test includes a `curl -N`
-check specifically to verify this is actually wired correctly, not just
-declared.
-
-### Deploying
-
-See [`infra/README.md`](../infra/README.md) for the full runbook
-(Terraform state bootstrap, `terraform apply` in two phases, populating
-GitHub Actions repo variables, first deploy, and the smoke-test
-checklist). Ongoing deploys are automatic: `.github/workflows/deploy-backend.yml`
-and `deploy-frontend.yml` build and ship on every push to `main` that
-touches `backend/` or `frontend/` respectively — the GitHub Actions
-equivalent of Render's `autoDeployTrigger: commit` and Vercel's git
-integration, since AWS has no built-in webhook-based auto-deploy of its
-own. The backend deploy pins the Lambda function directly to a sha-tagged
-ECR image (`aws lambda update-function-code --image-uri ...`), simpler
-than the superseded ECS design's mutable-`:latest`-tag-plus-force-deploy
-approach.
+**This was deployed and live on Render/Vercel historically.** The pieces
+described above (`Dockerfile`, `render.yaml`, `demo_seed_service.py`)
+still work exactly as documented — `render.yaml` and the Render/Vercel
+projects are what got removed, not the app's own portability. See
+"Deploying to EC2" below for the current self-hosted path.
 
 ## Deploying to EC2 (Docker Compose)
 
-A third path, alongside Render (historical) and Lambda (above): a single
-plain EC2 instance running the same `docker-compose.yml` already used for
-local dev, plus two additive overlay files — `docker-compose.prod.yml`
-(restart policies, Postgres no longer published publicly) and, optionally,
-`docker-compose.caddy.yml` (TLS reverse proxy, once a domain exists). No
-Terraform for this path — deliberately manual/scripted
-(`infra/ec2/bootstrap.sh` + `infra/ec2/redeploy.sh`), since a single
-long-lived instance doesn't carry the same case for IaC that the Lambda
-path's many moving pieces (IAM, SSM, ECR, CloudFront, OIDC) did. Nothing
-about the Lambda deployment above changes — this is a separate, independent
-path, not a replacement.
+The current self-hosted path, alongside Render (historical) above: a
+single plain EC2 instance running the same `docker-compose.yml` already
+used for local dev, plus two additive overlay files —
+`docker-compose.prod.yml` (restart policies, Postgres no longer published
+publicly) and, optionally, `docker-compose.caddy.yml` (TLS reverse proxy,
+once a domain exists). No IaC for this path — deliberately manual, since a
+single long-lived instance doesn't carry the same case for it that a
+many-moving-pieces cloud deployment would.
 
-**Why this is genuinely simpler than both prior paths, not just different:**
+**Why this is genuinely simpler than the Render path, not just different:**
 EC2's root volume is real, persistent disk — the single constraint that
-shaped both the Render section ("The constraint that shapes everything
-below: an ephemeral filesystem") and the Lambda section (S3 sync,
-`entrypoint.sh`'s `/tmp` symlink dance) simply doesn't exist here. The
+shaped the Render section above ("The constraint that shapes everything
+below: an ephemeral filesystem") simply doesn't exist here. The
 named volumes in `docker-compose.yml` (`backend_uploads`,
 `backend_vector_store`) sit on real disk across restarts and redeploys,
 with no sync service, no read-only-filesystem workaround, and no
@@ -736,9 +596,8 @@ single-process assumptions documented in `docs/DESIGN_REVIEW.md` Q9 still
 apply — the in-memory session store and `FAISSVectorStore`'s
 `threading.Lock` are correct only because there's exactly one backend
 process. Docker Compose here never scales the backend service beyond
-`replicas: 1` (the implicit default), so unlike the ECS design's
-`autoscaling_max_capacity` footgun this doc already warned about, there's
-nothing to accidentally turn on.
+`replicas: 1` (the implicit default), so there's nothing to accidentally
+turn on.
 
 ### Instance sizing
 
@@ -748,11 +607,11 @@ FAISS index) peaked at **~480MB** even after the thread-pool and
 batch-size fixes. On this stack, Postgres, the frontend's nginx, and
 (optionally) Caddy each add their own share on top of that — a **1GB
 instance (t2.micro/t3.micro, free-tier eligible) is genuinely tight**,
-not comfortable; `infra/ec2/bootstrap.sh` adds a 2GB swapfile specifically
-to absorb bursts rather than let the OOM killer take the backend down.
-**t3.small (2GB RAM)** is the more honest recommendation if this needs to
-stay reliably up rather than free — same "state it plainly, no asterisk"
-approach the Lambda cost table above takes. `RERANKING_ENABLED=false`
+not comfortable; the 2GB swapfile added in step 2 below exists
+specifically to absorb bursts rather than let the OOM killer take the
+backend down. **t3.small (2GB RAM)** is the more honest recommendation if
+this needs to stay reliably up rather than free — same "state it plainly,
+no asterisk" approach used elsewhere in this doc. `RERANKING_ENABLED=false`
 (the default) still applies here for the same memory reason as Render.
 
 ### Security group
@@ -770,27 +629,31 @@ containers on the Compose network.
 
 ### Secrets
 
-Plain `.env` files on the instance (`backend/.env`, root `.env`) — not SSM
-Parameter Store like the Lambda path. This is a real, stated trade-off:
-simpler to operate (no IAM/SSM plumbing, matches local dev exactly) at the
-cost of secrets living in plaintext on disk rather than encrypted at rest
-by default. Reasonable for this project's actual scale; if that trade-off
-stops being acceptable, the Lambda deployment's SSM approach
-(`infra/ssm.tf`, `_load_secrets_from_ssm()` in `app/core/config.py`) is
-already proven and could be adapted — not attempted here to keep this path
-genuinely simple.
+Plain `.env` files on the instance (`backend/.env`, root `.env`) — not a
+managed secrets store. This is a real, stated trade-off: simpler to
+operate (matches local dev exactly) at the cost of secrets living in
+plaintext on disk rather than encrypted at rest by default. Reasonable
+for this project's actual scale; if that trade-off stops being
+acceptable, `app/core/config.py`'s `_load_secrets_from_ssm()` already
+supports resolving secrets from AWS SSM Parameter Store at startup given
+a `SECRETS_SSM_PREFIX` — not attempted here to keep this path genuinely
+simple.
 
 ### First-time deploy
 
 1. Launch an Ubuntu 22.04/24.04 EC2 instance (t3.small recommended, see
    above), attach an Elastic IP so the address survives a stop/start, and
    open the security group ports above.
-2. SSH in, copy `infra/ec2/bootstrap.sh` to the instance, and run
-   `sudo bash bootstrap.sh` — installs Docker, adds a 2GB swapfile.
+2. SSH in and install Docker: `curl -fsSL https://get.docker.com | sudo sh`,
+   then `sudo usermod -aG docker $USER` and re-login for it to take effect.
+   Add a 2GB swapfile to absorb memory bursts (see "Instance sizing"
+   above): `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile &&
+   sudo mkswap /swapfile && sudo swapon /swapfile`, then append
+   `/swapfile none swap sw 0 0` to `/etc/fstab` so it survives a reboot.
 3. `git clone <repo-url> insightai-rag && cd insightai-rag`.
 4. `cp backend/.env.example backend/.env` and fill in real values
    (`GEMINI_API_KEY`/`API_KEY`/`GROQ_API_KEY`/`JWT_SECRET_KEY` at minimum
-   — same variables the Render/Lambda deploys already need, see
+   — same variables the Render deploy already needs, see
    `backend/.env.example`'s own comments). Optionally set `DATABASE_URL`
    to the Compose-network Postgres
    (`postgresql+psycopg2://insightai:insightai-dev-password@postgres:5432/insightai`
@@ -799,7 +662,8 @@ genuinely simple.
 5. `cp .env.example .env` and set `VITE_API_BASE_URL` to
    `http://<instance-public-ip>:8000` (or `https://api.yourdomain.com` if
    using the Caddy overlay).
-6. `bash infra/ec2/redeploy.sh` (add `--with-caddy` if a domain is already
+6. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+   --build` (add `-f docker-compose.caddy.yml` too if a domain is already
    pointed at the instance — otherwise add that overlay in a later,
    separate run once DNS is ready).
 7. Verify: `curl http://<instance-public-ip>:8000/health`, then load the
@@ -807,21 +671,21 @@ genuinely simple.
 
 ### Ongoing deploys and rollback
 
-`bash infra/ec2/redeploy.sh` — `git pull`, rebuild, restart, and prune
-dangling images/build cache left over from the previous build (nothing
-finer-grained than that; if disk fills up faster than expected,
+`git pull`, then re-run the same `docker compose -f docker-compose.yml -f
+docker-compose.prod.yml up -d --build` from step 6 (add
+`-f docker-compose.caddy.yml` if that overlay is in use), then
+`docker image prune -f` to clear dangling images/build cache left over
+from the previous build (if disk fills up faster than expected,
 `docker system df` shows where). No auto-deploy-on-push here (no
-GitHub Actions SSH step exists yet) — a deliberate scope cut for this PR,
-same "manual today, automatable later" shape the A/B eval workflow above
+GitHub Actions SSH step exists) — a deliberate scope cut, same
+"manual today, automatable later" shape the A/B eval workflow above
 already has.
 
 Rollback follows the same git-tag procedure as the "Rollback plan"
-section above, run manually over SSH: `git checkout <tag>`, then
-`bash infra/ec2/redeploy.sh` (skip its `git pull` expectation by running
-the `docker compose build`/`up -d` commands directly if the checkout would
-otherwise conflict with a pull) — the persistent EBS volume means the
-vector store/uploads survive the rollback untouched, unlike a rollback on
-the ephemeral Render/Lambda deployments.
+section above, run manually over SSH: `git checkout <tag>`, then the same
+`docker compose ... up -d --build` command — the persistent EBS volume
+means the vector store/uploads survive the rollback untouched, unlike a
+rollback on the ephemeral Render deployment.
 
 ### Cost
 
@@ -829,6 +693,5 @@ t3.small: **~$15/month** on-demand (or free-tier-eligible t2.micro/t3.micro
 for the first 12 months on a new AWS account, at the memory-tightness cost
 above) + ~$1-2/month for a small EBS volume (20-30GB) + ~$3.60/month for an
 unattached-safe Elastic IP (free while attached to a running instance).
-Meaningfully more than the Lambda path's near-$0, in exchange for no
-cold starts, no read-only-filesystem workaround, and real persistent
-storage — the trade this section is actually about.
+Stated plainly, the same way the 512MB OOM incident above is stated
+plainly — in exchange for no cold starts and real persistent storage.
