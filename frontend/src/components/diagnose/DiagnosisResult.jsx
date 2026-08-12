@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
-import { AlertTriangle, Leaf, Sparkles } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, Leaf, MessageCircle, Sparkles } from 'lucide-react'
 import CitedAnswer from '../chat/CitedAnswer'
 import Button from '../ui/Button'
 
@@ -10,8 +11,18 @@ function confidenceColor(confidence) {
 }
 
 export default function DiagnosisResult({ result, onReset }) {
-  const { diagnosis, answer, sources, processing_time } = result
+  const { diagnosis, answer, sources, processing_time, session_id } = result
   const confidence = diagnosis?.confidence
+  const navigate = useNavigate()
+
+  // /chat/diagnose already stores this exchange under session_id in the
+  // same server-side session store /chat uses (app/services/session_store.py)
+  // — resuming it here is the same mechanism History.jsx's openSession()
+  // uses, not a new one. The diagnosis Q&A is already in that session's
+  // history, so a follow-up question in Chat is grounded in it immediately.
+  const continueChatting = () => {
+    navigate('/chat', { state: { sessionId: session_id } })
+  }
 
   return (
     <motion.div
@@ -84,6 +95,9 @@ export default function DiagnosisResult({ result, onReset }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-3">
+        <Button variant="secondary" icon={MessageCircle} onClick={continueChatting} disabled={!session_id}>
+          Continue chatting
+        </Button>
         <Button variant="primary" icon={Leaf} onClick={onReset}>
           Diagnose another leaf
         </Button>

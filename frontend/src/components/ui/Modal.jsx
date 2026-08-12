@@ -6,9 +6,10 @@ import { X } from 'lucide-react'
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-export default function Modal({ open, onClose, title, children, footer }) {
+export default function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   const dialogRef = useRef(null)
   const previouslyFocusedRef = useRef(null)
+  const widthClass = size === 'full' ? 'max-w-4xl' : 'max-w-md'
 
   useEffect(() => {
     if (!open) return undefined
@@ -77,7 +78,8 @@ export default function Modal({ open, onClose, title, children, footer }) {
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            className="glass-panel relative z-10 w-full max-w-md p-6 shadow-soft-lg focus:outline-none"
+            className="glass-panel relative z-10 w-full p-6 shadow-soft-lg focus:outline-none"
+            style={{ maxWidth: size === 'full' ? '56rem' : '28rem' }}
           >
             <div className="mb-4 flex items-center justify-between">
               {title && <h3 className="text-lg font-semibold text-slate-900 dark:text-ink-primary">{title}</h3>}

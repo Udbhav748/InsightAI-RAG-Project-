@@ -11,6 +11,7 @@ import useUpload from '../hooks/useUpload'
 
 export default function Upload() {
   const { file, progress, status, errorMessage, selectFile, reset, startUpload } = useUpload()
+  const [collection, setCollection] = useState('')
   const [recent, setRecent] = useState([])
   const navigate = useNavigate()
 
@@ -24,7 +25,7 @@ export default function Upload() {
 
   useEffect(() => {
     if (file && status === 'idle') {
-      startUpload()
+      startUpload(collection.trim() || undefined)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file])
@@ -35,6 +36,19 @@ export default function Upload() {
         <h2 className="font-display text-2xl font-bold">Upload a document</h2>
         <p className="mt-1.5 text-sm text-slate-500 dark:text-ink-muted">
           Add a PDF to your knowledge base — it'll be chunked, embedded, and ready to chat with in moments.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-center">
+        <input
+          value={collection}
+          onChange={(event) => setCollection(event.target.value)}
+          disabled={!!file}
+          placeholder="Collection (optional) — e.g. finance, research"
+          className="input w-full py-2.5 text-sm sm:max-w-md"
+        />
+        <p className="text-xs text-slate-400 dark:text-ink-muted sm:max-w-[16rem]">
+          Tag this document into a named collection so a chat can be scoped to it.
         </p>
       </div>
 

@@ -10,7 +10,11 @@ import axios from 'axios'
 export const AUTH_TOKEN_KEY = 'insightai_auth_token'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  // Same-origin /api in dev: Vite proxies it to the backend (see
+  // vite.config.js), so the browser never has to reach the backend host
+  // directly or deal with CORS — works from localhost and LAN IPs alike.
+  // Production builds set VITE_API_BASE_URL to the real backend origin.
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 10000,
 })
 

@@ -6,11 +6,14 @@ const HISTORY_KEY = 'insightai-upload-history'
  * Upload a PDF to the backend, reporting real byte-level progress.
  * @param {File} file
  * @param {(percent: number) => void} [onProgress]
+ * @param {string} [collection] optional named collection to tag the
+ *   document into, later used to scope a chat conversation.
  * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, total_embeddings: number, pages_ocred: number, processing_time: number, status: string}>}
  */
-export async function uploadDocument(file, onProgress) {
+export async function uploadDocument(file, onProgress, collection) {
   const formData = new FormData()
   formData.append('file', file)
+  if (collection) formData.append('collection', collection)
 
   const { data } = await api.post('/upload', formData, {
     timeout: 60000,
@@ -39,9 +42,30 @@ export async function deleteDocument(documentId) {
 }
 
 /**
- * The backend has no document list endpoint (only delete-by-id), so
- * upload history is tracked client-side from real, successful uploads.
- * This is real data about what this browser has uploaded, not mock data.
+ * List documents from the server (GET /documents) — tenant-scoped to the
+ * logged-in user, so this is what makes a document uploaded from a
+ * different browser/device visible here too, unlike getUploadHistory()
+ * below. Returns [] when the backend's DATABASE_URL isn't configured (the
+ * route's own documented behavior: "empty when the DB is disabled") —
+ * callers should treat that the same as "nothing from the server yet",
+ * not as an error, and fall back to getUploadHistory() for that case.
+ * @param {{ collection?: string }} [options]
+ * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, upload_timestamp: string, collection: string|null}[]>}
+ */
+export async function listDocuments(options = {}) {
+  const { data } = await api.get('/documents', {
+    params: options.collection ? { collection: options.collection } : undefined,
+  })
+  return data.documents
+}
+
+/**
+ * The backend now has a real document list endpoint (listDocuments above),
+ * but only when a database is configured — upload history is also tracked
+ * client-side from real, successful uploads so Documents still works fully
+ * on a DB-less deployment, and so documents predating server-side listing
+ * aren't lost. This is real data about what this browser has uploaded,
+ * not mock data.
  */
 export function getUploadHistory() {
   try {

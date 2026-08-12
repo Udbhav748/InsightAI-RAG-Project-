@@ -24,35 +24,39 @@ export default function useUpload() {
     setErrorMessage('')
   }, [])
 
-  const startUpload = useCallback(async () => {
-    if (!file) return
-    setStatus('uploading')
-    setProgress(0)
+  const startUpload = useCallback(
+    async (collection) => {
+      if (!file) return
+      setStatus('uploading')
+      setProgress(0)
 
-    try {
-      const result = await uploadDocument(file, setProgress)
-      setStatus('success')
-      // DocumentProcessingResponse carries no timestamp — stamp one
-      // locally so Documents can sort/display by upload time.
-      addToUploadHistory({ ...result, uploaded_at: new Date().toISOString() })
-      // pages_ocred > 0 means some pages had no text layer (scanned/image
-      // pages) and were recovered via OCR — worth surfacing, since OCR'd
-      // text is lower-fidelity than the document's real text. Same
-      // reasoning for the multi-modal counts below (all 0 when those
-      // features are off, so this is a no-op note on a normal deployment).
-      const notes = []
-      if (result.pages_ocred > 0) notes.push(`${result.pages_ocred} page(s) recovered via OCR`)
-      if (result.images_captioned > 0) notes.push(`${result.images_captioned} image(s) captioned`)
-      if (result.total_tables > 0) notes.push(`${result.total_tables} table(s) extracted`)
-      const note = notes.length > 0 ? ` (${notes.join(', ')})` : ''
-      showToast(`${result.original_filename} uploaded successfully${note}.`, 'success')
-    } catch (error) {
-      const message = getErrorMessage(error, 'Upload failed. Please try again.')
-      setStatus('error')
-      setErrorMessage(message)
-      showToast(message, 'error')
-    }
-  }, [file, showToast])
+      try {
+        const result = await uploadDocument(file, setProgress, collection)
+        setStatus('success')
+        // DocumentProcessingResponse carries no timestamp — stamp one
+        // locally so Documents can sort/display by upload time.
+        addToUploadHistory({ ...result, uploaded_at: new Date().toISOString() })
+        // pages_ocred > 0 means some pages had no text layer (scanned/image
+        // pages) and were recovered via OCR — worth surfacing, since OCR'd
+        // text is lower-fidelity than the document's real text. Same
+        // reasoning for the multi-modal counts below (all 0 when those
+        // features are off, so this is a no-op note on a normal deployment).
+        const notes = []
+        if (result.pages_ocred > 0) notes.push(`${result.pages_ocred} page(s) recovered via OCR`)
+        if (result.images_captioned > 0) notes.push(`${result.images_captioned} image(s) captioned`)
+        if (result.total_tables > 0) notes.push(`${result.total_tables} table(s) extracted`)
+        if (result.possible_duplicate_of) notes.push('may duplicate an already-uploaded document')
+        const note = notes.length > 0 ? ` (${notes.join(', ')})` : ''
+        showToast(`${result.original_filename} uploaded successfully${note}.`, 'success')
+      } catch (error) {
+        const message = getErrorMessage(error, 'Upload failed. Please try again.')
+        setStatus('error')
+        setErrorMessage(message)
+        showToast(message, 'error')
+      }
+    },
+    [file, showToast]
+  )
 
   return { file, progress, status, errorMessage, selectFile, reset, startUpload }
 }

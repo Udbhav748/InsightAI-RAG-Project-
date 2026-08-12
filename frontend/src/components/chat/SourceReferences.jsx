@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, FileText, Image as ImageIcon, Table2 } from 'lucide-react'
+import { ChevronDown, ExternalLink, FileText, Image as ImageIcon, Table2 } from 'lucide-react'
 import { getDocumentName } from '../../services/documentService'
+import PdfPreviewModal from './PdfPreviewModal'
+import { highlightTerms } from '../../utils/highlightTerms.jsx'
 
 // Multi-modal RAG: a citation's content_type (SourceReference.content_type,
 // default "text") says what kind of content it was actually derived from —
@@ -19,8 +21,9 @@ const CONTENT_TYPE_META = {
 // passes all three so it can drive expansion from an inline [N] click and
 // scroll the matching card into view; anything else can still just do
 // `<SourceReferences sources={...} />` on its own.
-export default function SourceReferences({ sources = [], expandedIds, onToggle, sourceRefs }) {
+export default function SourceReferences({ sources = [], expandedIds, onToggle, sourceRefs, query }) {
   const [internalExpandedIds, setInternalExpandedIds] = useState(() => new Set())
+  const [pdfPreview, setPdfPreview] = useState(null) // { documentId, pageNumber, excerpt, title }
   const activeExpandedIds = expandedIds ?? internalExpandedIds
 
   if (sources.length === 0) return null
@@ -96,14 +99,43 @@ export default function SourceReferences({ sources = [], expandedIds, onToggle, 
                   className="overflow-hidden"
                 >
                   <p className="px-3 pb-2.5 text-xs text-slate-600 dark:text-ink-secondary">
-                    {source.excerpt}
+                    {highlightTerms(source.excerpt, query)}
                   </p>
+                  {source.page_number != null && (
+                    <div className="flex items-center justify-between gap-2 border-t border-border-light px-3 py-2 dark:border-border">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPdfPreview({
+                            documentId: source.document_id,
+                            pageNumber: source.page_number,
+                            excerpt: source.excerpt,
+                            title: `${documentName} · page ${source.page_number}`,
+                          })
+                        }
+                        className="flex items-center gap-1.5 text-xs font-medium text-accent-600 transition-colors hover:text-accent-700 dark:text-accent-500 dark:hover:text-accent-400"
+                      >
+                        <ExternalLink size={12} strokeWidth={1.75} />
+                        View in PDF
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         )
       })}
+      {pdfPreview && (
+        <PdfPreviewModal
+          open={!!pdfPreview}
+          onClose={() => setPdfPreview(null)}
+          documentId={pdfPreview.documentId}
+          pageNumber={pdfPreview.pageNumber}
+          excerpt={pdfPreview.excerpt}
+          title={pdfPreview.title}
+        />
+      )}
     </div>
   )
 }

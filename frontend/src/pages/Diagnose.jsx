@@ -134,9 +134,45 @@ export default function Diagnose() {
               <Button variant="ghost" icon={RefreshCw} onClick={reset}>
                 Retake
               </Button>
-              <Button variant="primary" icon={ScanLine} onClick={analyze} loading={status === 'analyzing'}>
+              <Button variant="primary" icon={ScanLine} onClick={analyze}>
                 Analyze leaf
               </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {status === 'analyzing' && (
+          <motion.div
+            key="analyzing"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="space-y-4"
+          >
+            <div className="panel overflow-hidden rounded-panel">
+              <img
+                src={previewUrl}
+                alt="Leaf being analyzed"
+                className="max-h-80 w-full object-contain opacity-60"
+              />
+            </div>
+
+            <div className="panel flex flex-col items-center gap-3 rounded-panel px-6 py-10 text-center">
+              <motion.span
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
+                className="flex h-14 w-14 items-center justify-center rounded-xl border border-accent-500/30 bg-accent-500/10 text-accent-500 dark:text-accent-400"
+              >
+                <ScanLine size={26} strokeWidth={1.75} />
+              </motion.span>
+              <div>
+                <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
+                  Analyzing your leaf photo...
+                </p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">
+                  The vision model is examining the image — this can take a few seconds.
+                </p>
+              </div>
             </div>
           </motion.div>
         )}

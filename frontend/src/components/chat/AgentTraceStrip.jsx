@@ -17,6 +17,8 @@ function traceLabel(stage, detail = {}) {
       return `Grading: ${detail.grade}`
     case 'web_search':
       return `Searched the web (${detail.result_count ?? 0} result${detail.result_count === 1 ? '' : 's'})`
+    case 'local_research':
+      return 'Researching your documents'
     case 'generating':
       return 'Generating'
     case 'reflecting':

@@ -9,7 +9,7 @@ import SourceReferences from './SourceReferences'
 // that leads nowhere.
 const CITATION_RE = /\[(\d+)\]/g
 
-export default function CitedAnswer({ text, sources = [] }) {
+export default function CitedAnswer({ text, sources = [], query }) {
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const sourceRefs = useRef({})
 
@@ -74,6 +74,7 @@ export default function CitedAnswer({ text, sources = [] }) {
         expandedIds={expandedIds}
         onToggle={handleToggle}
         sourceRefs={sourceRefs}
+        query={query}
       />
     </>
   )

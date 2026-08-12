@@ -39,13 +39,14 @@ function getOrCreateSessionId() {
   return sessionId
 }
 
-export default function useChat(initialSessionId) {
+export default function useChat(initialSessionId, initialDocumentIds) {
   const [messages, setMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
   const [isLoadingSession, setIsLoadingSession] = useState(Boolean(initialSessionId))
   const lastQueryRef = useRef('')
   const messagesRef = useRef([])
   const sessionIdRef = useRef(null)
+  const documentIdsRef = useRef(initialDocumentIds ?? null)
 
   // Resume a past conversation (opened from the History page) instead of
   // starting/continuing the localStorage-tracked session — additive to
@@ -97,7 +98,7 @@ export default function useChat(initialSessionId) {
   }, [])
 
   const fetchAnswer = useCallback(
-    async (query, history) => {
+    async (query, history, persona) => {
       setIsSending(true)
       const assistantId = nextId()
       setMessages((current) => [
@@ -108,7 +109,7 @@ export default function useChat(initialSessionId) {
       try {
         await streamChatMessage(
           query,
-          { history, sessionId: sessionIdRef.current },
+          { history, sessionId: sessionIdRef.current, persona, documentIds: documentIdsRef.current },
           {
             onTrace: (stage, detail) => {
               updateMessage(assistantId, (message) => ({
@@ -135,6 +136,9 @@ export default function useChat(initialSessionId) {
                 ...message,
                 content: payload.answer,
                 sources: payload.sources ?? [],
+                retrievalConfidence: payload.retrieval_confidence,
+                isClarifyingQuestion: payload.is_clarifying_question ?? false,
+                followUpQuestions: payload.follow_up_questions ?? [],
                 isStreaming: false,
               }))
             },
@@ -166,11 +170,11 @@ export default function useChat(initialSessionId) {
   )
 
   const ask = useCallback(
-    (query) => {
+    (query, persona) => {
       lastQueryRef.current = query
       const history = toHistory(messagesRef.current)
       setMessages((current) => [...current, { id: nextId(), role: 'user', content: query }])
-      fetchAnswer(query, history)
+      fetchAnswer(query, history, persona)
     },
     [fetchAnswer]
   )

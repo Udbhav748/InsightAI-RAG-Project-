@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import { MessageCircle, Plus } from 'lucide-react'
@@ -16,9 +16,16 @@ const SUGGESTIONS = [
 export default function Chat() {
   // Opened from the History page with { sessionId } in navigation state
   // resumes that conversation; otherwise unchanged (localStorage-tracked
-  // session, or a fresh one).
+  // session, or a fresh one). A second piece of state, { documentIds },
+  // is set when the user clicks "Chat about this collection" on the
+  // Documents page — scoping every retrieval in this conversation to
+  // just those documents.
   const location = useLocation()
-  const { messages, isSending, ask, regenerate, clearSession } = useChat(location.state?.sessionId)
+  const { messages, isSending, ask, regenerate, clearSession } = useChat(
+    location.state?.sessionId,
+    location.state?.documentIds
+  )
+  const [persona, setPersona] = useState('')
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -26,6 +33,17 @@ export default function Chat() {
   }, [messages, isSending])
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
+
+  // For keyword highlighting in citation excerpts: each assistant message
+  // is paired with the user question that produced it (the nearest
+  // preceding user message).
+  const queryFor = (message) => {
+    const index = messages.indexOf(message)
+    for (let i = index - 1; i >= 0; i -= 1) {
+      if (messages[i].role === 'user') return messages[i].content
+    }
+    return ''
+  }
 
   return (
     <div className="mx-auto flex h-[calc(100vh-7.5rem)] max-w-3xl flex-col">
@@ -58,6 +76,8 @@ export default function Chat() {
                 message={message}
                 isLast={message.id === lastAssistantId}
                 onRegenerate={regenerate}
+                onFollowUpClick={(q) => ask(q, persona)}
+                query={queryFor(message)}
               />
             ))}
           </AnimatePresence>
@@ -67,7 +87,7 @@ export default function Chat() {
 
       <div className="sticky bottom-0 pt-2">
         <div className="flex items-center justify-between mb-2 px-1 sm:px-3">
-          <ChatInput onSend={ask} disabled={isSending} />
+          <ChatInput onSend={ask} disabled={isSending} persona={persona} onPersonaChange={setPersona} />
           <button
             type="button"
             onClick={clearSession}

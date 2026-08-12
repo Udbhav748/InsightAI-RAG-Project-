@@ -6,7 +6,7 @@ import api, { AUTH_TOKEN_KEY } from './api'
 // reaching into api.defaults' internal shape. The auth token is read
 // fresh per call (same reasoning as api.js's request interceptor: a
 // login/logout between calls must take effect immediately).
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 /**
  * Send a chat query to the RAG pipeline.
@@ -20,6 +20,8 @@ function buildChatPayload(query, options) {
   if (options.minScore != null) payload.min_score = options.minScore
   if (options.history?.length) payload.history = options.history
   if (options.sessionId) payload.session_id = options.sessionId
+  if (options.persona) payload.persona = options.persona
+  if (options.documentIds?.length) payload.document_ids = options.documentIds
   return payload
 }
 

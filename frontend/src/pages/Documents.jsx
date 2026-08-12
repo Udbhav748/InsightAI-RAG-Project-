@@ -1,15 +1,37 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowUpDown, FileText, Image as ImageIcon, Table2, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowUpDown, FileText, Image as ImageIcon, MessageSquare, Table2, Trash2, UploadCloud } from 'lucide-react'
 import SearchInput from '../components/ui/SearchInput'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
-import { deleteDocument, getUploadHistory, removeFromUploadHistory } from '../services/documentService'
+import { deleteDocument, getUploadHistory, listDocuments, removeFromUploadHistory } from '../services/documentService'
 import useToast from '../hooks/useToast'
 import getErrorMessage from '../utils/errorMessage'
+
+// listDocuments() (GET /documents) only carries the fields DocumentListItem
+// declares — no status/images_captioned/total_tables, since those are
+// upload-response-only fields the backend never persists. Local upload
+// history has those richer fields for anything uploaded from this browser;
+// merging keeps that richness where available while still surfacing
+// documents the server knows about but this browser never uploaded itself
+// (a different browser/device, or a document from before this feature
+// existed at all).
+function mergeDocuments(serverDocs, localDocs) {
+  const localById = new Map(localDocs.map((doc) => [doc.document_id, doc]))
+  const merged = serverDocs.map((doc) => {
+    const normalized = { ...doc, uploaded_at: doc.upload_timestamp }
+    const local = localById.get(doc.document_id)
+    localById.delete(doc.document_id)
+    return local ? { ...normalized, ...local } : normalized
+  })
+  // Whatever's left is local-only: either a DB-less deployment (the server
+  // list is always [] there, so every document falls into this bucket) or
+  // a document uploaded before server-side listing existed.
+  return [...merged, ...localById.values()]
+}
 
 function formatDate(iso) {
   if (!iso) return 'Unknown date'
@@ -33,19 +55,39 @@ export default function Documents() {
   const [documents, setDocuments] = useState([])
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState('newest')
+  const [collectionFilter, setCollectionFilter] = useState('')
   const [pendingDelete, setPendingDelete] = useState(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const navigate = useNavigate()
   const { showToast } = useToast()
 
   useEffect(() => {
-    setDocuments(getUploadHistory())
+    let active = true
+    listDocuments()
+      .then((serverDocs) => {
+        if (active) setDocuments(mergeDocuments(serverDocs, getUploadHistory()))
+      })
+      .catch(() => {
+        // Server list unreachable (network error, auth hiccup, etc.) —
+        // degrade to this browser's own history rather than show nothing.
+        if (active) setDocuments(getUploadHistory())
+      })
+    return () => {
+      active = false
+    }
   }, [])
 
+  const collections = useMemo(
+    () => [...new Set(documents.map((doc) => doc.collection).filter(Boolean))],
+    [documents]
+  )
+
   const filtered = useMemo(() => {
-    const list = documents.filter((doc) =>
-      doc.original_filename.toLowerCase().includes(query.toLowerCase())
-    )
+    const list = documents.filter((doc) => {
+      const matchesQuery = doc.original_filename.toLowerCase().includes(query.toLowerCase())
+      const matchesCollection = !collectionFilter || doc.collection === collectionFilter
+      return matchesQuery && matchesCollection
+    })
     const sorted = [...list].sort((a, b) => {
       if (sortBy === 'name') return a.original_filename.localeCompare(b.original_filename)
       const dateA = new Date(a.uploaded_at).getTime() || 0
@@ -53,14 +95,22 @@ export default function Documents() {
       return sortBy === 'oldest' ? dateA - dateB : dateB - dateA
     })
     return sorted
-  }, [documents, query, sortBy])
+  }, [documents, query, sortBy, collectionFilter])
+
+  const chatAboutCollection = () => {
+    const matching = documents
+      .filter((doc) => doc.collection === collectionFilter)
+      .map((doc) => doc.document_id)
+    navigate('/chat', { state: { documentIds: matching } })
+  }
 
   const confirmDelete = async () => {
     if (!pendingDelete) return
     setIsDeleting(true)
     try {
       await deleteDocument(pendingDelete.document_id)
-      setDocuments(removeFromUploadHistory(pendingDelete.document_id))
+      removeFromUploadHistory(pendingDelete.document_id)
+      setDocuments((current) => current.filter((doc) => doc.document_id !== pendingDelete.document_id))
       showToast(`${pendingDelete.original_filename} deleted.`, 'success')
       setPendingDelete(null)
     } catch (error) {
@@ -76,7 +126,7 @@ export default function Documents() {
         <div>
           <h2 className="font-display text-xl font-bold">Documents</h2>
           <p className="text-sm text-slate-500 dark:text-ink-muted">
-            {documents.length} document{documents.length === 1 ? '' : 's'} in this browser's history
+            {documents.length} document{documents.length === 1 ? '' : 's'}
           </p>
         </div>
         <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
@@ -87,6 +137,23 @@ export default function Documents() {
       {documents.length > 0 && (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <SearchInput value={query} onChange={setQuery} placeholder="Search documents..." className="sm:w-72" />
+          {collections.length > 0 && (
+            <div className="relative">
+              <select
+                value={collectionFilter}
+                onChange={(event) => setCollectionFilter(event.target.value)}
+                className="input w-full appearance-none py-2 pl-8 pr-8 sm:w-44"
+                aria-label="Filter by collection"
+              >
+                <option value="">All collections</option>
+                {collections.map((collection) => (
+                  <option key={collection} value={collection}>
+                    {collection}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="relative sm:ml-auto">
             <ArrowUpDown size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-ink-muted" />
             <select
@@ -101,6 +168,11 @@ export default function Documents() {
               ))}
             </select>
           </div>
+          {collectionFilter && (
+            <Button variant="secondary" icon={MessageSquare} onClick={chatAboutCollection}>
+              Chat about this collection
+            </Button>
+          )}
         </div>
       )}
 
@@ -135,7 +207,14 @@ export default function Documents() {
                   <p className="truncate text-sm font-medium text-slate-800 dark:text-ink-primary">
                     {doc.original_filename}
                   </p>
-                  <p className="text-xs text-slate-400 dark:text-ink-muted">{formatDate(doc.uploaded_at)}</p>
+                  <p className="text-xs text-slate-400 dark:text-ink-muted">
+                    {formatDate(doc.uploaded_at)}
+                    {doc.collection && (
+                      <span className="ml-1.5 rounded bg-accent-500/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-600 dark:text-accent-400">
+                        {doc.collection}
+                      </span>
+                    )}
+                  </p>
                 </div>
               </div>
 
