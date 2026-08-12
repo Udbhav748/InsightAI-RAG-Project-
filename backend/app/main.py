@@ -9,8 +9,9 @@ from app.core.config import settings
 from app.core.database import db_enabled, init_db
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.metrics import RequestTimer, get_metrics
 from app.core.request_context import request_id_var
-from app.api.v1.routes import auth, documents, health, query
+from app.api.v1.routes import admin, auth, documents, health, metrics as metrics_routes, query
 from app.services import s3_sync_service
 from app.services.demo_seed_service import seed_if_empty
 from app.services.tenant_service import seed_keys_from_settings
@@ -106,9 +107,36 @@ async def usage_log_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Record one http_requests_total + latency histogram per request.
+
+    Lives in-app so a Prometheus-style scraper can pull live metrics from
+    GET /metrics with nothing but this process running — the online
+    counterpart to the offline log rollups (monitoring/log_aggregate.py).
+    The error-taxonomy breakdown is recorded separately by
+    error_handlers.py's record_error(); this middleware covers every
+    response, healthy or not.
+
+    Exceptions from call_next (e.g. a client disconnecting mid-stream) are
+    recorded as a 500 so the request is never invisible to the scraper —
+    the exception still propagates, as it would without this middleware.
+    """
+    timer = RequestTimer(get_metrics(), request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        timer.finish(500)
+        raise
+    timer.finish(response.status_code)
+    return response
+
+
 register_exception_handlers(app)
 
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(query.router)
+app.include_router(admin.router)
+app.include_router(metrics_routes.router)

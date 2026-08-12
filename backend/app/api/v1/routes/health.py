@@ -1,13 +1,57 @@
+"""Health/readiness endpoint.
+
+Kept deliberately open (no auth dependency) and side-effect-free so load
+balancers and uptime monitors can hit it. Reports more than liveness: the
+LLM provider's readiness (whether its API key is present — a boolean,
+never the key itself) and which multi-modal RAG capabilities this
+deployment has enabled, so an operator can tell at a glance why uploads
+and captioning behave the way they do.
+"""
+
 from fastapi import APIRouter
 
+from app.core.config import settings
 from app.core.database import db_enabled
+from app.services.document_service import is_tesseract_available
 
 router = APIRouter()
 
 
+def _provider_configured(provider: str | None) -> bool:
+    """Whether the given LLM provider has an API key configured.
+
+    /health is unauthenticated, so this returns a boolean only — never a
+    key or a partial key — to avoid leaking credentials through a public
+    endpoint.
+    """
+    if provider is None:
+        return False
+    if provider == "gemini":
+        return bool(settings.gemini_api_key)
+    if provider == "groq":
+        return bool(settings.groq_api_key)
+    return False
+
+
 @router.get("/health", tags=["Health"])
 def health_check():
-    body = {"status": "ok"}
+    body = {
+        "status": "ok",
+        "llm": {
+            "provider": settings.llm_provider,
+            "provider_configured": _provider_configured(settings.llm_provider),
+            "fallback_provider": settings.fallback_llm_provider,
+            "fallback_configured": _provider_configured(settings.fallback_llm_provider),
+            "model_routing_enabled": settings.model_routing_enabled,
+        },
+        "multimodal": {
+            "image_extraction_enabled": settings.image_extraction_enabled,
+            "image_captioning_enabled": settings.image_captioning_enabled,
+            "table_extraction_enabled": settings.table_extraction_enabled,
+            "vision_qa_enabled": settings.vision_qa_enabled,
+            "ocr_available": is_tesseract_available(),
+        },
+    }
     if db_enabled():
         body["database"] = "connected"
     return body

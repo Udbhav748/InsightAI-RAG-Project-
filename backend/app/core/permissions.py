@@ -24,9 +24,10 @@ logger = logging.getLogger(__name__)
 
 DOCUMENT_DELETE = "document_delete"
 DOCUMENT_LIST_ALL_TENANTS = "document_list_all_tenants"
+ANALYTICS_VIEW = "analytics_view"
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "admin": frozenset({DOCUMENT_DELETE, DOCUMENT_LIST_ALL_TENANTS}),
+    "admin": frozenset({DOCUMENT_DELETE, DOCUMENT_LIST_ALL_TENANTS, ANALYTICS_VIEW}),
     "member": frozenset(),
 }
 
