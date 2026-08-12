@@ -13,8 +13,15 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
-from app.models.document import EmbeddedChunk
-from app.models.schemas import ChatResponse, DocumentDeleteResponse, FeedbackResponse
+from app.models.document import EmbeddedChunk, ExtractedImage
+from app.models.schemas import (
+    ChatResponse,
+    DocumentDeleteResponse,
+    DocumentImagesResponse,
+    DocumentProcessingResponse,
+    FeedbackResponse,
+)
+from app.services.document_processing_service import DocumentProcessingService
 from app.services.faiss_vector_store import FAISSVectorStore
 from tests.conftest import assert_matches_schema
 
@@ -130,7 +137,36 @@ class TestHealth:
     def test_health_returns_200(self, client):
         response = client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        body = response.json()
+        assert body["status"] == "ok"
+        # The provider's key is never echoed — only a boolean readiness
+        # signal, on an unauthenticated endpoint.
+        assert body["llm"]["provider_configured"] is True
+        assert "api_key" not in json.dumps(body).lower()
+        # Multi-modal capability flags are reported as configured, and the
+        # section always present even when every flag is off.
+        assert set(body["multimodal"]) >= {
+            "image_extraction_enabled",
+            "image_captioning_enabled",
+            "table_extraction_enabled",
+            "vision_qa_enabled",
+            "ocr_available",
+        }
+        assert isinstance(body["multimodal"]["ocr_available"], bool)
+
+    def test_health_reports_disabled_capabilities(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "image_extraction_enabled", False)
+        monkeypatch.setattr(settings, "image_captioning_enabled", False)
+        monkeypatch.setattr(settings, "table_extraction_enabled", False)
+        monkeypatch.setattr(settings, "vision_qa_enabled", False)
+        monkeypatch.setattr(settings, "fallback_llm_provider", None)
+
+        response = client.get("/health")
+
+        body = response.json()
+        assert body["multimodal"]["image_extraction_enabled"] is False
+        assert body["llm"]["fallback_provider"] is None
+        assert body["llm"]["fallback_configured"] is False
 
 
 class TestUpload:
@@ -159,6 +195,30 @@ class TestUpload:
             files={"file": ("doc.pdf", MINIMAL_PDF_BYTES, "application/pdf")},
         )
         assert response.status_code == 401
+
+    def test_upload_accepts_and_returns_collection(self, client, monkeypatch):
+        async def fake_process(self, file, tenant_id=None, collection=None):
+            return DocumentProcessingResponse(
+                document_id="doc-1",
+                original_filename="doc.pdf",
+                total_pages=1,
+                total_chunks=1,
+                total_embeddings=1,
+                pages_ocred=0,
+                processing_time=0.1,
+                status="processed",
+                collection=collection,
+            )
+
+        monkeypatch.setattr(DocumentProcessingService, "process", fake_process)
+        response = client.post(
+            "/upload",
+            headers=VALID_HEADERS,
+            files={"file": ("doc.pdf", MINIMAL_PDF_BYTES, "application/pdf")},
+            data={"collection": "finance"},
+        )
+        assert response.status_code == 201
+        assert response.json()["collection"] == "finance"
 
 
 class TestChat:
@@ -563,3 +623,218 @@ class TestListDocumentsAllTenants:
         response = client.get("/documents", params={"all_tenants": "true"}, headers=VALID_HEADERS)
 
         assert response.status_code == 200
+
+
+class TestDocumentImages:
+    """GET /documents/{id}/images and /documents/{id}/images/{image_id}
+    (multi-modal RAG, Phase 1): the listing is read from the per-document
+    manifest written at ingestion, and the fetch route serves the
+    persisted bytes. Same ownership model as DELETE — 404 for a
+    non-owner, unknown image, or missing bytes."""
+
+    def _seed_images(self, tmp_path, monkeypatch, document_id=SEEDED_DOCUMENT_ID):
+        monkeypatch.setattr(settings, "data_dir_override", str(tmp_path))
+        from app.services.image_captioning_service import write_image_manifest
+
+        image_dir = tmp_path / settings.image_storage_dir_name
+        image_dir.mkdir(parents=True, exist_ok=True)
+        png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        (image_dir / f"{document_id}_img_1.png").write_bytes(png)
+        write_image_manifest(
+            [
+                ExtractedImage(
+                    image_id=f"{document_id}_img_1",
+                    document_id=document_id,
+                    page_number=3,
+                    content_type="figure",
+                    storage_path=f"{document_id}_img_1.png",
+                    mime_type="image/png",
+                    width=300,
+                    height=200,
+                    byte_size=len(png),
+                )
+            ]
+        )
+        return png
+
+    def test_lists_extracted_images(self, client, tmp_path, monkeypatch):
+        png = self._seed_images(tmp_path, monkeypatch)
+
+        response = client.get(f"/documents/{SEEDED_DOCUMENT_ID}/images", headers=VALID_HEADERS)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert_matches_schema(DocumentImagesResponse, payload)
+        assert payload["document_id"] == SEEDED_DOCUMENT_ID
+        assert payload["total"] == 1
+        item = payload["images"][0]
+        assert item["image_id"] == f"{SEEDED_DOCUMENT_ID}_img_1"
+        assert item["page_number"] == 3
+        assert item["content_type"] == "figure"
+        assert item["byte_size"] == len(png)
+        assert item["url"] == (
+            f"/documents/{SEEDED_DOCUMENT_ID}/images/{SEEDED_DOCUMENT_ID}_img_1"
+        )
+
+    def test_serves_image_bytes(self, client, tmp_path, monkeypatch):
+        png = self._seed_images(tmp_path, monkeypatch)
+
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/images/{SEEDED_DOCUMENT_ID}_img_1",
+            headers=VALID_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"
+        assert response.content == png
+
+    def test_no_images_returns_empty_list(self, client):
+        response = client.get(f"/documents/{SEEDED_DOCUMENT_ID}/images", headers=VALID_HEADERS)
+        assert response.status_code == 200
+        assert response.json() == {
+            "document_id": SEEDED_DOCUMENT_ID,
+            "total": 0,
+            "images": [],
+        }
+
+    def test_unknown_image_returns_404(self, client, tmp_path, monkeypatch):
+        self._seed_images(tmp_path, monkeypatch)
+
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/images/nope", headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 404
+
+    def test_missing_bytes_returns_404(self, client, tmp_path, monkeypatch):
+        # Manifest claims an image whose bytes were cleaned off disk.
+        self._seed_images(tmp_path, monkeypatch)
+        image_dir = tmp_path / settings.image_storage_dir_name
+        (image_dir / f"{SEEDED_DOCUMENT_ID}_img_1.png").unlink()
+
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/images/{SEEDED_DOCUMENT_ID}_img_1",
+            headers=VALID_HEADERS,
+        )
+
+        assert response.status_code == 404
+
+    def test_requires_auth(self, client, tmp_path, monkeypatch):
+        self._seed_images(tmp_path, monkeypatch)
+
+        assert client.get(f"/documents/{SEEDED_DOCUMENT_ID}/images").status_code == 401
+
+    def test_wrong_tenant_cannot_list_images(self, client, tmp_path, monkeypatch):
+        self._seed_images(tmp_path, monkeypatch)
+        # DB disabled (this fixture's default) leaves tenant_id None, so
+        # simulate a DB-enabled, multi-tenant request the same way
+        # TestDeleteDocument does.
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
+        monkeypatch.setattr(
+            "app.api.v1.routes.documents.get_document_owner", lambda document_id: 2
+        )
+
+        response = client.get(f"/documents/{SEEDED_DOCUMENT_ID}/images", headers=VALID_HEADERS)
+
+        # 404, not 403 — a non-owner gets the same response as "doesn't exist".
+        assert response.status_code == 404
+
+    def test_same_tenant_can_list_images(self, client, tmp_path, monkeypatch):
+        self._seed_images(tmp_path, monkeypatch)
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
+        monkeypatch.setattr(
+            "app.api.v1.routes.documents.get_document_owner", lambda document_id: 1
+        )
+
+        response = client.get(f"/documents/{SEEDED_DOCUMENT_ID}/images", headers=VALID_HEADERS)
+
+        assert response.status_code == 200
+
+
+class TestPdfPreviewRoutes:
+    """Agent 4.1 — in-app PDF citation preview: the raw-file route and the
+    per-page text-highlight route. Uses real PyMuPDF-generated PDFs (a
+    fake byte string wouldn't parse), written under tmp_path with
+    documents.py's UPLOAD_DIR patched to point there."""
+
+    def _seed_pdf(self, tmp_path, monkeypatch, document_id=SEEDED_DOCUMENT_ID):
+        import fitz
+
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr("app.api.v1.routes.documents.UPLOAD_DIR", upload_dir)
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Project scope boundaries")
+        doc.save(str(upload_dir / f"{document_id}.pdf"))
+        doc.close()
+
+    def test_get_document_file_returns_pdf_bytes(self, client, tmp_path, monkeypatch):
+        self._seed_pdf(tmp_path, monkeypatch)
+        response = client.get(f"/documents/{SEEDED_DOCUMENT_ID}/file", headers=VALID_HEADERS)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.content.startswith(b"%PDF")
+
+    def test_get_document_file_404_for_unknown_document(self, client, tmp_path, monkeypatch):
+        self._seed_pdf(tmp_path, monkeypatch)
+        response = client.get("/documents/does-not-exist/file", headers=VALID_HEADERS)
+        assert response.status_code == 404
+
+    def test_page_highlight_finds_text(self, client, tmp_path, monkeypatch):
+        self._seed_pdf(tmp_path, monkeypatch)
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/pages/1/highlight",
+            params={"text": "scope"},
+            headers=VALID_HEADERS,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["page_number"] == 1
+        assert body["page_width"] > 0
+        assert body["page_height"] > 0
+        assert len(body["rects"]) >= 1
+        assert all(len(r) == 4 for r in body["rects"])
+
+    def test_page_highlight_empty_when_text_absent(self, client, tmp_path, monkeypatch):
+        self._seed_pdf(tmp_path, monkeypatch)
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/pages/1/highlight",
+            params={"text": "zzzznotpresent"},
+            headers=VALID_HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["rects"] == []
+
+    def test_page_highlight_404_out_of_range_page(self, client, tmp_path, monkeypatch):
+        self._seed_pdf(tmp_path, monkeypatch)
+        response = client.get(
+            f"/documents/{SEEDED_DOCUMENT_ID}/pages/99/highlight",
+            params={"text": "scope"},
+            headers=VALID_HEADERS,
+        )
+        assert response.status_code == 404
+
+
+class TestAdminUsageSummary:
+    """Agent 4.2 — admin-only usage analytics. DB is disabled in this
+    fixture, so the aggregation is untestable here; what IS tested is the
+    permission gate (the RBAC behavior this feature adds)."""
+
+    def test_denied_without_admin_role(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "member"))
+        response = client.get("/admin/usage-summary", headers=VALID_HEADERS)
+        assert response.status_code == 403
+
+    def test_denied_with_no_role_info(self, client):
+        # DB disabled: role is None — analytics defaults to denied (it has
+        # no pre-RBAC history to fall back to, unlike DOCUMENT_DELETE).
+        response = client.get("/admin/usage-summary", headers=VALID_HEADERS)
+        assert response.status_code == 403
+
+    def test_allowed_for_admin_returns_empty_rows_when_db_disabled(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
+        response = client.get("/admin/usage-summary", headers=VALID_HEADERS)
+        assert response.status_code == 200
+        assert response.json() == {"rows": []}

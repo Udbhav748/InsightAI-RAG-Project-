@@ -15,6 +15,7 @@ on:
         options:
           - dataset_v1.json
           - dataset_v2.json
+          - dataset_v3.json
       llm_provider:
         description: "LLM provider to use (must match backend/.env values)"
         required: true

@@ -6,6 +6,25 @@ Pydantic response models, and pytest_terminal_summary prints the
 resulting compliance rate in the final test report.
 """
 
+import os
+
+# Force DB-disabled for the whole test session, regardless of whatever
+# backend/.env has DATABASE_URL set to for live/manual use. Every test in
+# this suite that needs DB-backed behavior (tenant/role resolution,
+# session listing, ownership checks, ...) already mocks the specific
+# function it needs (resolve_tenant, get_document_owner, etc.) rather
+# than hitting a real database — that's this suite's one, consistent
+# convention, not an exception. A real DATABASE_URL in the ambient
+# environment has broken this twice already (once from a stray local
+# Postgres/SQLite value, once from that value silently making individual
+# user login "work" in tests that assumed it couldn't) — this line makes
+# that class of bug structurally impossible instead of trusting everyone
+# sharing this environment to remember to unset it by hand. Must run
+# before any `app.*` import anywhere (conftest.py is always the first
+# thing pytest loads in this directory, before test collection), since
+# Settings() and database.py's engine are both built once at import time.
+os.environ["DATABASE_URL"] = ""
+
 SCHEMA_COMPLIANCE = {"total": 0, "passed": 0}
 
 
