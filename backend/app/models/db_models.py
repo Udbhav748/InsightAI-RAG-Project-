@@ -88,6 +88,17 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Null until the first POST /auth/logout (see user_service.
+    # revoke_all_tokens). decode_access_token treats any JWT whose `iat`
+    # predates this timestamp as invalid — a stateless JWT can't be
+    # revoked any other way, and this needs no per-token bookkeeping
+    # (one column, not a growing blocklist table): every token issued
+    # before the user's most recent logout dies at once, which is the
+    # simple, correct semantic for an app with no refresh-token/session
+    # list.
+    tokens_revoked_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     tenant: Mapped["Tenant"] = relationship(back_populates="users")
 

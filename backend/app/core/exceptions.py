@@ -40,6 +40,22 @@ class RateLimitExceededError(AppError):
     error_code = "RATE_LIMIT_EXCEEDED"
 
 
+class AccountLockedError(AppError):
+    """Too many failed login attempts for this email within
+    Settings.login_lockout_window_seconds (see user_service.py's
+    _is_locked_out) — checked before the password is even compared.
+
+    Same status code as RateLimitExceededError (a caller that's locked
+    out is, like a rate-limited one, well-formed but temporarily
+    rejected) but a distinct error_code: this is keyed by the *account*
+    under attack, not the caller, so it survives an attacker rotating
+    IPs the way an IP-keyed limiter alone would not."""
+
+    status_code = 429
+    taxonomy_category = "rate_limit"
+    error_code = "ACCOUNT_LOCKED"
+
+
 class UnsupportedFileTypeError(AppError):
     status_code = 415
     taxonomy_category = "input"

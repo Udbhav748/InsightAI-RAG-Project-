@@ -13,7 +13,10 @@ app/core/auth.py's require_auth for how an issued JWT gets back to
 """
 
 import logging
+import threading
+import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -22,6 +25,7 @@ import jwt
 from app.core.config import settings
 from app.core.database import SessionLocal, db_enabled
 from app.core.exceptions import (
+    AccountLockedError,
     AuthConfigurationError,
     DatabaseNotConfiguredError,
     EmailAlreadyRegisteredError,
@@ -31,6 +35,73 @@ from app.models.db_models import Tenant, User
 from app.services.tenant_service import effective_role
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _LoginAttemptBucket:
+    """Sliding-window failed-login counter for a single email — mirrors
+    core/auth.py's _RateLimitBucket, but keyed by the account under
+    attack rather than the caller, so it survives an attacker rotating
+    IPs (or, pre-TRUSTED_PROXY_IPS, spoofing X-Forwarded-For)."""
+
+    failures: list[float] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def is_locked(self, max_attempts: int, window_sec: int) -> bool:
+        now = time.time()
+        with self.lock:
+            cutoff = now - window_sec
+            self.failures = [ts for ts in self.failures if ts > cutoff]
+            return len(self.failures) >= max_attempts
+
+    def record_failure(self) -> None:
+        with self.lock:
+            self.failures.append(time.time())
+
+
+# Global per-email lockout store (in-memory, mirrors core/auth.py's
+# _rate_limit_store). Capped to _FAILED_LOGIN_STORE_MAX distinct emails
+# so an attacker submitting many different addresses can't grow this
+# dict without bound — the oldest idle entry is evicted on a miss once
+# the cap is hit.
+_FAILED_LOGIN_STORE_MAX = 1000
+_failed_login_store: dict[str, _LoginAttemptBucket] = {}
+_failed_login_lock = threading.Lock()
+
+
+def _get_or_create_bucket(email: str) -> _LoginAttemptBucket:
+    with _failed_login_lock:
+        bucket = _failed_login_store.get(email)
+        if bucket is None:
+            if len(_failed_login_store) >= _FAILED_LOGIN_STORE_MAX:
+                oldest = min(
+                    _failed_login_store,
+                    key=lambda e: (
+                        _failed_login_store[e].failures[0]
+                        if _failed_login_store[e].failures
+                        else 0.0
+                    ),
+                    default=email,
+                )
+                _failed_login_store.pop(oldest, None)
+            bucket = _LoginAttemptBucket()
+            _failed_login_store[email] = bucket
+        return bucket
+
+
+def _is_locked_out(email: str) -> bool:
+    return _get_or_create_bucket(email).is_locked(
+        settings.login_lockout_max_attempts, settings.login_lockout_window_seconds
+    )
+
+
+def _record_failed_attempt(email: str) -> None:
+    _get_or_create_bucket(email).record_failure()
+
+
+def _clear_failed_attempts(email: str) -> None:
+    with _failed_login_lock:
+        _failed_login_store.pop(email, None)
 
 
 def _session():
@@ -92,15 +163,27 @@ def create_user(email: str, password: str) -> tuple[int, int, str]:
 def authenticate_user(email: str, password: str) -> tuple[int, int, str]:
     """Verify email/password. Returns (user_id, tenant_id, role).
 
-    Raises UnauthorizedError on any mismatch — deliberately the same
-    error and message for "no such email" and "wrong password" so a
-    caller can't enumerate registered emails from the response alone.
+    Raises AccountLockedError before touching the database at all if
+    this email has too many recent failures (Settings.
+    login_lockout_max_attempts/login_lockout_window_seconds) — checked
+    first, and independent of _session()'s DATABASE_URL guard, so a
+    locked-out account is rejected the same way regardless of DB state,
+    and a repeated attack doesn't cost a query + bcrypt comparison each
+    time. Raises UnauthorizedError on any other mismatch — deliberately
+    the same error and message for "no such email" and "wrong password"
+    so a caller can't enumerate registered emails from the response
+    alone.
     """
+    if _is_locked_out(email):
+        raise AccountLockedError("Too many failed login attempts. Try again in a few minutes.")
+
     with _session() as db:
         user = db.query(User).filter(User.email == email).first()
         if user is None or not _verify_password(password, user.password_hash):
+            _record_failed_attempt(email)
             raise UnauthorizedError("Invalid email or password.")
 
+        _clear_failed_attempts(email)
         tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
         stored_role = tenant.role if tenant is not None else "member"
         return user.id, user.tenant_id, effective_role(email, stored_role)
@@ -139,13 +222,59 @@ def create_access_token(user_id: int, email: str) -> str:
 
 def decode_access_token(token: str) -> int | None:
     """Return the user_id encoded in a valid, unexpired token, or None
-    if the token is missing, expired, malformed, or signed with a
-    different secret. Never raises — require_auth treats None as "not a
-    JWT-authenticated request" and falls through to the API-key path."""
+    if the token is missing, expired, malformed, signed with a different
+    secret, or was issued before the user's most recent POST /auth/logout
+    (see revoke_all_tokens below). Never raises — require_auth treats
+    None as "not a JWT-authenticated request" and falls through to the
+    API-key path.
+
+    The revocation check only runs when the DB is enabled: a JWT issued
+    at all implies DB-backed login was available at issuance time (see
+    create_user/authenticate_user's own _session() guard), but a
+    deployment could disable DATABASE_URL between issuance and use, and
+    degrading to "no revocation possible" (same as never having called
+    logout) is safer than raising here — require_auth would otherwise
+    turn a config change into a hard failure for every existing session.
+    """
     if not settings.jwt_secret_key:
         return None
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
-        return int(payload["sub"])
+        user_id = int(payload["sub"])
+        issued_at = payload["iat"]
     except (jwt.PyJWTError, KeyError, ValueError):
         return None
+
+    if db_enabled():
+        with _session() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user is not None and user.tokens_revoked_after is not None:
+                issued_at_dt = datetime.fromtimestamp(issued_at, tz=UTC)
+                if issued_at_dt < user.tokens_revoked_after:
+                    return None
+
+    return user_id
+
+
+def revoke_all_tokens(user_id: int) -> None:
+    """Invalidate every JWT previously issued to this user, effective
+    immediately — called by POST /auth/logout. Sets
+    User.tokens_revoked_after to now(); decode_access_token rejects any
+    token whose `iat` predates it. One column, not a growing per-token
+    blocklist: this app issues one active token shape per user (no
+    refresh tokens), so "kill everything issued before this instant" is
+    the correct, simplest semantic for "log out".
+
+    A no-op (not an error) when the DB is disabled or the user doesn't
+    exist — logout degrading to "client-side token discard only" (the
+    previous behavior) is the right fallback, not a failure the caller
+    needs to handle.
+    """
+    if not db_enabled():
+        return
+    with _session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            return
+        user.tokens_revoked_after = datetime.now(UTC)
+        db.commit()

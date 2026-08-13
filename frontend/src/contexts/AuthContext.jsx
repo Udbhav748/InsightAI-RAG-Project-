@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getMe, login as loginRequest, signup as signupRequest } from '../services/authService'
+import {
+  getMe,
+  login as loginRequest,
+  logout as logoutRequest,
+  signup as signupRequest,
+} from '../services/authService'
 import { AUTH_TOKEN_KEY } from '../services/api'
 import { AuthContext } from './auth-context'
 
@@ -43,6 +48,14 @@ export default function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(() => {
+    // Fire the revoke request first: api.js's interceptor reads the
+    // token from localStorage synchronously when this call is made, so
+    // it must go out before that token is removed below or the backend
+    // would have nothing to revoke. Best-effort — logoutRequest's own
+    // .catch swallows failures — because local state clears either way;
+    // a failed revoke just means the token stays valid until its own
+    // expiry, same as today's client-only logout.
+    logoutRequest().catch(() => {})
     window.localStorage.removeItem(AUTH_TOKEN_KEY)
     setUser(null)
   }, [])

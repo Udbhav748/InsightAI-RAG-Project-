@@ -181,9 +181,28 @@ class Settings(BaseSettings):
     # How long an issued JWT stays valid, in minutes. Default 24h — long
     # enough that a web session survives a normal browsing gap without
     # needing a refresh-token flow, which this app deliberately doesn't
-    # have yet (proportionate to a single-token, no-revocation-list
-    # design; revisit if session lifetime needs to shrink).
+    # have yet. Revocation for the full 24h window is handled separately
+    # by POST /auth/logout (see user_service.revoke_all_tokens) rather
+    # than by shortening this, so a token stays convenient to use but is
+    # still killable on demand.
     jwt_expiry_minutes: int = 1440
+
+    # Max failed login attempts for one email within
+    # login_lockout_window_seconds before further attempts are rejected
+    # outright (AccountLockedError) — checked before the password is even
+    # compared. Keyed by the *account* being attacked
+    # (user_service.py's _is_locked_out), not the caller's IP, so it
+    # closes the gap the IP-only limiters (core/auth.py's per-identity
+    # limiter, core/security.py's per-IP one) leave open: an attacker who
+    # rotates IPs can otherwise brute-force one account indefinitely as
+    # long as each individual IP stays under its own limit.
+    login_lockout_max_attempts: int = 5
+
+    # Sliding window (seconds) the attempt count above is measured over.
+    # A locked-out account becomes attemptable again as its oldest
+    # recorded failure ages out of this window — no separate unlock step
+    # needed. 15 minutes.
+    login_lockout_window_seconds: int = 900
 
     # Per-IP rate limit for unauthenticated endpoints (auth/signup,
     # auth/login — the brute-force surface), and the per-identity limit

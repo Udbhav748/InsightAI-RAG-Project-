@@ -18,7 +18,12 @@ from app.models.schemas import (
     LoginRequest,
     SignupRequest,
 )
-from app.services.user_service import authenticate_user, create_access_token, create_user
+from app.services.user_service import (
+    authenticate_user,
+    create_access_token,
+    create_user,
+    revoke_all_tokens,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 logger = logging.getLogger(__name__)
@@ -62,6 +67,25 @@ def login(payload: LoginRequest) -> AuthTokenResponse:
     )
     token = create_access_token(user_id, payload.email)
     return AuthTokenResponse(access_token=token)
+
+
+@router.post("/logout", status_code=204, dependencies=[Depends(require_auth)])
+def logout(request: Request) -> None:
+    """Invalidate every JWT previously issued to the caller (see
+    user_service.revoke_all_tokens) — real server-side logout, not just
+    the client discarding its token. request.state.user_id is only set
+    on the JWT auth path (see require_auth); an API-key caller has no
+    token to revoke, so this is a no-op for them rather than an error —
+    hitting this endpoint with the wrong credential type isn't a
+    mistake worth surfacing, just nothing to do.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is not None:
+        revoke_all_tokens(user_id)
+        logger.info(
+            "audit_event",
+            extra={"extra_fields": {"event": "user_logged_out", "user_id": user_id}},
+        )
 
 
 @router.get("/me", response_model=CurrentUserResponse, dependencies=[Depends(require_auth)])

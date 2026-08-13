@@ -105,6 +105,43 @@ class TestLogin:
         assert response.status_code == 401
 
 
+class TestLogout:
+    def test_jwt_caller_revokes_and_returns_204(self, client, monkeypatch):
+        monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
+        monkeypatch.setattr(
+            "app.core.auth.get_user_by_id", lambda user_id: ("a@example.com", 10, "member")
+        )
+        calls = []
+        monkeypatch.setattr(
+            "app.api.v1.routes.auth.revoke_all_tokens", lambda user_id: calls.append(user_id)
+        )
+
+        response = client.post("/auth/logout", headers={"Authorization": "Bearer fake-jwt-token"})
+
+        assert response.status_code == 204
+        assert calls == [1]
+
+    def test_api_key_caller_is_a_noop(self, client, monkeypatch):
+        # No token to revoke on the API-key path (request.state.user_id
+        # is None there — see require_auth) — must not error or call
+        # revoke_all_tokens with a nonsensical id.
+        from app.core.config import settings
+
+        calls = []
+        monkeypatch.setattr(
+            "app.api.v1.routes.auth.revoke_all_tokens", lambda user_id: calls.append(user_id)
+        )
+
+        response = client.post("/auth/logout", headers={"X-API-Key": settings.api_key})
+
+        assert response.status_code == 204
+        assert calls == []
+
+    def test_no_credentials_returns_401(self, client):
+        response = client.post("/auth/logout")
+        assert response.status_code == 401
+
+
 class TestMe:
     def test_valid_bearer_token_returns_identity(self, client, monkeypatch):
         monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
