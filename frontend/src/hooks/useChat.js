@@ -215,7 +215,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
     [fetchAnswer]
   )
 
-  const regenerate = useCallback(() => {
+  const regenerate = useCallback((persona) => {
     if (!lastQueryRef.current || isSending) return
     const history = historyBeforeQuery(messagesRef.current, lastQueryRef.current)
     setMessages((current) => {
@@ -225,7 +225,10 @@ export default function useChat(initialSessionId, initialDocumentIds) {
       }
       return current
     })
-    fetchAnswer(lastQueryRef.current, history)
+    // Reuse the persona that was active for the original turn. ask() already
+    // forwards it from ChatInput; regenerate did not, so a regenerate silently
+    // dropped personality and fell back to the default prompt.
+    fetchAnswer(lastQueryRef.current, history, persona)
   }, [fetchAnswer, isSending])
 
   // Clear session (start fresh conversation)

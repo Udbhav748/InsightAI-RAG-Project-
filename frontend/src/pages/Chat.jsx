@@ -50,10 +50,25 @@ export default function Chat() {
   )
   const [persona, setPersona] = useState('')
   const bottomRef = useRef(null)
+  const containerRef = useRef(null)
+  // Whether the user is (roughly) scrolled to the bottom of the chat — when
+  // true we auto-follow new messages; when they've scrolled up to read prior
+  // turns, the per-chunk append during streaming no longer yanks them back
+  // down (the original [messages, isSending] effect scrolled on every chunk).
+  const isAtBottomRef = useRef(true)
+
+  const handleScroll = () => {
+    const el = containerRef.current
+    if (!el) return
+    const { scrollHeight, scrollTop, clientHeight } = el
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 80
+  }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, isSending])
+    if (isAtBottomRef.current && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ block: 'end' })
+    }
+  }, [messages])
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportMenuRef = useRef(null)
@@ -198,7 +213,7 @@ export default function Chat() {
         </div>
       )}
 
-      <div className="flex-1 space-y-5 overflow-y-auto px-1 py-4 sm:px-3 print:hidden">
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 space-y-5 overflow-y-auto px-1 py-4 sm:px-3 print:hidden">
         {isLoadingSession ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400 dark:text-ink-muted">
             <ProgressBar indeterminate className="h-1.5 w-40" />
@@ -231,7 +246,7 @@ export default function Chat() {
                 key={message.id}
                 message={message}
                 isLast={message.id === lastAssistantId}
-                onRegenerate={regenerate}
+                onRegenerate={() => regenerate(persona)}
                 isRegenerating={isSending}
                 onFollowUpClick={(q) => ask(q, persona)}
                 query={queryFor(message)}
