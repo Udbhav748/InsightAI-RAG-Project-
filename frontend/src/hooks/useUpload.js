@@ -46,8 +46,10 @@ export default function useUpload() {
       setStatus('uploading')
       setProgress(0)
       setErrorMessage('')
-      abortControllerRef.current?.abort()
-      const signal = (abortControllerRef.current = new AbortController()).signal
+       abortControllerRef.current?.abort()
+       const controller = new AbortController()
+       abortControllerRef.current = controller
+       const signal = controller.signal
 
       try {
         const result = await uploadDocument(file, setProgress, collection, signal)
@@ -77,7 +79,12 @@ export default function useUpload() {
         setErrorMessage(message)
         showToast(message, 'error')
       } finally {
-        abortControllerRef.current = null
+        // Only clear if no newer upload has replaced this controller — the
+        // finally of a deliberately-cancelled (aborted) upload must not null
+        // out a still-in-flight newer one and defeat its unmount abort.
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null
+        }
       }
     },
     [file, showToast]
