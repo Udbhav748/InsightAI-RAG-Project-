@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { LogOut, Menu, Search, Settings, User } from 'lucide-react'
+import { LogOut, Menu, Search, Settings, Shield, User } from 'lucide-react'
 import useAuth from '../../hooks/useAuth'
 
 const TITLES = {
@@ -12,6 +12,7 @@ const TITLES = {
   '/upload': 'Upload Document',
   '/documents': 'Documents',
   '/settings': 'Settings',
+  '/admin': 'Admin',
 }
 
 // ⌘K on macOS, Ctrl+K everywhere else — match the hint to the actual
@@ -56,6 +57,11 @@ export default function Navbar({ onMenuClick, onSearchClick }) {
   const goToSettings = () => {
     setProfileOpen(false)
     navigate('/settings')
+  }
+
+  const goToAdmin = () => {
+    setProfileOpen(false)
+    navigate('/admin')
   }
 
   return (
@@ -129,6 +135,17 @@ export default function Navbar({ onMenuClick, onSearchClick }) {
                   <Settings size={14} strokeWidth={1.75} />
                   Settings
                 </button>
+                {user?.role === 'admin' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={goToAdmin}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-600 transition-colors hover:bg-slate-100 dark:text-ink-secondary dark:hover:bg-white/[0.05]"
+                  >
+                    <Shield size={14} strokeWidth={1.75} />
+                    Admin
+                  </button>
+                )}
                 <button
                   type="button"
                   role="menuitem"

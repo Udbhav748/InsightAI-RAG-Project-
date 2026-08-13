@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -8,12 +8,14 @@ import {
   LogOut,
   MessageSquarePlus,
   Settings,
+  Shield,
   UploadCloud,
   X,
 } from 'lucide-react'
 import ThemeToggle from '../ui/ThemeToggle'
 import Logo from '../ui/Logo'
 import useAuth from '../../hooks/useAuth'
+import { listApprovals } from '../../services/adminService'
 
 const NAV_ITEMS = [
   { to: '/chat', label: 'New Chat', icon: MessageSquarePlus },
@@ -32,6 +34,26 @@ const navItemClass = ({ isActive }) =>
 
 function SidebarContent({ onNavigate }) {
   const { user, logout } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const [pendingApprovals, setPendingApprovals] = useState(0)
+
+  // Pending-approval count is what makes the Admin nav entry worth
+  // noticing at a glance, not just another link — without it an admin has
+  // no signal that anything is waiting on them short of visiting the page.
+  useEffect(() => {
+    if (!isAdmin) return undefined
+    let active = true
+    listApprovals({ status: 'pending' })
+      .then((data) => {
+        if (active) setPendingApprovals(data.approvals?.length ?? 0)
+      })
+      .catch(() => {
+        // Non-critical — the badge just stays at 0 if this fails.
+      })
+    return () => {
+      active = false
+    }
+  }, [isAdmin])
 
   return (
     <div className="flex h-full flex-col">
@@ -55,6 +77,17 @@ function SidebarContent({ onNavigate }) {
       </nav>
 
       <div className="space-y-0.5 border-t border-border-light px-3 pb-5 pt-3 dark:border-border">
+        {isAdmin && (
+          <NavLink to="/admin" onClick={onNavigate} className={navItemClass}>
+            <Shield size={17} strokeWidth={1.75} />
+            <span className="flex-1">Admin</span>
+            {pendingApprovals > 0 && (
+              <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-semibold text-white">
+                {pendingApprovals}
+              </span>
+            )}
+          </NavLink>
+        )}
         <NavLink to="/settings" onClick={onNavigate} className={navItemClass}>
           <Settings size={17} strokeWidth={1.75} />
           Settings
