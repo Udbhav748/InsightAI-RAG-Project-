@@ -87,8 +87,8 @@ export default function ChatBubble({ message, isLast, onRegenerate, isRegenerati
             <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
               Low confidence — double-check this against the source.
             </p>
-        )}
-      </div>
+          )}
+        </div>
 
       {!isUser && !message.isStreaming && (
         <>

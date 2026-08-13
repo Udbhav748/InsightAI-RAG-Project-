@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Camera,
@@ -57,7 +57,11 @@ function SidebarContent({ onNavigate }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2.5 px-5 pb-6 pt-6">
+      <Link
+        to="/"
+        onClick={onNavigate}
+        className="flex items-center gap-2.5 rounded-lg px-5 pb-6 pt-6 transition-opacity hover:opacity-80"
+      >
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500">
           <Logo size={17} />
         </span>
@@ -65,7 +69,7 @@ function SidebarContent({ onNavigate }) {
           <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">InsightAI</p>
           <p className="text-[11px] text-slate-400 dark:text-ink-muted">Document Intelligence</p>
         </div>
-      </div>
+      </Link>
 
       <nav className="flex-1 space-y-0.5 px-3">
         {NAV_ITEMS.map(({ to, label, icon: Icon }) => (

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { UserPlus } from 'lucide-react'
+import { Eye, EyeOff, UserPlus } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Logo from '../components/ui/Logo'
@@ -13,6 +13,7 @@ export default function Signup() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -73,16 +74,26 @@ export default function Signup() {
               >
                 Password
               </label>
-              <input
-                id="password"
-                type="password"
-                required
-                minLength={8}
-                autoComplete="new-password"
-                className="input"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                  className="input pr-10"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:text-ink-muted dark:hover:text-ink-secondary"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               <p className="mt-1 text-[11px] text-slate-400 dark:text-ink-muted">At least 8 characters.</p>
             </div>
 

@@ -46,7 +46,13 @@ function formatDate(iso) {
 
 function effectiveStatus(doc) {
   if (doc.status === 'processed' && doc.total_chunks === 0) return 'warning'
-  return doc.status ?? 'uploaded'
+  // doc.status only exists on the richer upload-response shape (merged in
+  // from local history for anything this browser uploaded itself — see
+  // mergeDocuments above). A doc with no local match came from GET
+  // /documents alone, which only ever lists documents the server has
+  // already fully indexed — defaulting that case to 'uploaded' read as
+  // "still processing" for a document that's actually chat-ready.
+  return doc.status ?? 'processed'
 }
 
 const SORT_OPTIONS = [

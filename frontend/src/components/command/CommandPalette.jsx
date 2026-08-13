@@ -17,6 +17,13 @@ import {
 import useTheme from '../../hooks/useTheme'
 import { listSessions } from '../../services/chatService'
 
+// Mirrors components/ui/Modal.jsx's own focus-trap selector — kept as a
+// separate copy rather than imported since Modal doesn't export it, and
+// this component doesn't render through Modal (it needs its own list/input
+// layout Modal's title+footer chrome doesn't fit).
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /**
  * Global Cmd/Ctrl+K palette — jump to any page, toggle theme, or resume a
  * past conversation by title, all from one place. Opened from AppLayout's
@@ -35,6 +42,8 @@ export default function CommandPalette({ open, onClose }) {
   const [sessions, setSessions] = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef(null)
+  const dialogRef = useRef(null)
+  const itemRefs = useRef([])
 
   const staticItems = useMemo(
     () => [
@@ -65,6 +74,53 @@ export default function CommandPalette({ open, onClose }) {
     // in, so the input isn't focusable until the next frame.
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [open])
+
+  // Focus trap + background-scroll lock, same pattern as ui/Modal.jsx —
+  // this palette is a global, frequently-used surface (Cmd/Ctrl+K from
+  // anywhere), so Tab must not be able to walk focus into the page behind
+  // the backdrop, and the page underneath must not scroll while it's open.
+  useEffect(() => {
+    if (!open) return undefined
+
+    const focusables = () => Array.from(dialogRef.current?.querySelectorAll(FOCUSABLE_SELECTOR) ?? [])
+
+    const handleTrapKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const items = focusables()
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleTrapKeyDown)
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.removeEventListener('keydown', handleTrapKeyDown)
+      document.body.style.overflow = ''
+    }
+  }, [open, onClose])
+
+  // Keep the keyboard-active item visible as arrow keys move it past the
+  // edge of the scrollable list — mirrors CitedAnswer.jsx's
+  // openAndScrollTo pattern for the same "active item may be off-screen"
+  // problem.
+  useEffect(() => {
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex])
 
   const sessionItems = useMemo(
     () =>
@@ -127,6 +183,7 @@ export default function CommandPalette({ open, onClose }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: -8, transition: { duration: 0.12 } }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            ref={dialogRef}
             className="glass-panel relative z-10 w-full max-w-lg overflow-hidden shadow-soft-lg"
             role="dialog"
             aria-modal="true"
@@ -153,6 +210,7 @@ export default function CommandPalette({ open, onClose }) {
                 filtered.map((item, index) => (
                   <button
                     key={item.id}
+                    ref={(el) => (itemRefs.current[index] = el)}
                     type="button"
                     onClick={() => runItem(item)}
                     onMouseEnter={() => setActiveIndex(index)}

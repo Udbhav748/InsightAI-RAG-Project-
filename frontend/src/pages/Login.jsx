@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn } from 'lucide-react'
+import { Eye, EyeOff, LogIn } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Logo from '../components/ui/Logo'
@@ -14,6 +14,7 @@ export default function Login() {
   const location = useLocation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -67,15 +68,25 @@ export default function Login() {
               >
                 Password
               </label>
-              <input
-                id="password"
-                type="password"
-                required
-                autoComplete="current-password"
-                className="input"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="current-password"
+                  className="input pr-10"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600 dark:text-ink-muted dark:hover:text-ink-secondary"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
 
             {error && <p className="text-xs text-danger">{error}</p>}

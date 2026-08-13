@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Download, FileDown, MessageCircle, Plus, Printer, UploadCloud } from 'lucide-react'
@@ -168,14 +168,18 @@ export default function Chat() {
 
   // For keyword highlighting in citation excerpts: each assistant message
   // is paired with the user question that produced it (the nearest
-  // preceding user message).
-  const queryFor = (message) => {
-    const index = messages.indexOf(message)
-    for (let i = index - 1; i >= 0; i -= 1) {
-      if (messages[i].role === 'user') return messages[i].content
+  // preceding user message). Precomputed once per messages change rather
+  // than re-walked per rendered bubble, which was O(n^2) over the
+  // conversation.
+  const precedingUserQuery = useMemo(() => {
+    const map = new Map()
+    let lastUserContent = ''
+    for (const message of messages) {
+      map.set(message.id, lastUserContent)
+      if (message.role === 'user') lastUserContent = message.content
     }
-    return ''
-  }
+    return map
+  }, [messages])
 
   return (
     <div
@@ -249,7 +253,7 @@ export default function Chat() {
                 onRegenerate={() => regenerate(persona)}
                 isRegenerating={isSending}
                 onFollowUpClick={(q) => ask(q, persona)}
-                query={queryFor(message)}
+                query={precedingUserQuery.get(message.id) ?? ''}
               />
             ))}
           </AnimatePresence>

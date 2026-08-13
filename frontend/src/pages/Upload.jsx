@@ -74,7 +74,7 @@ export default function Upload() {
 
             {status === 'error' && (
               <div className="flex justify-center">
-                <Button variant="secondary" onClick={startUpload}>
+                <Button variant="secondary" onClick={() => startUpload(collection.trim() || undefined)}>
                   Try again
                 </Button>
               </div>
