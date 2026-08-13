@@ -8,11 +8,11 @@ import {
   LogOut,
   MessageSquarePlus,
   Settings,
-  Sparkles,
   UploadCloud,
   X,
 } from 'lucide-react'
 import ThemeToggle from '../ui/ThemeToggle'
+import Logo from '../ui/Logo'
 import useAuth from '../../hooks/useAuth'
 
 const NAV_ITEMS = [
@@ -37,7 +37,7 @@ function SidebarContent({ onNavigate }) {
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-5 pb-6 pt-6">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500">
-          <Sparkles size={16} strokeWidth={1.75} />
+          <Logo size={17} />
         </span>
         <div className="leading-tight">
           <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">InsightAI</p>
@@ -91,7 +91,7 @@ export default function Sidebar({ isOpen, onClose }) {
   return (
     <>
       {/* Desktop: static column */}
-      <aside className="glass-panel sticky top-4 hidden h-[calc(100vh-2rem)] w-64 shrink-0 lg:block">
+      <aside className="glass-panel sticky top-4 hidden h-[calc(100vh-2rem)] w-64 shrink-0 lg:block print:hidden">
         <SidebarContent />
       </aside>
 

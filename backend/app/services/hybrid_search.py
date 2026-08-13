@@ -22,7 +22,9 @@ import time
 from rank_bm25 import BM25Okapi
 
 from app.core.config import settings
+from app.core.exceptions import ClipServiceError
 from app.models.document import RetrievedChunk
+from app.services import clip_client
 from app.services.embedding_service import embed_query
 
 logger = logging.getLogger(__name__)
@@ -109,8 +111,10 @@ def hybrid_search(
     candidate_k: int | None = None,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
+    image_vector_store=None,
 ) -> list[RetrievedChunk]:
-    """Fuse FAISS semantic search with BM25 lexical search.
+    """Fuse FAISS semantic search with BM25 lexical search, and (when CLIP
+    cross-modal retrieval is enabled) a third CLIP image-similarity signal.
 
     vector_store must be a FAISSVectorStore (or anything exposing the same
     .search()/.search_bm25() pair) — see the module docstring on why this
@@ -118,20 +122,33 @@ def hybrid_search(
 
     Pulls candidate_k results from each retriever (Settings.retrieval_candidate_k
     by default), min-max normalizes each set's scores independently, fuses
-    as Settings.hybrid_semantic_weight * semantic + (1 - that) * bm25 (0
-    contribution from whichever side didn't return a given chunk), dedupes
-    by chunk_id, and returns the top_k fused results. The returned
-    RetrievedChunk.score is the fused score (roughly 0-1, the same rough
-    scale as cosine similarity) — not either input score directly, so it
-    stays meaningful to retrieval_min_score filtering and
+    as a weighted sum (0 contribution from whichever side didn't return a
+    given chunk), dedupes by chunk_id, and returns the top_k fused results.
+    The returned RetrievedChunk.score is the fused score (roughly 0-1, the
+    same rough scale as cosine similarity) — not any input score directly,
+    so it stays meaningful to retrieval_min_score filtering and
     ChatService._grade_retrieval downstream.
 
-    tenant_id is passed through to both retrievers unchanged — see
+    Two-signal fusion (CLIP off / image_vector_store absent): score =
+    Settings.hybrid_semantic_weight * semantic + (1 - that) * bm25.
+
+    Three-signal fusion (Settings.clip_embedding_enabled and
+    image_vector_store given): the query is embedded *in CLIP space*
+    (embed_text via clip_client), run against the image store, and fused as
+    score = w_clip * clip + (1 - w_clip) * (w_sem * semantic + (1 - w_sem)
+    * bm25), where w_clip = Settings.hybrid_clip_weight and w_sem =
+    Settings.hybrid_semantic_weight. What comes back from the image side
+    are image-derived chunks (source="clip_image", text = the figure's
+    caption or a placeholder) — so a query that matches an image purely by
+    visual semantics can surface that figure's content even when no text
+    chunk overlaps lexically. clip_weight=0 or an unreachable CLIP service
+    reproduces the two-signal behavior exactly (degrade, not fail).
+
+    tenant_id is passed through to all retrievers unchanged — see
     FAISSVectorStore.search's docstring for its filtering semantics.
     """
     resolved_candidate_k = candidate_k if candidate_k is not None else settings.retrieval_candidate_k
     semantic_weight = settings.hybrid_semantic_weight
-    bm25_weight = 1.0 - semantic_weight
 
     start = time.perf_counter()
 
@@ -146,23 +163,66 @@ def hybrid_search(
         query, resolved_candidate_k, tenant_id=tenant_id, **search_kwargs
     )
 
+    # CLIP cross-modal signal (Phase 4) — opt-in, degrade-don't-fail.
+    clip_weight = 0.0
+    clip_results: list[RetrievedChunk] = []
+    if settings.clip_embedding_enabled and image_vector_store is not None:
+        clip_weight = settings.hybrid_clip_weight
+        try:
+            clip_query = clip_client.embed_text(query)
+            clip_results = image_vector_store.search(
+                clip_query.embedding, resolved_candidate_k, tenant_id=tenant_id, **search_kwargs
+            )
+        except ClipServiceError as exc:
+            logger.warning(
+                "clip_query_degraded",
+                extra={"extra_fields": {"error": str(exc), "query_length": len(query)}},
+            )
+            clip_results = []
+
     semantic_norm = _min_max_normalize([chunk.score for chunk in semantic_results])
     bm25_norm = _min_max_normalize([chunk.score for chunk in bm25_results])
+    clip_norm = _min_max_normalize([chunk.score for chunk in clip_results])
 
     fused: dict[str, dict] = {}
     for chunk, norm_score in zip(semantic_results, semantic_norm):
-        fused[chunk.chunk_id] = {"chunk": chunk, "semantic": norm_score, "bm25": 0.0}
+        fused[chunk.chunk_id] = {
+            "chunk": chunk,
+            "semantic": norm_score,
+            "bm25": 0.0,
+            "clip": 0.0,
+        }
     for chunk, norm_score in zip(bm25_results, bm25_norm):
         entry = fused.get(chunk.chunk_id)
         if entry is None:
-            fused[chunk.chunk_id] = {"chunk": chunk, "semantic": 0.0, "bm25": norm_score}
+            fused[chunk.chunk_id] = {
+                "chunk": chunk,
+                "semantic": 0.0,
+                "bm25": norm_score,
+                "clip": 0.0,
+            }
         else:
             entry["bm25"] = norm_score
+    for chunk, norm_score in zip(clip_results, clip_norm):
+        entry = fused.get(chunk.chunk_id)
+        if entry is None:
+            fused[chunk.chunk_id] = {
+                "chunk": chunk,
+                "semantic": 0.0,
+                "bm25": 0.0,
+                "clip": norm_score,
+            }
+        else:
+            entry["clip"] = norm_score
 
-    scored = [
-        (entry["chunk"], semantic_weight * entry["semantic"] + bm25_weight * entry["bm25"])
-        for entry in fused.values()
-    ]
+    def _blend(entry: dict) -> float:
+        text_blend = semantic_weight * entry["semantic"] + (1.0 - semantic_weight) * entry["bm25"]
+        if clip_weight > 0.0:
+            # Scale the text blend down so three-way weights sum to 1.
+            return clip_weight * entry["clip"] + (1.0 - clip_weight) * text_blend
+        return text_blend
+
+    scored = [(entry["chunk"], _blend(entry)) for entry in fused.values()]
     scored.sort(key=lambda pair: pair[1], reverse=True)
 
     results = [chunk.model_copy(update={"score": score}) for chunk, score in scored[:top_k]]
@@ -177,6 +237,8 @@ def hybrid_search(
                 "top_k": top_k,
                 "semantic_candidate_count": len(semantic_results),
                 "bm25_candidate_count": len(bm25_results),
+                "clip_candidate_count": len(clip_results),
+                "clip_weight": clip_weight,
                 "fused_result_count": len(results),
                 "processing_duration": round(processing_duration, 4),
             }

@@ -11,7 +11,15 @@ from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.metrics import RequestTimer, get_metrics
 from app.core.request_context import request_id_var
-from app.api.v1.routes import admin, auth, documents, health, metrics as metrics_routes, query
+from app.api.v1.routes import (
+    admin,
+    approvals,
+    auth,
+    documents,
+    health,
+    metrics as metrics_routes,
+    query,
+)
 from app.services import s3_sync_service
 from app.services.demo_seed_service import seed_if_empty
 from app.services.tenant_service import seed_keys_from_settings
@@ -139,4 +147,5 @@ app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(admin.router)
+app.include_router(approvals.router)
 app.include_router(metrics_routes.router)

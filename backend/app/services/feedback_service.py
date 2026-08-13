@@ -22,6 +22,37 @@ FEEDBACK_PATH = FEEDBACK_DIR / settings.feedback_filename
 logger = logging.getLogger(__name__)
 
 
+def list_feedback(limit: int = 50, reviewer_id: str | None = None) -> list[dict]:
+    """Read back recorded feedback events, newest first (Feature #6).
+
+    Mirrors how eval/metrics_report.py consumes the same file — this is the
+    same JSONL, just surfaced as an API response for the app's own "recent
+    feedback" view. Best-effort: a missing, empty, or partially-corrupt
+    file yields whatever lines parsed (or []), never an exception — the
+    read-back surface must not be able to break the API when the file is
+    mid-write or absent on a fresh deployment.
+    """
+    if not FEEDBACK_PATH.exists():
+        return []
+    events: list[dict] = []
+    with FEEDBACK_PATH.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                # A truncated tail line can exist if the process was
+                # killed mid-write; skip it rather than failing the read.
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+    if reviewer_id is not None:
+        events = [e for e in events if e.get("reviewer_id") == reviewer_id]
+    return sorted(events, key=lambda e: e.get("timestamp", ""), reverse=True)[:limit]
+
+
 def record_feedback(
     message_id: str,
     rating: str,

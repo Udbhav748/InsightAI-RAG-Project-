@@ -18,6 +18,7 @@ from app.core.exceptions import VectorStoreNotFoundError
 from app.models.document import DocumentChunk, ExtractedDocument, ExtractedImage
 from app.models.schemas import DocumentProcessingResponse
 from app.services.chunking_service import chunk_document, chunk_text
+from app.services.clip_embedding_service import embed_images_to_store
 from app.services.document_repository import persist_document
 from app.services.document_service import extract_images_from_pdf, extract_text_from_pdf
 from app.services.embedding_service import generate_embeddings
@@ -85,13 +86,17 @@ def _persist_images(image_records: list[dict]) -> list[ExtractedImage]:
 
 
 class DocumentProcessingService:
-    def __init__(self, vector_store: VectorStore, llm_client: LLMClient | None = None):
+    def __init__(self, vector_store: VectorStore, llm_client: LLMClient | None = None, image_vector_store=None):
         self._vector_store = vector_store
         # Optional, only consulted when Settings.image_captioning_enabled:
         # captioning needs a vision-capable client, which needs a configured
         # LLM provider. None simply disables captioning (a warning is logged
         # at processing time if the flag demands it).
         self._llm_client = llm_client
+        # Optional, only consulted when Settings.clip_embedding_enabled:
+        # the Phase 4 image FAISS index (see get_image_vector_store).
+        # None keeps ingestion text-only regardless of the config flag.
+        self._image_vector_store = image_vector_store
 
     async def process(
         self, file: UploadFile, tenant_id: int | None = None, collection: str | None = None
@@ -138,8 +143,11 @@ class DocumentProcessingService:
         # keeps chunk_index ordering stable for get_chunks_by_document.
         total_images = 0
         images_captioned = 0
+        images_embedded = 0
         total_tables = 0
         multimodal_chunks: list[DocumentChunk] = []
+
+        captions_by_image_id: dict[str, str] = {}
 
         if settings.image_extraction_enabled:
             image_records = extract_images_from_pdf(document_id, file_path)
@@ -165,6 +173,11 @@ class DocumentProcessingService:
                         images_captioned = len(
                             {c.metadata["image_id"] for c in caption_chunks}
                         )
+                        captions_by_image_id = {
+                            c.metadata["image_id"]: c.text
+                            for c in caption_chunks
+                            if c.metadata.get("image_id")
+                        }
                         multimodal_chunks.extend(caption_chunks)
                         self._log_stage(
                             "image_captioning",
@@ -172,6 +185,24 @@ class DocumentProcessingService:
                             images_captioned=images_captioned,
                             caption_chunks=len(caption_chunks),
                         )
+
+                # Cross-modal figure retrieval (Phase 4): embed the *figure*
+                # images in CLIP space and index them into the dedicated image
+                # store. Captions feed the retrievable text; embedding is
+                # independent of whether captioning produced any.
+                if settings.clip_embedding_enabled and self._image_vector_store is not None:
+                    images_embedded = embed_images_to_store(
+                        images,
+                        self._image_vector_store,
+                        document_id=document_id,
+                        tenant_id=tenant_id,
+                        captions_by_image_id=captions_by_image_id,
+                    )
+                    self._log_stage(
+                        "clip_embedding",
+                        document_id,
+                        images_embedded=images_embedded,
+                    )
 
         if settings.table_extraction_enabled:
             tables = extract_tables_from_pdf(document_id, file_path)
@@ -284,6 +315,7 @@ class DocumentProcessingService:
                     "pages_ocred": extracted["pages_ocred"],
                     "total_images": total_images,
                     "images_captioned": images_captioned,
+                    "images_embedded": images_embedded,
                     "total_tables": total_tables,
                     "processing_duration": round(processing_duration, 4),
                 }
@@ -299,6 +331,7 @@ class DocumentProcessingService:
             pages_ocred=extracted["pages_ocred"],
             total_images=total_images,
             images_captioned=images_captioned,
+            images_embedded=images_embedded,
             total_tables=total_tables,
             processing_time=round(processing_duration, 4),
             status="processed",

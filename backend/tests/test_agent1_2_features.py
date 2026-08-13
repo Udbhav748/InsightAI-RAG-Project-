@@ -244,7 +244,7 @@ class TestLocalResearchAgent:
         assert findings.queries == ["q"]
 
     def test_local_research_agent_synthesizes_from_merged_chunks(self, monkeypatch):
-        def fake_retrieve(query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None):
+        def fake_retrieve(query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None):
             return [
                 RetrievedChunk(
                     chunk_id=f"chunk-{query}",

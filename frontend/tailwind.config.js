@@ -6,7 +6,12 @@ export default {
     extend: {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['"Plus Jakarta Sans"', 'Inter', 'system-ui', 'sans-serif'],
+        // A serif display face is a deliberate departure from the
+        // geometric-sans-on-dark formula almost every AI-tool template
+        // ships with (Plus Jakarta Sans/Space Grotesk/Sora, previously
+        // used here too) — it's what makes headings read as designed for
+        // this product rather than left at a starting-point default.
+        display: ['Fraunces', 'Georgia', 'serif'],
       },
       colors: {
         surface: {
@@ -32,18 +37,23 @@ export default {
           secondary: '#b4b8c2',
           muted: '#7c8391',
         },
-        // Single restrained accent (emerald). Used only for primary
-        // actions, focus rings, active navigation, and status/success —
-        // never as a decorative wash or gradient.
+        // Single restrained accent — a muted terracotta/copper, chosen
+        // specifically because almost no AI-tool UI uses a warm accent
+        // (the field clusters overwhelmingly around blue/indigo/emerald/
+        // violet); this is what gives buttons, focus rings, active nav,
+        // and the logo mark an actual identity instead of the default.
+        // Deliberately separate from `success` below — that stays green
+        // (the universally-understood color for "succeeded"), so success
+        // states never got a free ride on whatever the brand color is.
         accent: {
-          50: '#ecfdf5',
-          100: '#d1fae5',
-          200: '#a7f3d0',
-          300: '#6ee7b7',
-          400: '#34d399',
-          500: '#10b981',
-          600: '#059669',
-          700: '#047857',
+          50: '#fbf2ed',
+          100: '#f5ddd0',
+          200: '#eab89f',
+          300: '#dd8f6a',
+          400: '#cc6f42',
+          500: '#b8572d',
+          600: '#984624',
+          700: '#7a3820',
         },
         success: '#10b981',
         warning: '#f59e0b',

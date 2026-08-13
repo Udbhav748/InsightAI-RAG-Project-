@@ -40,6 +40,7 @@ def _search_with_timeout(
     resolved_top_k: int,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
+    image_vector_store=None,
 ) -> list[RetrievedChunk]:
     """Run the retrieval search block (hybrid or plain semantic) under a
     configurable wall-clock timeout.
@@ -54,14 +55,24 @@ def _search_with_timeout(
 
     With settings.retrieval_timeout_seconds == 0 (the default), the search
     runs inline with no thread overhead at all — behavior unchanged.
+
+    image_vector_store is forwarded to hybrid_search for the Phase 4 CLIP
+    cross-modal signal; None (or the flag off) keeps retrieval text-only.
     """
     def _do_search() -> list[RetrievedChunk]:
         if settings.hybrid_search_enabled and isinstance(vector_store, FAISSVectorStore):
             if document_ids is not None:
                 return hybrid_search(
-                    query, vector_store, top_k=fetch_k, tenant_id=tenant_id, document_ids=document_ids
+                    query,
+                    vector_store,
+                    top_k=fetch_k,
+                    tenant_id=tenant_id,
+                    document_ids=document_ids,
+                    image_vector_store=image_vector_store,
                 )
-            return hybrid_search(query, vector_store, top_k=fetch_k, tenant_id=tenant_id)
+            return hybrid_search(
+                query, vector_store, top_k=fetch_k, tenant_id=tenant_id, image_vector_store=image_vector_store
+            )
         query_vector = embed_query(query)
         # document_ids filtering is only available at the FAISS search
         # layer; for any other VectorStore implementation the caller's
@@ -107,6 +118,7 @@ def retrieve(
     min_score: float | None = None,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
+    image_vector_store=None,
 ) -> list[RetrievedChunk]:
     """Retrieve (optionally hybrid + reranked), then drop results below
     min_score.
@@ -120,6 +132,8 @@ def retrieve(
     documents (Agent 3.1 "chat with a collection") — applied as an exact
     post-filter so it composes with any VectorStore implementation and
     any retrieval path (semantic, hybrid, reranked).
+    image_vector_store feeds the Phase 4 CLIP cross-modal signal inside
+    hybrid_search; see hybrid_search's docstring for the fusion math.
     """
     resolved_top_k = top_k if top_k is not None else settings.retrieval_top_k
     resolved_min_score = min_score if min_score is not None else settings.retrieval_min_score
@@ -135,7 +149,13 @@ def retrieve(
     fetch_k = settings.retrieval_candidate_k if settings.reranking_enabled else resolved_top_k
 
     results = _search_with_timeout(
-        query, vector_store, fetch_k, resolved_top_k, tenant_id=tenant_id, document_ids=document_ids
+        query,
+        vector_store,
+        fetch_k,
+        resolved_top_k,
+        tenant_id=tenant_id,
+        document_ids=document_ids,
+        image_vector_store=image_vector_store,
     )
 
     reranked = False

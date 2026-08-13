@@ -144,6 +144,20 @@ class ChatResponse(BaseModel):
         "(the 'related questions' pattern). Empty when the feature is off or the model "
         "produced nothing parseable.",
     )
+    hallucination_detected: bool = Field(
+        False,
+        description="True when the lexical groundedness check (Feature #4) found that the "
+        "answer shares almost no vocabulary with the retrieved context it was supposedly "
+        "grounded on — a likely hallucination signal. A recommendation to double-check "
+        "against the sources, never a blocker: the answer is delivered unchanged.",
+    )
+    grounding_score: float | None = Field(
+        None,
+        description="Fraction of the answer's content tokens that also appeared in the "
+        "retrieved context (0..1), when the grounding check ran. Higher is better-grounded; "
+        "below Settings.hallucination_grounding_threshold is what sets "
+        "hallucination_detected.",
+    )
 
 
 class RubricScores(BaseModel):
@@ -210,6 +224,11 @@ class DocumentProcessingResponse(BaseModel):
         description="Extracted images successfully captioned by the vision LLM and indexed "
         "as image-derived chunks (Phase 2).",
     )
+    images_embedded: int = Field(
+        0,
+        description="Figure images embedded in CLIP space and indexed into the image vector "
+        "store for cross-modal retrieval (Phase 4).",
+    )
     total_tables: int = Field(
         0, description="Tables extracted and indexed as structured markdown text (Phase 5)."
     )
@@ -232,6 +251,66 @@ class DocumentDeleteResponse(BaseModel):
     document_id: str
     chunks_removed: int
     status: str
+
+
+class ApprovalItem(BaseModel):
+    """One row in the human approval queue (Feature #5): a gated action
+    (web search, document deletion) that was requested without its
+    approval flag and recorded for an operator to grant or deny."""
+
+    approval_id: str
+    action: str  # "web_search" | "document_delete"
+    requested_by: str | None = None
+    payload: dict = Field(default_factory=dict)
+    status: str  # "pending" | "approved" | "rejected"
+    note: str | None = None
+    created_at: float
+    resolved_at: float | None = None
+    resolved_by: str | None = None
+
+
+class ApprovalListResponse(BaseModel):
+    approvals: list[ApprovalItem]
+    count: int
+
+
+class ApprovalResolveRequest(BaseModel):
+    approved: bool
+    note: str | None = Field(None, description="Optional reason, recorded in the audit log.")
+
+
+class ApprovalResolveResponse(BaseModel):
+    approval_id: str
+    action: str
+    requested_by: str | None = None
+    payload: dict = Field(default_factory=dict)
+    status: str
+    note: str | None = None
+    created_at: float
+    resolved_at: float | None = None
+    resolved_by: str | None = None
+
+
+class FeedbackEvent(BaseModel):
+    """One recorded feedback event, read back via GET /feedback (Feature
+    #6). Mirrors the JSONL event shape feedback_service.record_feedback
+    writes — timestamps, ratings, and comments for the app's own view."""
+
+    timestamp: str
+    message_id: str
+    rating: str
+    comment: str | None = None
+    reviewer_id: str | None = None
+    rubric: dict | None = Field(
+        None, description="Optional RubricScores dict, when this event carried a full review."
+    )
+
+
+class FeedbackListResponse(BaseModel):
+    """Newest-first feedback events, plus the count of what was returned."""
+
+    events: list[FeedbackEvent]
+    count: int
 
 
 class DocumentListItem(BaseModel):

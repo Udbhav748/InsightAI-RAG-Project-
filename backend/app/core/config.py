@@ -10,20 +10,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _load_secrets_from_ssm() -> None:
-    """If SECRETS_SSM_PREFIX is set (the Lambda deployment — see
-    infra/lambda.tf/infra/ssm.tf), resolve GEMINI_API_KEY/API_KEY/
-    GROQ_API_KEY/DATABASE_URL/JWT_SECRET_KEY from SSM SecureString
-    parameters under that prefix into the process environment, before
-    Settings() below reads it. A no-op everywhere else (local dev, docker-compose, Render):
-    SECRETS_SSM_PREFIX is never set there, so this returns immediately
-    without importing boto3 or making any AWS call.
+    """If SECRETS_SSM_PREFIX is set (only relevant on a deployment that
+    resolves secrets from AWS SSM Parameter Store), resolve
+    GEMINI_API_KEY/API_KEY/GROQ_API_KEY/DATABASE_URL/JWT_SECRET_KEY from
+    SSM SecureString parameters under that prefix into the process
+    environment, before Settings() below reads it. A no-op everywhere else
+    (local dev, docker-compose, EC2, Render): SECRETS_SSM_PREFIX is never
+    set there, so this returns immediately without importing boto3 or
+    making any AWS call.
 
     Never overwrites a value that's already set directly (e.g. a local
     .env's GEMINI_API_KEY) — SSM only fills in what's actually missing.
-    A parameter that doesn't exist under the prefix (DATABASE_URL when no
-    DSN was configured, matching infra/ssm.tf's own conditional
-    creation) is silently skipped, not an error — Settings.database_url's
-    own default ("") applies exactly as it does everywhere else.
+    A parameter that doesn't exist under the prefix (e.g. DATABASE_URL
+    when no DSN was configured) is silently skipped, not an error —
+    Settings.database_url's own default ("") applies exactly as it does
+    everywhere else.
     """
     ssm_prefix = os.environ.get("SECRETS_SSM_PREFIX")
     if not ssm_prefix:
@@ -284,6 +285,21 @@ class Settings(BaseSettings):
     # is unchanged unless explicitly opted in.
     web_search_enabled: bool = False
 
+    # Which provider web_search_service.search_web dispatches to. The
+    # DuckDuckGo provider is keyless (duckduckgo-search SDK); Brave and
+    # Bing require WEB_SEARCH_API_KEY. Off-by-default web_search_enabled is
+    # the master switch; asking for a provider whose key isn't configured
+    # force-disables the tool (degrades to "no results", never a crash)
+    # with a distinct "web_search_unavailable" log event.
+    web_search_provider: str = "duckduckgo"
+
+    # API key for providers that require one (brave, bing). DuckDuckGo
+    # ignores it. When web_search_provider is one of the keyed providers
+    # and this is empty while web_search_enabled is True, the tool is
+    # treated as disabled rather than erroring — "force-disable without
+    # key", per Feature #7.
+    web_search_api_key: str = ""
+
     # When True, the web-search tool is a human-in-the-loop action: it only
     # fires when the client explicitly sends confirm_web_search=true on the
     # /chat request (the "human approval" gate). Off by default — the
@@ -443,10 +459,11 @@ class Settings(BaseSettings):
     vision_confidence_threshold: float = 0.5
 
     # Enables S3 sync of uploads/vector_store/feedback (services/
-    # s3_sync_service.py) — the persistence mechanism for the AWS Lambda
-    # deployment, whose filesystem is read-only outside /tmp and wiped on
-    # every cold start. Off by default: local dev, docker-compose, and any
-    # non-Lambda deployment never touch S3 or need boto3 installed.
+    # s3_sync_service.py) — a persistence mechanism for a hypothetical
+    # ephemeral-filesystem deployment (e.g. AWS Lambda, whose filesystem is
+    # read-only outside /tmp and wiped on every cold start). Off by
+    # default: local dev, docker-compose, EC2, and any other deployment
+    # with real persistent disk never touch S3 or need boto3 installed.
     s3_sync_enabled: bool = False
 
     # S3 bucket s3_sync_service.py reads/writes when s3_sync_enabled is
@@ -455,12 +472,13 @@ class Settings(BaseSettings):
 
     # Overrides where uploads/vector_store/feedback resolve on disk — normally
     # left empty, resolving relative to backend/ (Path(__file__).parents[2]
-    # in each owning service module). Set to "/tmp" on the Lambda deployment
-    # (infra/lambda.tf): Lambda's filesystem is read-only everywhere except
-    # /tmp, and unlike a symlink-at-runtime approach, this doesn't require
-    # deleting/replacing the on-image directories at container start —
-    # impossible anyway, since deleting anything under a read-only mount
-    # (including the empty directories baked into the image) fails too.
+    # in each owning service module). Only relevant for a hypothetical
+    # read-only-filesystem deployment target, which would set this to a
+    # writable directory like "/tmp" before startup, and unlike a
+    # symlink-at-runtime approach, this doesn't require deleting/replacing
+    # the on-image directories at container start — impossible anyway,
+    # since deleting anything under a read-only mount (including the empty
+    # directories baked into the image) fails too.
     data_dir_override: str = ""
 
     # --- Multi-modal RAG (off by default) --------------------------------
@@ -520,6 +538,44 @@ class Settings(BaseSettings):
     # Upper bound on tables extracted from one document.
     table_max_count_per_document: int = 50
 
+    # --- CLIP cross-modal retrieval (Phase 4, off by default) -----------
+    # Enables CLIP-based image retrieval: uploaded documents' extracted
+    # figures are embedded via the CLIP microservice (clip_service/, a
+    # separate LeafSense-shaped process — see clip_client.py) into a second
+    # FAISS index (image_index.faiss / image_metadata.json), and that image
+    # similarity becomes a *third* signal in hybrid search alongside the
+    # existing semantic + BM25 fusion. Off by default like every modal
+    # flag: requires image_extraction_enabled (images must exist to embed)
+    # and a running CLIP service. A CLIP service that is unreachable or
+    # times out degrades to the two-signal hybrid path — cross-modal
+    # retrieval is an enhancement, never a failure mode for retrieval.
+    clip_embedding_enabled: bool = False
+
+    # Base URL of the CLIP embedding microservice (a separate FastAPI
+    # process — see clip_service/). Defaults to 8002, distinct from this
+    # backend's 8000 and LeafSense's 8001.
+    clip_service_url: str = "http://localhost:8002"
+
+    # Timeout, in seconds, for calls to the CLIP service.
+    clip_service_timeout_seconds: int = 15
+
+    # Optional shared secret sent as an X-API-Key header to the CLIP
+    # service (mirroring vision_service_api_key's convention). Empty =
+    # unauthenticated, fine for local dev.
+    clip_service_api_key: str = ""
+
+    # Filenames (inside vector_store_dir_name) for the CLIP image index and
+    # its metadata — separate from the text index so text and image vectors
+    # live in their own spaces/persistence files.
+    image_vector_index_filename: str = "image_index.faiss"
+    image_vector_metadata_filename: str = "image_metadata.json"
+
+    # Weight given to the (min-max normalized) CLIP image-similarity score
+    # in the three-way fusion. Semantic and BM25 weights are scaled by
+    # (1 - clip_weight) so all three sum to 1; clip_weight=0 reproduces the
+    # current two-signal behavior exactly.
+    hybrid_clip_weight: float = 0.2
+
     # --- Answer-quality / agentic / vector-store-hygiene flags ----------
     # (docs/FEATURE_PROMPTS.md's 13-feature plan). Every one defaults False,
     # per this codebase's convention: a new capability is off until
@@ -546,6 +602,31 @@ class Settings(BaseSettings):
     # one call per citation. Off by default: real added cost on every
     # answer that has citations.
     citation_verification_enabled: bool = False
+
+    # When True, ChatService._detect_hallucination runs a lexical
+    # groundedness check after an answer is produced (Feature #4): the
+    # fraction of the answer's content tokens that also appear in the
+    # retrieved context (chunks + web snippets). An answer that shares
+    # almost no vocabulary with the very context it claims to be grounded
+    # on is flagged as a likely hallucination — surfaced via
+    # ChatResponse.hallucination_detected and a "hallucination_detected"
+    # log event / metric. It is a signal, never a blocker: the answer is
+    # delivered unchanged so a correct-but-paraphrased answer can't be
+    # degraded, and the flag is a pointer for the user to double-check.
+    hallucination_detection_enabled: bool = True
+
+    # Minimum fraction of the answer's content tokens that must appear in
+    # the retrieved context for the answer NOT to be flagged. 0.25 is a
+    # deliberately forgiving floor: a fully paraphrased answer typically
+    # still reuses well over a quarter of the source's vocabulary, so a
+    # below-floor answer is more likely invented from nothing than
+    # rephrased.
+    hallucination_grounding_threshold: float = 0.25
+
+    # Shortest answer (in characters) that will be grounding-checked. The
+    # number of tokens in shorter answers is too small for a ratio to be
+    # statistically meaningful.
+    hallucination_min_answer_chars: int = 40
 
     # Agent 1.4 — When True, if retrieval graded "insufficient" and the
     # corrective loop still couldn't produce a grounded answer, the app

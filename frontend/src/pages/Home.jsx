@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, FileText, MessageCircle, Sparkles, UploadCloud } from 'lucide-react'
+import { ArrowRight, FileText, MessageCircle, UploadCloud } from 'lucide-react'
 import Card from '../components/ui/Card'
+import Logo from '../components/ui/Logo'
 import api from '../services/api'
 
 const ACTIONS = [
@@ -43,7 +44,7 @@ export default function Home() {
         animate={{ opacity: 1, y: 0 }}
         className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500"
       >
-        <Sparkles size={22} strokeWidth={1.5} />
+        <Logo size={24} />
       </motion.span>
 
       <motion.h1

@@ -39,6 +39,7 @@ from fastapi import Header, Request
 
 from app.core.config import settings
 from app.core.exceptions import UnauthorizedError
+from app.core.request_context import set_client_name
 from app.services.tenant_service import find_api_key, resolve_tenant
 from app.services.user_service import decode_access_token, get_user_by_id
 
@@ -120,6 +121,7 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
         request.state.client_name = client_name
         request.state.tenant_id = tenant_id
         request.state.role = role
+        set_client_name(client_name)
         return
 
     logger.warning(
@@ -162,6 +164,7 @@ def require_auth(
         request.state.role = role
         request.state.user_id = user_id
         request.state.auth_method = "jwt"
+        set_client_name(email)
         return
 
     require_api_key(request, x_api_key)

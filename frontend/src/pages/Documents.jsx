@@ -9,6 +9,7 @@ import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import PdfPreviewModal from '../components/chat/PdfPreviewModal'
 import ImageGalleryModal from '../components/documents/ImageGalleryModal'
+import Skeleton from '../components/ui/Skeleton'
 import { deleteDocument, getUploadHistory, listDocuments, removeFromUploadHistory } from '../services/documentService'
 import useToast from '../hooks/useToast'
 import getErrorMessage from '../utils/errorMessage'
@@ -55,6 +56,7 @@ const SORT_OPTIONS = [
 
 export default function Documents() {
   const [documents, setDocuments] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState('newest')
   const [collectionFilter, setCollectionFilter] = useState('')
@@ -75,6 +77,9 @@ export default function Documents() {
         // Server list unreachable (network error, auth hiccup, etc.) —
         // degrade to this browser's own history rather than show nothing.
         if (active) setDocuments(getUploadHistory())
+      })
+      .finally(() => {
+        if (active) setIsLoading(false)
       })
     return () => {
       active = false
@@ -130,7 +135,7 @@ export default function Documents() {
         <div>
           <h2 className="font-display text-xl font-bold">Documents</h2>
           <p className="text-sm text-slate-500 dark:text-ink-muted">
-            {documents.length} document{documents.length === 1 ? '' : 's'}
+            {isLoading ? 'Loading…' : `${documents.length} document${documents.length === 1 ? '' : 's'}`}
           </p>
         </div>
         <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
@@ -180,7 +185,25 @@ export default function Documents() {
         </div>
       )}
 
-      {documents.length === 0 ? (
+      {isLoading ? (
+        <div className="panel divide-y divide-border-light overflow-hidden dark:divide-border">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-3.5 w-2/5" />
+                  <Skeleton className="h-3 w-1/4" />
+                </div>
+              </div>
+              <div className="flex items-center gap-4 pl-[3.25rem] sm:pl-0">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : documents.length === 0 ? (
         <EmptyState
           icon={FileText}
           title="No documents yet"

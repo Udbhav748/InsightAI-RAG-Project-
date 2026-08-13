@@ -109,7 +109,7 @@ class TestStreamQueryConversational:
 class TestStreamQueryRetrieveHappyPath:
     def test_trace_sequence_and_streamed_answer_matches_done_payload(self, monkeypatch):
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 
@@ -136,7 +136,7 @@ class TestStreamQueryRetrieveHappyPath:
         # should produce identical steps_taken — a divergence here would
         # mean the two pipelines aren't actually equivalent.
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 
@@ -154,7 +154,7 @@ class TestStreamQueryRetrieveHappyPath:
 class TestStreamQueryReflection:
     def test_ungrounded_first_answer_triggers_reflecting_trace_and_regenerates(self, monkeypatch):
         monkeypatch.setattr(
-            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()]
+            rag_service_module, "retrieve", lambda query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None: [make_chunk()]
         )
         monkeypatch.setattr(settings, "retrieval_grade_threshold", 0.5)
 

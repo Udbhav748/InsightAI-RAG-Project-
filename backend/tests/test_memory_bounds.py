@@ -34,7 +34,7 @@ class TestHandleQueryTruncatesHistory:
         monkeypatch.setattr(
             rag_service_module,
             "retrieve",
-            lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()],
+            lambda query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None: [make_chunk()],
         )
         # More turns than _MAX_HISTORY_TURNS — each with a unique marker so
         # presence/absence in the prompt is unambiguous.
@@ -61,7 +61,7 @@ class TestHandleQueryTruncatesHistory:
         monkeypatch.setattr(
             rag_service_module,
             "retrieve",
-            lambda query, vector_store, top_k=None, min_score=None, tenant_id=None: [make_chunk()],
+            lambda query, vector_store, top_k=None, min_score=None, tenant_id=None, document_ids=None, image_vector_store=None: [make_chunk()],
         )
         history = [{"role": "user", "content": "turn-0-marker"}, {"role": "assistant", "content": "turn-1-marker"}]
 

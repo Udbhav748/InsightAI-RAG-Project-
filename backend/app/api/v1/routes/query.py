@@ -10,9 +10,18 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_auth
+from app.core.config import settings
 from app.core.exceptions import SessionNotFoundError, VectorStoreNotFoundError
-from app.models.schemas import ChatRequest, ChatResponse, FeedbackRequest, FeedbackResponse
+from app.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    FeedbackEvent,
+    FeedbackListResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+)
 from app.services.faiss_vector_store import FAISSVectorStore
+from app.services.feedback_service import list_feedback as list_feedback_events
 from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
@@ -47,6 +56,32 @@ def get_vector_store() -> VectorStore:
 
 
 @lru_cache(maxsize=1)
+def get_image_vector_store() -> VectorStore:
+    """Load the persisted CLIP *image* index once and reuse it on every
+    request (Phase 4 of multi-modal RAG — cross-modal retrieval).
+
+    A second FAISSVectorStore instance pointed at image_index.faiss /
+    image_metadata.json (see Settings.image_vector_index_filename /
+    _metadata_filename), so image vectors live in their own space and
+    persistence files alongside the text index. Same per-process singleton
+    lifecycle as get_vector_store, shared by /upload (ingest), /chat
+    (fusion), and DELETE /documents/{id} (cleanup). Uninitialized or
+    missing index degrades to an empty store — callers gate on
+    Settings.clip_embedding_enabled, not on this store's state.
+    """
+    data_dir = settings.data_dir(settings.vector_store_dir_name)
+    store = FAISSVectorStore(
+        index_path=data_dir / settings.image_vector_index_filename,
+        metadata_path=data_dir / settings.image_vector_metadata_filename,
+    )
+    try:
+        store.load()
+    except VectorStoreNotFoundError:
+        pass
+    return store
+
+
+@lru_cache(maxsize=1)
 def get_llm_client() -> LLMClient:
     """Build the configured LLM client (see Settings.llm_provider /
     fallback_llm_provider) once and reuse it on every request."""
@@ -54,7 +89,7 @@ def get_llm_client() -> LLMClient:
 
 
 def get_chat_service() -> ChatService:
-    return ChatService(get_vector_store(), get_llm_client())
+    return ChatService(get_vector_store(), get_llm_client(), image_vector_store=get_image_vector_store())
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -353,6 +388,53 @@ def submit_feedback(feedback: FeedbackRequest, request: Request) -> FeedbackResp
     )
 
     return FeedbackResponse(status="recorded")
+
+
+@router.get("/feedback", response_model=FeedbackListResponse)
+def list_feedback(
+    request: Request, limit: int = 50, reviewer_id: str | None = None
+) -> FeedbackListResponse:
+    """Surface recorded feedback events back to the app (Feature #6):
+    newest-first, best-effort. An authenticated caller sees feedback from
+    their own API key/client by default; admins may pass reviewer_id to
+    inspect a specific reviewer's judgments (or null to see all).
+    """
+    from app.core import permissions
+
+    caller = getattr(request.state, "client_name", None)
+    role = getattr(request.state, "role", None)
+    if reviewer_id is not None and role != "admin":
+        permissions.check_permission(
+            request,
+            permissions.ANALYTICS_VIEW,
+            message="Filtering feedback by reviewer requires the admin role.",
+        )
+    resolved_reviewer = reviewer_id
+    if resolved_reviewer is None and role != "admin":
+        resolved_reviewer = caller
+    if resolved_reviewer is None and role != "admin":
+        # No caller identity (shouldn't happen behind require_auth) — don't
+        # leak other reviewers' feedback by returning everything.
+        resolved_reviewer = "__none__"
+
+    events = [
+        FeedbackEvent(**event)
+        for event in list_feedback_events(limit=limit, reviewer_id=resolved_reviewer)
+    ]
+
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "feedback_listed",
+                "path": request.url.path,
+                "client": caller or "unknown",
+                "reviewer_id": resolved_reviewer,
+                "count": len(events),
+            }
+        },
+    )
+    return FeedbackListResponse(events=events, count=len(events))
 
 
 @router.get("/chat/sessions")

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { BarChart3, CheckCircle2, Info, Loader2, Moon, ShieldCheck, Server, Sun, ThumbsDown, ThumbsUp, Trash2, XCircle } from 'lucide-react'
+import { BarChart3, CheckCircle2, Info, Moon, ShieldCheck, Server, Sun, ThumbsDown, ThumbsUp, Trash2, XCircle } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
+import Skeleton from '../components/ui/Skeleton'
 import useTheme from '../hooks/useTheme'
 import useToast from '../hooks/useToast'
 import useAuth from '../hooks/useAuth'
@@ -218,10 +219,19 @@ export default function Settings() {
           System status
         </h3>
         {healthLoading ? (
-          <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
-            <Loader2 size={14} className="animate-spin" />
-            Checking backend…
-          </p>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-10" />
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} className="h-4 w-full" />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <Skeleton key={index} className="h-6 w-24 rounded-full" />
+              ))}
+            </div>
+          </div>
         ) : healthError ? (
           <p className="text-sm text-danger">{healthError}</p>
         ) : (
@@ -280,10 +290,15 @@ export default function Settings() {
             Usage analytics
           </h3>
           {usageLoading ? (
-            <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
-              <Loader2 size={14} className="animate-spin" />
-              Loading usage…
-            </p>
+            <div className="space-y-2.5">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Skeleton className="h-3 w-20 shrink-0" />
+                  <Skeleton className="h-2 flex-1" />
+                  <Skeleton className="h-3 w-8 shrink-0" />
+                </div>
+              ))}
+            </div>
           ) : usageError ? (
             <p className="text-sm text-danger">{usageError}</p>
           ) : usage.length === 0 ? (
@@ -321,10 +336,15 @@ export default function Settings() {
             Approval queue
           </h3>
           {approvalsLoading ? (
-            <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
-              <Loader2 size={14} className="animate-spin" />
-              Loading pending approvals…
-            </p>
+            <div className="space-y-3">
+              {Array.from({ length: 2 }).map((_, index) => (
+                <div key={index} className="rounded-lg border border-border-light px-3.5 py-3 dark:border-border">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="mt-2 h-4 w-3/4" />
+                  <Skeleton className="mt-2 h-3 w-1/2" />
+                </div>
+              ))}
+            </div>
           ) : approvalsError ? (
             <p className="text-sm text-danger">{approvalsError}</p>
           ) : approvals.length === 0 ? (
@@ -390,10 +410,17 @@ export default function Settings() {
           Recent feedback
         </h3>
         {feedbackLoading ? (
-          <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
-            <Loader2 size={14} className="animate-spin" />
-            Loading feedback…
-          </p>
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="flex items-start gap-3">
+                <Skeleton className="h-6 w-6 shrink-0 rounded-full" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3.5 w-4/5" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : feedbackError ? (
           <p className="text-sm text-danger">{feedbackError}</p>
         ) : feedback.length === 0 ? (

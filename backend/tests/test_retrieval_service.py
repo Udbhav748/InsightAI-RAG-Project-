@@ -100,7 +100,7 @@ class TestRetrieveRouting:
         store = FAISSVectorStore(index_path=tmp_path / "i.faiss", metadata_path=tmp_path / "m.json")
         calls = []
 
-        def fake_hybrid_search(query, vector_store, top_k, candidate_k=None, tenant_id=None):
+        def fake_hybrid_search(query, vector_store, top_k, candidate_k=None, tenant_id=None, document_ids=None, image_vector_store=None):
             calls.append((query, top_k))
             return [make_chunk("hybrid-1")]
 

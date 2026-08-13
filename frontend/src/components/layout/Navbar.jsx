@@ -11,12 +11,12 @@ const TITLES = {
   '/settings': 'Settings',
 }
 
-export default function Navbar({ onMenuClick }) {
+export default function Navbar({ onMenuClick, onSearchClick }) {
   const { pathname } = useLocation()
   const title = TITLES[pathname] ?? 'InsightAI RAG'
 
   return (
-    <header className="glass-panel sticky top-4 z-30 flex items-center gap-4 px-4 py-3 sm:px-6">
+    <header className="glass-panel sticky top-4 z-30 flex items-center gap-4 px-4 py-3 sm:px-6 print:hidden">
       <button
         type="button"
         onClick={onMenuClick}
@@ -31,15 +31,22 @@ export default function Navbar({ onMenuClick }) {
       </h1>
 
       <div className="ml-auto flex items-center gap-3">
-        <div className="relative hidden sm:block">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-ink-muted" />
-          <input
-            type="text"
-            placeholder="Search..."
-            disabled
-            className="h-9 w-48 rounded-lg border border-border-light bg-white/50 pl-9 pr-3 text-sm text-slate-500 placeholder-slate-400 transition-colors focus:outline-none disabled:cursor-not-allowed dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary dark:placeholder-ink-muted"
-          />
-        </div>
+        {/* Was a permanently-disabled decorative <input> — now the actual
+            trigger for the command palette (Cmd/Ctrl+K), which is where
+            typing/searching genuinely happens. A button styled to look
+            like a search field, not a real text input, since this never
+            needs its own text state. */}
+        <button
+          type="button"
+          onClick={onSearchClick}
+          className="relative hidden h-9 w-48 items-center rounded-lg border border-border-light bg-white/50 pl-9 pr-2 text-left text-sm text-slate-400 transition-colors hover:bg-white/80 dark:border-border dark:bg-white/[0.03] dark:text-ink-muted dark:hover:bg-white/[0.06] sm:flex"
+        >
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" />
+          <span className="flex-1 truncate">Search...</span>
+          <kbd className="shrink-0 rounded border border-border-light px-1.5 py-0.5 text-[10px] dark:border-border">
+            ⌘K
+          </kbd>
+        </button>
 
         <button
           type="button"

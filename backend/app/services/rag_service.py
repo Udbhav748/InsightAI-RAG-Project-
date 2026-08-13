@@ -51,7 +51,7 @@ from app.services.summarization_service import summarize_document
 from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
 from app.services.vision_qa_service import try_vision_qa
-from app.services.web_search_service import search_web
+from app.services.web_search_service import search_web, web_search_ready
 from app.services.agent_events import log_agent_handoff
 from app.services.research_agent import ResearchAgent, ResearchFindings
 from app.services.router_agent import RouterAgent
@@ -254,6 +254,84 @@ def _answer_source(chunks: list[RetrievedChunk], web_results: list[WebSearchResu
     return "web" if not chunks else "mixed"
 
 
+# Small English stopword set for the lexical groundedness check (Feature
+# #4). Deliberately hand-maintained rather than pulled from a library —
+# the project's monitoring/eval philosophy is dependency-free stand-ins,
+# and a 60-word set is more than enough to strip the colorless filler
+# ("the", "and", "is") that would otherwise dominate a token-overlap
+# ratio. Looser (case-insensitive, accent-naive) than the gold standard
+# lists; fine for a signal that's a pointer to double-check, not a gate.
+_GROUNDEDNESS_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "if", "then", "else", "when",
+        "than", "that", "this", "these", "those", "of", "in", "on", "at",
+        "to", "from", "for", "with", "without", "by", "as", "is", "are",
+        "was", "were", "be", "been", "being", "do", "does", "did", "have",
+        "has", "had", "will", "would", "can", "could", "should", "may",
+        "might", "must", "not", "no", "yes", "it", "its", "he", "she",
+        "they", "we", "you", "i", "my", "your", "our", "their", "the",
+        "about", "into", "between", "over", "under", "again", "also",
+        "just", "very", "too", "same", "some", "such", "only", "other",
+        "any", "all", "both", "each", "few", "more", "most", "much",
+    }
+)
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercased, stopword-stripped, alphanumeric content tokens."""
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if token not in _GROUNDEDNESS_STOPWORDS and len(token) > 1
+    }
+
+
+def _grounding_score(answer: str, chunks: list[RetrievedChunk], web_results: list[WebSearchResult]) -> float:
+    """Fraction of the answer's content tokens that also appear in the
+    retrieved context (chunk text + web snippets). 1.0 if the answer has
+    no content tokens to compare. A purely lexical proxy for groundedness —
+    deliberately cheap and dependency-free; it can't catch a fluent
+    fabrication that happens to reuse source vocabulary, but it reliably
+    flags the more common failure of an answer produced from nothing.
+    """
+    answer_tokens = _content_tokens(answer)
+    if not answer_tokens:
+        return 1.0
+    context_tokens = set()
+    for chunk in chunks:
+        context_tokens |= _content_tokens(chunk.text)
+    for result in web_results:
+        context_tokens |= _content_tokens(result.snippet)
+    if not context_tokens:
+        return 1.0
+    overlap = len(answer_tokens & context_tokens)
+    return overlap / len(answer_tokens)
+
+
+def _detect_hallucination(
+    answer: str,
+    chunks: list[RetrievedChunk],
+    web_results: list[WebSearchResult],
+) -> tuple[bool, float]:
+    """Run the Feature #4 lexical groundedness check.
+
+    Returns (detected, score). Detected is True when the check has
+    something to say (there was context, the answer is long enough to
+    score) and the answer's content-token overlap with that context falls
+    below Settings.hallucination_grounding_threshold. Never blocks — it's
+    a signal surfaced to the user to double-check against the sources.
+    """
+    if not settings.hallucination_detection_enabled:
+        return False, None
+    if len(answer.strip()) < settings.hallucination_min_answer_chars:
+        return False, None
+    if not chunks and not web_results:
+        return False, None
+    score = _grounding_score(answer, chunks, web_results)
+    detected = score < settings.hallucination_grounding_threshold
+    return detected, round(score, 4)
+
+
 # Matches prompt_builder._SOURCES_HEADING's own marker string (not the
 # regex itself — this operates incrementally on a live token stream,
 # where a full-string regex can't run until the heading has fully
@@ -332,9 +410,13 @@ class PlanDecision:
 
 
 class ChatService:
-    def __init__(self, vector_store: VectorStore, llm_client: LLMClient):
+    def __init__(self, vector_store: VectorStore, llm_client: LLMClient, image_vector_store=None):
         self._vector_store = vector_store
         self._llm_client = llm_client
+        # Phase 4 cross-modal store: image vectors (CLIP space) belong to
+        # their own index, injected from get_image_vector_store(). Optional
+        # — None keeps retrieval text-only regardless of the config flag.
+        self._image_vector_store = image_vector_store
         # Multi-agent layer (config-gated; construction is cheap — no LLM
         # calls happen until decide()/run() are actually invoked):
         #   - the router agent upgrades the keyword planner with LLM intent
@@ -715,6 +797,34 @@ class ChatService:
                 "web_search_skipped_pending_approval",
                 extra={"extra_fields": {"query_length": len(query)}},
             )
+            # Feature #5 — surface the skipped action as a pending approval
+            # so an operator can grant/reject it via the approval queue
+            # (GET /approvals, POST /approvals/{id}/resolve) instead of it
+            # vanishing into a log line.
+            from app.core.request_context import get_client_name
+            from app.services.approval_service import get_approval_store
+
+            approval = get_approval_store().register(
+                action="web_search",
+                requested_by=get_client_name(),
+                payload={"query": query},
+            )
+            logger.info(
+                "approval_created_for_skipped_web_search",
+                extra={
+                    "extra_fields": {
+                        "approval_id": approval.approval_id,
+                        "query_length": len(query),
+                    }
+                },
+            )
+            return []
+        if not web_search_ready():
+            # Feature #7 — force-disable without key: a provider that
+            # isn't usable is treated as disabled (degrade to []) rather
+            # than as a real search that merely found nothing. The
+            # distinct "web_search_unavailable" event is logged inside
+            # web_search_ready(). Callers should retry after fixing config.
             return []
         try:
             return search_web(query)
@@ -1008,7 +1118,12 @@ class ChatService:
             retrieval_query = query
             if settings.query_contextualization_enabled and recent_history:
                 retrieval_query = self._contextualize_query(query, recent_history)
-            retrieve_kwargs: dict = {"top_k": top_k, "min_score": min_score, "tenant_id": tenant_id}
+            retrieve_kwargs: dict = {
+                "top_k": top_k,
+                "min_score": min_score,
+                "tenant_id": tenant_id,
+                "image_vector_store": self._image_vector_store,
+            }
             if document_ids is not None:
                 retrieve_kwargs["document_ids"] = document_ids
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
@@ -1303,7 +1418,12 @@ class ChatService:
             retrieval_query = query
             if settings.query_contextualization_enabled and recent_history:
                 retrieval_query = self._contextualize_query(query, recent_history)
-            retrieve_kwargs: dict = {"top_k": top_k, "min_score": min_score, "tenant_id": tenant_id}
+            retrieve_kwargs: dict = {
+                "top_k": top_k,
+                "min_score": min_score,
+                "tenant_id": tenant_id,
+                "image_vector_store": self._image_vector_store,
+            }
             if document_ids is not None:
                 retrieve_kwargs["document_ids"] = document_ids
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
@@ -1521,7 +1641,9 @@ class ChatService:
             diagnosis_query = _build_diagnosis_query(prediction, query)
 
             steps_taken += 1  # retrieval
-            chunks = retrieve(diagnosis_query, self._vector_store, tenant_id=tenant_id)
+            chunks = retrieve(
+                diagnosis_query, self._vector_store, tenant_id=tenant_id, image_vector_store=self._image_vector_store
+            )
 
             steps_taken += 1  # grading
             grade = self._grade_retrieval(diagnosis_query, chunks)
@@ -1628,6 +1750,28 @@ class ChatService:
         # ContextVar by the clients on each generate/generate_stream call).
         usage = current_usage()
 
+        # Feature #4 — lexical groundedness check. Signal-only: the answer
+        # is delivered unchanged; a low score just sets the
+        # hallucination_detected flag and logs/metrics it for the operator
+        # to inspect (and the user to double-check against the sources).
+        hallucination_detected, grounding_score = _detect_hallucination(
+            answer, retrieved_chunks, web_results
+        )
+        if hallucination_detected:
+            get_metrics().inc_counter(
+                "hallucinations_detected_total", {"answer_source": answer_source}
+            )
+            logger.warning(
+                "hallucination_detected",
+                extra={
+                    "extra_fields": {
+                        "grounding_score": grounding_score,
+                        "answer_source": answer_source,
+                        "answer_length": len(answer),
+                    }
+                },
+            )
+
         log_fields = {
             "query_length": len(query),
             "query_type": query_type,
@@ -1640,6 +1784,8 @@ class ChatService:
             "llm_calls": usage["llm_calls"],
             "total_tokens": usage["total_tokens"],
             "estimated_cost_usd": usage["estimated_cost_usd"],
+            "grounding_score": grounding_score,
+            "hallucination_detected": hallucination_detected,
         }
         if diagnosis is not None:
             log_fields.update(
@@ -1665,4 +1811,6 @@ class ChatService:
             retrieval_confidence=retrieval_confidence,
             is_clarifying_question=is_clarifying_question,
             follow_up_questions=follow_up_questions or [],
+            hallucination_detected=hallucination_detected,
+            grounding_score=grounding_score,
         )

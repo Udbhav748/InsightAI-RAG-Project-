@@ -92,6 +92,16 @@ class ForbiddenError(AppError):
     error_code = "FORBIDDEN"
 
 
+class ApprovalNotFoundError(AppError):
+    """The approval_id in a GET /approvals or POST /approvals/{id}/resolve
+    request doesn't match any recorded approval (or a filter targeted an
+    unknown action/status value)."""
+
+    status_code = 404
+    taxonomy_category = "input"
+    error_code = "APPROVAL_NOT_FOUND"
+
+
 class CorruptedPDFError(AppError):
     status_code = 422
     taxonomy_category = "input"
@@ -203,6 +213,19 @@ class VisionServiceError(AppError):
     status_code = 502
     taxonomy_category = "tool"
     error_code = "VISION_SERVICE_ERROR"
+
+
+class ClipServiceError(AppError):
+    """The CLIP embedding microservice (clip_service/, reached via
+    clip_client.py) is unreachable, timed out, returned a non-2xx, or
+    returned a payload outside its documented {embedding, dimension}
+    contract. Callers degrade cross-modal retrieval on this (see
+    hybrid_search.py) rather than failing the request — CLIP is an
+    enhancement, the same posturing reranking already uses."""
+
+    status_code = 502
+    taxonomy_category = "tool"
+    error_code = "CLIP_SERVICE_ERROR"
 
 
 class PromptGenerationError(AppError):

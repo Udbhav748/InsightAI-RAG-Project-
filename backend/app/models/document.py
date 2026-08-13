@@ -104,6 +104,16 @@ class ExtractedImage(BaseModel):
     byte_size: int = Field(..., ge=0, description="Size of the persisted bytes.")
 
 
+class ClipEmbedding(BaseModel):
+    """A vector produced by the CLIP embedding microservice (clip_service/),
+    along with its declared dimension. The embedding is L2-normalized by
+    the service, so inner product == cosine similarity across text and
+    image vectors — the property the image-index search relies on."""
+
+    embedding: list[float]
+    dimension: int
+
+
 class ExtractedTable(BaseModel):
     """One table extracted from a PDF page, already reduced to structured
     text (markdown) so it can flow through the existing text chunking/

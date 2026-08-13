@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LogIn, Sparkles } from 'lucide-react'
+import { LogIn } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
+import Logo from '../components/ui/Logo'
 import useAuth from '../hooks/useAuth'
 import getErrorMessage from '../utils/errorMessage'
 
@@ -37,7 +38,7 @@ export default function Login() {
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
           <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500">
-            <Sparkles size={20} strokeWidth={1.5} />
+            <Logo size={22} />
           </span>
           <h1 className="font-display text-xl font-bold text-slate-900 dark:text-ink-primary">Welcome back</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">Log in to InsightAI</p>

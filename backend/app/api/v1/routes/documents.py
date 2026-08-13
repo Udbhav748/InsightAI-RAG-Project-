@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.api.v1.routes.query import get_llm_client, get_vector_store
+from app.api.v1.routes.query import get_image_vector_store, get_llm_client, get_vector_store
 from app.core.auth import require_auth
 from app.core import permissions
 from app.core.config import settings
@@ -13,6 +13,7 @@ from app.core.exceptions import (
     ApprovalRequiredError,
     ConfirmationRequiredError,
     DocumentNotFoundError,
+    VectorStoreNotFoundError,
 )
 from app.models.schemas import (
     DocumentDeleteResponse,
@@ -23,6 +24,7 @@ from app.models.schemas import (
     HighlightResponse,
 )
 from app.services import s3_sync_service
+from app.services import approval_service
 from app.services.document_processing_service import DocumentProcessingService
 from app.services.document_repository import delete_document_metadata, get_document_owner, list_documents
 from app.services.image_captioning_service import image_storage_dir, load_image_manifest
@@ -185,7 +187,11 @@ async def upload_document(
     # fail on a deployment without an LLM key even though the base
     # pipeline never needs one.
     llm_client = get_llm_client() if settings.image_captioning_enabled else None
-    service = DocumentProcessingService(get_vector_store(), llm_client=llm_client)
+    service = DocumentProcessingService(
+        get_vector_store(),
+        llm_client=llm_client,
+        image_vector_store=get_image_vector_store() if settings.clip_embedding_enabled else None,
+    )
     tenant_id = getattr(request.state, "tenant_id", None)
     response = await service.process(file, tenant_id=tenant_id, collection=collection)
 
@@ -230,6 +236,16 @@ def delete_document(
                     "client": getattr(request.state, "client_name", "unknown"),
                 }
             },
+        )
+        # Feature #5 — record the gated deletion as a pending approval so
+        # an operator can grant/reject it via the approval queue. Still
+        # returns 400 APPROVAL_REQUIRED to the caller (unchanged behavior;
+        # approval is a deployment policy that can't be self-granted), but
+        # the action is now visible and resolvable rather than anonymous.
+        approval_service.get_approval_store().register(
+            action=approval_service.APPROVAL_ACTION_DOCUMENT_DELETE,
+            requested_by=getattr(request.state, "client_name", None),
+            payload={"document_id": document_id},
         )
         raise ApprovalRequiredError(
             "Deleting this document requires approval. Retry with ?approved=true to proceed."
@@ -282,6 +298,19 @@ def delete_document(
 
     vector_store.save()
 
+    # Same removal in the image vector store (Phase 4): CLIP image vectors
+    # key their metadata by document_id too, so the same delete applies.
+    # Best-effort — an uninitialized image store (nothing ever embedded)
+    # or a store that never saw this document is not an error.
+    image_chunks_removed = 0
+    if settings.clip_embedding_enabled:
+        image_store = get_image_vector_store()
+        try:
+            image_chunks_removed = image_store.delete_document(document_id)
+            image_store.save()
+        except VectorStoreNotFoundError:
+            pass
+
     # Best-effort cleanup of the uploaded file on disk — the document is
     # already gone from the vector store regardless of whether this finds
     # anything, so a missing file here isn't an error.
@@ -309,6 +338,7 @@ def delete_document(
                 "path": request.url.path,
                 "document_id": document_id,
                 "chunks_removed": removed_count,
+                "image_chunks_removed": image_chunks_removed,
                 "client": getattr(request.state, "client_name", "unknown"),
             }
         },

@@ -15,7 +15,40 @@
     @apply font-sans antialiased selection:bg-accent-500/25 selection:text-inherit;
     @apply bg-surface-light text-slate-700;
     @apply dark:bg-surface-dark dark:text-ink-secondary;
+    @apply relative;
     transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  /* Printed output (e.g. exporting a conversation) should always be light
+     paper with dark text, regardless of which theme is active on screen —
+     dark-mode text colors are illegible against a printer's white page. */
+  @media print {
+    html,
+    body {
+      background: #ffffff !important;
+      color: #0f172a !important;
+      print-color-adjust: exact !important;
+      -webkit-print-color-adjust: exact !important;
+    }
+  }
+
+  /* Fixed, near-invisible grain over the whole viewport — the single
+     cheapest thing that separates a flat-color app shell from one that
+     feels like it has actual material to it. Pure SVG feTurbulence data
+     URI, no image asset. pointer-events: none + a negative z-index-free
+     fixed overlay so it never intercepts clicks or scrolls with content. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  html:not(.dark) body::before {
+    opacity: 0.015;
   }
 
   h1, h2, h3, h4 {

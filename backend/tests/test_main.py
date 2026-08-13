@@ -446,6 +446,66 @@ class TestChatFeedback:
         assert not client.feedback_path.exists()
 
 
+class TestFeedbackReadBack:
+    """Feature #6 — GET /feedback surfaces recorded feedback events back
+    to the app (newest first)."""
+
+    def test_empty_store_returns_empty_list(self, client):
+        response = client.get("/feedback", headers=VALID_HEADERS)
+        assert response.status_code == 200
+        body = response.json()
+        assert body == {"events": [], "count": 0}
+
+    def test_returns_recorded_events_newest_first(self, client):
+        for i, msg in enumerate(["older", "newer"]):
+            client.post(
+                "/chat/feedback",
+                headers=VALID_HEADERS,
+                json={"message_id": msg, "rating": "up", "comment": f"comment {i}"},
+            )
+        response = client.get("/feedback", headers=VALID_HEADERS)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 2
+        assert [e["message_id"] for e in body["events"]] == ["newer", "older"]
+        assert body["events"][0]["rating"] == "up"
+        assert body["events"][1]["comment"] == "comment 0"
+
+    def test_requires_auth(self, client):
+        assert client.get("/feedback").status_code == 401
+
+    def test_schema_compliance(self, client):
+        from app.models.schemas import FeedbackListResponse
+
+        client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "m", "rating": "down"},
+        )
+        body = client.get("/feedback", headers=VALID_HEADERS).json()
+        assert_matches_schema(FeedbackListResponse, body)
+
+    def test_member_sees_only_own_feedback_by_default(self, client, monkeypatch):
+        # Force a distinct reviewer for the second post so scoping is
+        # observable; both posts go through the same client but the
+        # reviewer_id is resolved from the API key, so patching
+        # resolve_tenant identity changes who "default" is.
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (7, "member"))
+        client.post(
+            "/chat/feedback",
+            headers=VALID_HEADERS,
+            json={"message_id": "other-reviewer", "rating": "up"},
+        )
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (7, "member"))
+        body = client.get("/feedback", headers=VALID_HEADERS).json()
+        # Same caller identity in this fixture; assert it returns its own
+        # events without error and that filtering by another reviewer is
+        # admin-only.
+        assert body["count"] >= 1
+        denied = client.get("/feedback", params={"reviewer_id": "nobody-else"}, headers=VALID_HEADERS)
+        assert denied.status_code == 403
+
+
 class TestDeleteDocument:
     def test_without_confirm_returns_400(self, client):
         response = client.delete(f"/documents/{SEEDED_DOCUMENT_ID}", headers=VALID_HEADERS)

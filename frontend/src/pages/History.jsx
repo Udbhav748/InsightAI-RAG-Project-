@@ -5,6 +5,7 @@ import { MessageSquareText, Trash2 } from 'lucide-react'
 import EmptyState from '../components/ui/EmptyState'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
+import Skeleton from '../components/ui/Skeleton'
 import { deleteChatSession, listSessions } from '../services/chatService'
 import useToast from '../hooks/useToast'
 import getErrorMessage from '../utils/errorMessage'
@@ -52,20 +53,30 @@ export default function History() {
     }
   }
 
-  if (isLoading) {
-    return null
-  }
-
   return (
     <div className="space-y-5 py-4">
       <div>
         <h2 className="font-display text-xl font-bold">History</h2>
         <p className="text-sm text-slate-500 dark:text-ink-muted">
-          {sessions.length} past conversation{sessions.length === 1 ? '' : 's'}
+          {isLoading
+            ? 'Loading…'
+            : `${sessions.length} past conversation${sessions.length === 1 ? '' : 's'}`}
         </p>
       </div>
 
-      {sessions.length === 0 ? (
+      {isLoading ? (
+        <div className="panel divide-y divide-border-light overflow-hidden dark:divide-border">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="flex items-center gap-3 px-5 py-4">
+              <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-2/5" />
+                <Skeleton className="h-3 w-1/4" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : sessions.length === 0 ? (
         <EmptyState
           icon={MessageSquareText}
           title="No past conversations yet"
