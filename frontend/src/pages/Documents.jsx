@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowUpDown, Eye, FileText, Image as ImageIcon, MessageSquare, Table2, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowUpDown, Eye, FileText, Image as ImageIcon, MessageSquare, ShieldCheck, Table2, Trash2, UploadCloud } from 'lucide-react'
 import SearchInput from '../components/ui/SearchInput'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
@@ -12,6 +12,7 @@ import ImageGalleryModal from '../components/documents/ImageGalleryModal'
 import Skeleton from '../components/ui/Skeleton'
 import { deleteDocument, getUploadHistory, listDocuments, removeFromUploadHistory } from '../services/documentService'
 import useToast from '../hooks/useToast'
+import useAuth from '../hooks/useAuth'
 import getErrorMessage from '../utils/errorMessage'
 
 // listDocuments() (GET /documents) only carries the fields DocumentListItem
@@ -64,13 +65,20 @@ export default function Documents() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [previewDoc, setPreviewDoc] = useState(null)
   const [galleryDoc, setGalleryDoc] = useState(null)
+  const [allTenants, setAllTenants] = useState(false)
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
     let active = true
-    listDocuments()
+    setIsLoading(true)
+    listDocuments({ allTenants: isAdmin && allTenants })
       .then((serverDocs) => {
+        // Cross-tenant results aren't this browser's own uploads, so
+        // merging in local history (keyed by document_id only) is still
+        // safe — it can only enrich rows this browser genuinely uploaded.
         if (active) setDocuments(mergeDocuments(serverDocs, getUploadHistory()))
       })
       .catch(() => {
@@ -84,7 +92,7 @@ export default function Documents() {
     return () => {
       active = false
     }
-  }, [])
+  }, [isAdmin, allTenants])
 
   const collections = useMemo(
     () => [...new Set(documents.map((doc) => doc.collection).filter(Boolean))],
@@ -136,11 +144,29 @@ export default function Documents() {
           <h2 className="font-display text-xl font-bold">Documents</h2>
           <p className="text-sm text-slate-500 dark:text-ink-muted">
             {isLoading ? 'Loading…' : `${documents.length} document${documents.length === 1 ? '' : 's'}`}
+            {isAdmin && allTenants && ' · all tenants'}
           </p>
         </div>
-        <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
-          Upload
-        </Button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setAllTenants((current) => !current)}
+              title="Admin: list documents across every tenant, not just your own"
+              className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-sm font-medium transition-colors ${
+                allTenants
+                  ? 'border-accent-500/50 bg-accent-500/10 text-accent-600 dark:text-accent-400'
+                  : 'border-border-light text-slate-500 hover:bg-slate-900/5 dark:border-border dark:text-ink-muted dark:hover:bg-white/[0.04]'
+              }`}
+            >
+              <ShieldCheck size={15} strokeWidth={1.75} />
+              All tenants
+            </button>
+          )}
+          <Button variant="primary" icon={UploadCloud} onClick={() => navigate('/upload')}>
+            Upload
+          </Button>
+        </div>
       </div>
 
       {documents.length > 0 && (
@@ -239,6 +265,11 @@ export default function Documents() {
                     {doc.collection && (
                       <span className="ml-1.5 rounded bg-accent-500/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-600 dark:text-accent-400">
                         {doc.collection}
+                      </span>
+                    )}
+                    {allTenants && doc.tenant_id != null && (
+                      <span className="ml-1.5 rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:text-ink-muted">
+                        Tenant #{doc.tenant_id}
                       </span>
                     )}
                   </p>

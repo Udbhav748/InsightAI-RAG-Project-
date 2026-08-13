@@ -49,13 +49,16 @@ export async function deleteDocument(documentId) {
  * route's own documented behavior: "empty when the DB is disabled") —
  * callers should treat that the same as "nothing from the server yet",
  * not as an error, and fall back to getUploadHistory() for that case.
- * @param {{ collection?: string }} [options]
- * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, upload_timestamp: string, collection: string|null}[]>}
+ * `allTenants` is admin-only — the backend 403s it for any other role, so
+ * callers must gate the UI on user.role === 'admin' before passing it.
+ * @param {{ collection?: string, allTenants?: boolean }} [options]
+ * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, upload_timestamp: string, collection: string|null, tenant_id: number|null}[]>}
  */
 export async function listDocuments(options = {}) {
-  const { data } = await api.get('/documents', {
-    params: options.collection ? { collection: options.collection } : undefined,
-  })
+  const params = {}
+  if (options.collection) params.collection = options.collection
+  if (options.allTenants) params.all_tenants = true
+  const { data } = await api.get('/documents', { params: Object.keys(params).length ? params : undefined })
   return data.documents
 }
 
