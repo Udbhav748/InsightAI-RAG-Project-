@@ -89,7 +89,6 @@ def load_image_manifest(document_id: str) -> list[ExtractedImage]:
         return []
 
 
-
 def _caption_one(image: ExtractedImage, llm_client: LLMClient) -> str | None:
     """Caption a single image, returning the caption text or None.
 

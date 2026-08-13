@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -17,10 +18,11 @@ from app.core.config import settings
 from app.core.exceptions import (
     EmbeddingGenerationError,
     EmbeddingModelLoadError,
-    LLMAPIError,
-    LLMTimeoutError,
 )
 from app.models.document import DocumentChunk, EmbeddedChunk
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,6 @@ def get_embedding_model() -> SentenceTransformer:
         raise EmbeddingModelLoadError(
             f"Failed to load embedding model '{settings.embedding_model_name}': {exc}"
         ) from exc
-
 
 
 # Query embeddings are a pure function of (normalized query text, model
@@ -233,7 +234,7 @@ def generate_embeddings(chunks: list[DocumentChunk]) -> list[EmbeddedChunk]:
             # EmbeddedChunk itself.
             metadata={**chunk.metadata, "text": chunk.text},
         )
-        for chunk, vector in zip(safe_chunks, vectors)
+        for chunk, vector in zip(safe_chunks, vectors, strict=False)
     ]
 
     processing_duration = time.perf_counter() - start

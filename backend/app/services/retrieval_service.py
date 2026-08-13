@@ -16,7 +16,8 @@ for how to A/B them against each other):
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
@@ -59,6 +60,7 @@ def _search_with_timeout(
     image_vector_store is forwarded to hybrid_search for the Phase 4 CLIP
     cross-modal signal; None (or the flag off) keeps retrieval text-only.
     """
+
     def _do_search() -> list[RetrievedChunk]:
         if settings.hybrid_search_enabled and isinstance(vector_store, FAISSVectorStore):
             if document_ids is not None:
@@ -71,7 +73,11 @@ def _search_with_timeout(
                     image_vector_store=image_vector_store,
                 )
             return hybrid_search(
-                query, vector_store, top_k=fetch_k, tenant_id=tenant_id, image_vector_store=image_vector_store
+                query,
+                vector_store,
+                top_k=fetch_k,
+                tenant_id=tenant_id,
+                image_vector_store=image_vector_store,
             )
         query_vector = embed_query(query)
         # document_ids filtering is only available at the FAISS search

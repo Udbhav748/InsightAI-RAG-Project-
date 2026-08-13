@@ -45,10 +45,11 @@ import ipaddress
 import logging
 import socket
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -57,9 +58,11 @@ from app.core.config import settings
 from app.core.exceptions import WebSearchError
 from app.models.document import WebSearchResult
 from app.services.agent_events import log_agent_completed, log_agent_started
-from app.services.llm_client import LLMClient
 from app.services.prompt_builder import build_prompt, strip_sources_section
 from app.services.web_search_service import search_web
+
+if TYPE_CHECKING:
+    from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +257,9 @@ class ResearchAgent:
             for future in futures:
                 remaining = deadline - time.perf_counter()
                 if remaining <= 0:
-                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
+                    logger.info(
+                        "research_budget_exceeded", extra={"extra_fields": {"stage": "search"}}
+                    )
                     break
                 try:
                     for result in future.result(timeout=remaining):
@@ -262,13 +267,17 @@ class ResearchAgent:
                             seen.add(result.url)
                             results.append(result)
                 except FutureTimeoutError:
-                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "search"}})
+                    logger.info(
+                        "research_budget_exceeded", extra={"extra_fields": {"stage": "search"}}
+                    )
                     break
         finally:
             executor.shutdown(wait=False)
         return results
 
-    def _read(self, results: list[WebSearchResult], deadline: float) -> tuple[list[WebSearchResult], int]:
+    def _read(
+        self, results: list[WebSearchResult], deadline: float
+    ) -> tuple[list[WebSearchResult], int]:
         """Step 3 — fetch the top pages in parallel and pull bounded plain
         text into context. A page that fails to fetch is skipped, not
         fatal. Same budget/ordering semantics as `_search`."""
@@ -282,16 +291,22 @@ class ResearchAgent:
         read: list[WebSearchResult] = []
         executor = ThreadPoolExecutor(max_workers=len(candidates))
         try:
-            futures = [(result, executor.submit(_fetch_page_text, result.url)) for result in candidates]
+            futures = [
+                (result, executor.submit(_fetch_page_text, result.url)) for result in candidates
+            ]
             for result, future in futures:
                 remaining = deadline - time.perf_counter()
                 if remaining <= 0:
-                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
+                    logger.info(
+                        "research_budget_exceeded", extra={"extra_fields": {"stage": "read"}}
+                    )
                     break
                 try:
                     text = future.result(timeout=remaining)
                 except FutureTimeoutError:
-                    logger.info("research_budget_exceeded", extra={"extra_fields": {"stage": "read"}})
+                    logger.info(
+                        "research_budget_exceeded", extra={"extra_fields": {"stage": "read"}}
+                    )
                     break
                 if not text:
                     continue

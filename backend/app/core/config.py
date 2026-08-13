@@ -801,7 +801,11 @@ class Settings(BaseSettings):
     def data_dir(self, dir_name: str) -> Path:
         """Resolve a data directory (uploads/vector_store/feedback) under
         data_dir_override when set, else relative to backend/ as before."""
-        base = Path(self.data_dir_override) if self.data_dir_override else Path(__file__).resolve().parents[2]
+        base = (
+            Path(self.data_dir_override)
+            if self.data_dir_override
+            else Path(__file__).resolve().parents[2]
+        )
         return base / dir_name
 
     @property
@@ -827,10 +831,7 @@ class Settings(BaseSettings):
                 raise ValueError(f"API_KEYS must be valid JSON: {exc}") from exc
             if not isinstance(raw, dict):
                 raise ValueError("API_KEYS must be a JSON object mapping client_name -> key")
-            return {
-                hashlib.sha256(key.encode()).hexdigest(): client
-                for client, key in raw.items()
-            }
+            return {hashlib.sha256(key.encode()).hexdigest(): client for client, key in raw.items()}
         # Backward compatibility: single api_key becomes "default" client
         return {hashlib.sha256(self.api_key.encode()).hexdigest(): "default"}
 

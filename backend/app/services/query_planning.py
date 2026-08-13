@@ -28,7 +28,7 @@ def plan_subqueries(llm_client: LLMClient, query: str, max_subqueries: int) -> l
         parsed = json.loads(raw)
         queries = parsed.get("queries") if isinstance(parsed, dict) else None
         if isinstance(queries, list) and queries:
-            return [str(q) for q in queries][:max(1, max_subqueries)]
+            return [str(q) for q in queries][: max(1, max_subqueries)]
     except Exception:
         logger.warning("subquery_planning_failed", extra={"extra_fields": {"query": query}})
     return [query]

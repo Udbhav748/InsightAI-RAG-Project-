@@ -100,9 +100,7 @@ def _search_duckduckgo(query: str, max_results: int) -> list[WebSearchResult]:
     ]
 
 
-def _search_keys(
-    query: str, max_results: int
-) -> list[WebSearchResult]:
+def _search_keys(query: str, max_results: int) -> list[WebSearchResult]:
     """Shared JSON-in / JSON-out path for the keyed httpx providers
     (brave, bing). Each provider implements `_parse_<provider>` on the
     raw response body; the request mechanics are identical."""
@@ -114,17 +112,11 @@ def _search_keys(
 
     headers = {"Accept": "application/json"}
     if provider == "brave":
-        url = (
-            "https://api.search.brave.com/res/v1/web/search"
-            f"?q={query}&count={max_results}"
-        )
+        url = f"https://api.search.brave.com/res/v1/web/search?q={query}&count={max_results}"
         headers["X-Subscription-Token"] = settings.web_search_api_key
         parse = _parse_brave
     elif provider == "bing":
-        url = (
-            "https://api.bing.microsoft.com/v7.0/search"
-            f"?q={query}&count={max_results}"
-        )
+        url = f"https://api.bing.microsoft.com/v7.0/search?q={query}&count={max_results}"
         headers["Ocp-Apim-Subscription-Key"] = settings.web_search_api_key
         parse = _parse_bing
     else:

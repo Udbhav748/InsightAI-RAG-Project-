@@ -15,9 +15,7 @@ def validate_pdf_upload(file: UploadFile, contents: bytes) -> None:
         raise EmptyFileError("Uploaded file is empty.")
 
     if exceeds_size_limit(contents, settings.max_upload_size_bytes):
-        raise FileTooLargeError(
-            f"File exceeds the {settings.max_upload_size_mb} MB size limit."
-        )
+        raise FileTooLargeError(f"File exceeds the {settings.max_upload_size_mb} MB size limit.")
 
     if not has_pdf_magic_bytes(contents):
         raise UnsupportedFileTypeError("File content is not a valid PDF.")
@@ -36,6 +34,4 @@ def validate_image_upload(file: UploadFile, contents: bytes) -> None:
         raise EmptyFileError("Uploaded file is empty.")
 
     if exceeds_size_limit(contents, settings.max_upload_size_bytes):
-        raise FileTooLargeError(
-            f"File exceeds the {settings.max_upload_size_mb} MB size limit."
-        )
+        raise FileTooLargeError(f"File exceeds the {settings.max_upload_size_mb} MB size limit.")

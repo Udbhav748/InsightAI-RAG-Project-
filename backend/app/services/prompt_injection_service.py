@@ -31,11 +31,14 @@ _PATTERNS: dict[str, re.Pattern] = {
         r"ignore (all |any )?(previous|prior|above|earlier) instructions", re.IGNORECASE
     ),
     "disregard_instructions": re.compile(
-        r"disregard (all |any )?(the |previous |prior |above )?(instructions|rules|context)", re.IGNORECASE
+        r"disregard (all |any )?(the |previous |prior |above )?(instructions|rules|context)",
+        re.IGNORECASE,
     ),
     "system_override": re.compile(r"system\s*override", re.IGNORECASE),
     "reveal_system_prompt": re.compile(r"reveal (your |the )?system prompt", re.IGNORECASE),
-    "forget_instructions": re.compile(r"forget (all |your |previous |prior |any )*instructions", re.IGNORECASE),
+    "forget_instructions": re.compile(
+        r"forget (all |your |previous |prior |any )*instructions", re.IGNORECASE
+    ),
     "new_instructions": re.compile(r"new instructions\s*:", re.IGNORECASE),
 }
 

@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -47,6 +47,6 @@ async def save_uploaded_file(file: UploadFile) -> dict:
         "original_filename": file.filename,
         "stored_filename": stored_filename,
         "file_size": len(contents),
-        "upload_timestamp": datetime.now(timezone.utc),
+        "upload_timestamp": datetime.now(UTC),
         "status": "uploaded",
     }

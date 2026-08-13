@@ -14,9 +14,9 @@ pdfplumber.extract_tables without touching the chunking pipeline.
 """
 
 import logging
+from pathlib import Path
 
 import fitz
-from pathlib import Path
 
 from app.core.config import settings
 from app.core.exceptions import CorruptedPDFError, DocumentNotFoundError

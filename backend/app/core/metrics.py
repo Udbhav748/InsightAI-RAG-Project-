@@ -46,7 +46,7 @@ import re
 import threading
 import time
 from collections import defaultdict
-from typing import Any, DefaultDict
+from typing import Any
 
 # Fixed histogram buckets in seconds, chosen to span this app's realistic
 # request range (sub-millisecond /health checks up to multi-tool, multi-
@@ -140,9 +140,15 @@ class Metrics:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._counters: DefaultDict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
-        self._gauges: DefaultDict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
-        self._histograms: DefaultDict[tuple[str, tuple[tuple[str, str], ...]], _Histogram] = defaultdict(_Histogram)
+        self._counters: defaultdict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(
+            float
+        )
+        self._gauges: defaultdict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(
+            float
+        )
+        self._histograms: defaultdict[tuple[str, tuple[tuple[str, str], ...]], _Histogram] = (
+            defaultdict(_Histogram)
+        )
         self._started_at = time.time()
         self.reset()
 
@@ -154,7 +160,9 @@ class Metrics:
 
     # --- Recording -------------------------------------------------------
 
-    def inc_counter(self, name: str, labels: dict[str, Any] | None = None, amount: float = 1.0) -> None:
+    def inc_counter(
+        self, name: str, labels: dict[str, Any] | None = None, amount: float = 1.0
+    ) -> None:
         with self._lock:
             self._counters[(name, _label_key(labels))] += amount
 
@@ -162,7 +170,9 @@ class Metrics:
         with self._lock:
             self._gauges[(name, _label_key(labels))] = value
 
-    def observe_duration(self, name: str, value_seconds: float, labels: dict[str, Any] | None = None) -> None:
+    def observe_duration(
+        self, name: str, value_seconds: float, labels: dict[str, Any] | None = None
+    ) -> None:
         with self._lock:
             self._histograms[(name, _label_key(labels))].observe(value_seconds)
 
@@ -182,18 +192,27 @@ class Metrics:
         if model:
             labels["model"] = model
         self.inc_counter("llm_generations_total", labels)
-        self.inc_counter("llm_tokens_total", {"provider": provider, "type": "prompt"}, prompt_tokens)
-        self.inc_counter("llm_tokens_total", {"provider": provider, "type": "completion"}, completion_tokens)
+        self.inc_counter(
+            "llm_tokens_total", {"provider": provider, "type": "prompt"}, prompt_tokens
+        )
+        self.inc_counter(
+            "llm_tokens_total", {"provider": provider, "type": "completion"}, completion_tokens
+        )
         self.inc_counter("llm_cost_usd_total", {"provider": provider}, estimated_cost_usd)
 
     def record_tool_invocation(self, *, tool: str, success: bool, latency_ms: float) -> None:
         """One @track_tool invocation: call count by outcome + latency hist."""
-        self.inc_counter("tool_invocations_total", {"tool": tool, "result": "success" if success else "error"})
-        self.observe_duration("tool_invocation_duration_seconds", latency_ms / 1000.0, {"tool": tool})
+        self.inc_counter(
+            "tool_invocations_total", {"tool": tool, "result": "success" if success else "error"}
+        )
+        self.observe_duration(
+            "tool_invocation_duration_seconds", latency_ms / 1000.0, {"tool": tool}
+        )
 
     def record_error(self, *, taxonomy_category: str, status_code: int) -> None:
         self.inc_counter(
-            "errors_total", {"taxonomy_category": taxonomy_category, "status_code": str(status_code)}
+            "errors_total",
+            {"taxonomy_category": taxonomy_category, "status_code": str(status_code)},
         )
 
     def record_retrieval_grade(self, grade: str) -> None:
@@ -228,7 +247,9 @@ class Metrics:
         with self._lock:
             lines: list[str] = []
 
-            lines.append("# HELP insightai_uptime_seconds Seconds since the application process started.")
+            lines.append(
+                "# HELP insightai_uptime_seconds Seconds since the application process started."
+            )
             lines.append("# TYPE insightai_uptime_seconds gauge")
             lines.append(f"insightai_uptime_seconds {time.time() - self._started_at:.3f}")
 
@@ -251,7 +272,9 @@ class Metrics:
                 for i, bound in enumerate(HISTOGRAM_BUCKETS_SECONDS):
                     bucket_labels = dict(labels)
                     bucket_labels["le"] = f"{bound:g}"
-                    lines.append(f"{name}_bucket{_format_labels(bucket_labels)} {hist.cumulative[i]:.0f}")
+                    lines.append(
+                        f"{name}_bucket{_format_labels(bucket_labels)} {hist.cumulative[i]:.0f}"
+                    )
                 # Prometheus: le="+Inf" always equals count — every
                 # observation falls into it regardless of the largest
                 # finite bound.

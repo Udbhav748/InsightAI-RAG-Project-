@@ -36,8 +36,7 @@ class LocalResearchAgent:
         chunks_by_id: dict[str, RetrievedChunk] = {}
         with ThreadPoolExecutor(max_workers=max(1, len(queries))) as pool:
             futures = [
-                pool.submit(retrieve, q, self._vector_store, tenant_id=tenant_id)
-                for q in queries
+                pool.submit(retrieve, q, self._vector_store, tenant_id=tenant_id) for q in queries
             ]
             for future in futures:
                 try:

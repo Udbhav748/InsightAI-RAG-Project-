@@ -29,11 +29,15 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.services.agent_events import log_agent_completed, log_agent_started
-from app.services.llm_client import LLMClient
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +154,9 @@ class RouterAgent:
             # degrade to the keyword planner's decision.
             logger.warning(
                 "router_fallback",
-                extra={"extra_fields": {"fallback_action": fast.action, "query_length": len(query)}},
+                extra={
+                    "extra_fields": {"fallback_action": fast.action, "query_length": len(query)}
+                },
             )
             log_agent_completed("router", query, start, outcome="fallback", action=fast.action)
             return RouterDecision(action=fast.action, document_id=fast.document_id)

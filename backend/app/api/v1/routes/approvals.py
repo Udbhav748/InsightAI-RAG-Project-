@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.core import permissions
 from app.core.auth import require_auth
-from app.core.exceptions import ApprovalNotFoundError, ForbiddenError
+from app.core.exceptions import ApprovalNotFoundError
 from app.models.schemas import (
     ApprovalItem,
     ApprovalListResponse,
@@ -51,7 +51,10 @@ def list_approvals(
         permissions.APPROVAL_VIEW,
         message="Viewing the approval queue requires the admin role.",
     )
-    if action is not None and action not in (APPROVAL_ACTION_WEB_SEARCH, APPROVAL_ACTION_DOCUMENT_DELETE):
+    if action is not None and action not in (
+        APPROVAL_ACTION_WEB_SEARCH,
+        APPROVAL_ACTION_DOCUMENT_DELETE,
+    ):
         raise ApprovalNotFoundError(
             f"Unknown approval action '{action}'. Supported: {APPROVAL_ACTION_WEB_SEARCH}, "
             f"{APPROVAL_ACTION_DOCUMENT_DELETE}."
@@ -63,7 +66,9 @@ def list_approvals(
 
     approvals = [
         ApprovalItem(**entry)
-        for entry in get_approval_store().list_approvals(action=action, status=status)[:max(1, min(limit, 500))]
+        for entry in get_approval_store().list_approvals(action=action, status=status)[
+            : max(1, min(limit, 500))
+        ]
     ]
 
     logger.info(

@@ -46,7 +46,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "detail": exc.detail,
                 "error_code": exc.error_code,
                 "taxonomy_category": exc.taxonomy_category,
-            }
+            },
         )
 
     @app.exception_handler(Exception)
@@ -63,5 +63,5 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "detail": "Internal server error.",
                 "error_code": "INTERNAL_ERROR",
                 "taxonomy_category": "internal",
-            }
+            },
         )

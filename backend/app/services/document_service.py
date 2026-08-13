@@ -100,8 +100,7 @@ def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
                 page_text = page.get_text()
             except Exception as exc:
                 raise TextExtractionError(
-                    f"Failed to extract text from page {page.number + 1} "
-                    f"of {file_path.name}"
+                    f"Failed to extract text from page {page.number + 1} of {file_path.name}"
                 ) from exc
 
             native_text = page_text.strip() if page_text else ""

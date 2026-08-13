@@ -21,7 +21,6 @@ degrade-don't-fail posture image captioning already uses.
 import logging
 import time
 
-from app.core.config import settings
 from app.core.exceptions import ClipServiceError
 from app.models.document import EmbeddedChunk, ExtractedImage
 from app.services import clip_client
@@ -56,7 +55,11 @@ def _embed_one(
         )
         return None
 
-    text = caption.strip() if caption and caption.strip() else f"A figure on page {image.page_number} of the uploaded document."
+    text = (
+        caption.strip()
+        if caption and caption.strip()
+        else f"A figure on page {image.page_number} of the uploaded document."
+    )
     logger.info(
         "clip_image_embedded",
         extra={
@@ -126,7 +129,7 @@ def embed_images_to_store(
 
     try:
         image_vector_store.add_embeddings(embedded)
-    except Exception as exc:  # noqa: BLE001 — VectorStoreNotFoundError means no index yet
+    except Exception:  # noqa: BLE001 — VectorStoreNotFoundError means no index yet
         image_vector_store.create_index(dimension=len(embedded[0].embedding))
         image_vector_store.add_embeddings(embedded)
     image_vector_store.save()

@@ -65,6 +65,7 @@ class ToolOutputError(ChatServiceError):
 
 # --- Per-tool input schemas -------------------------------------------------
 
+
 class RetrievalInput(BaseModel):
     query: str = Field(min_length=1)
     top_k: int | None = Field(default=None, gt=0)
@@ -165,7 +166,9 @@ def track_tool(name: str):
                 result = func(*args, **kwargs)
             except AppError as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
-                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
+                get_metrics().record_tool_invocation(
+                    tool=name, success=False, latency_ms=latency_ms
+                )
                 logger.warning(
                     "tool_invocation",
                     extra={
@@ -183,7 +186,9 @@ def track_tool(name: str):
                 raise
             except Exception as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
-                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
+                get_metrics().record_tool_invocation(
+                    tool=name, success=False, latency_ms=latency_ms
+                )
                 logger.warning(
                     "tool_invocation",
                     extra={
@@ -204,7 +209,9 @@ def track_tool(name: str):
                 _OUTPUT_ADAPTERS[name].validate_python(result)
             except ValidationError as exc:
                 latency_ms = (time.perf_counter() - start) * 1000
-                get_metrics().record_tool_invocation(tool=name, success=False, latency_ms=latency_ms)
+                get_metrics().record_tool_invocation(
+                    tool=name, success=False, latency_ms=latency_ms
+                )
                 logger.warning(
                     "tool_invocation",
                     extra={

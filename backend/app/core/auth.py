@@ -29,10 +29,8 @@ resets on restart, which is acceptable for a free-tier demo.
 
 import hashlib
 import logging
-import secrets
 import threading
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 from fastapi import Header, Request
@@ -49,12 +47,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _RateLimitBucket:
     """Sliding-window request counter for a single client."""
+
     requests: list[float] = field(default_factory=list)  # timestamps
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def check_and_record(self, limit: int, window_sec: int) -> bool:
         """Return True if request allowed, False if rate limited.
-        
+
         Removes timestamps older than window_sec, then checks count.
         """
         now = time.time()
@@ -91,7 +90,13 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
     if x_api_key is None:
         logger.warning(
             "audit_event",
-            extra={"extra_fields": {"event": "auth_failed", "path": request.url.path, "reason": "missing_header"}},
+            extra={
+                "extra_fields": {
+                    "event": "auth_failed",
+                    "path": request.url.path,
+                    "reason": "missing_header",
+                }
+            },
         )
         raise UnauthorizedError("Missing or invalid API key.")
 
@@ -109,7 +114,13 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
         if not _check_rate_limit(client_name):
             logger.warning(
                 "audit_event",
-                extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": client_name}},
+                extra={
+                    "extra_fields": {
+                        "event": "rate_limited",
+                        "path": request.url.path,
+                        "client": client_name,
+                    }
+                },
             )
             raise RateLimitExceededError("Rate limit exceeded. Please slow down.")
         # Resolve the tenant (and role) for this client (creating the row
@@ -126,7 +137,13 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
 
     logger.warning(
         "audit_event",
-        extra={"extra_fields": {"event": "auth_failed", "path": request.url.path, "reason": "invalid_key"}},
+        extra={
+            "extra_fields": {
+                "event": "auth_failed",
+                "path": request.url.path,
+                "reason": "invalid_key",
+            }
+        },
     )
     raise UnauthorizedError("Missing or invalid API key.")
 
@@ -148,13 +165,19 @@ def require_auth(
     of failure.
     """
     if authorization is not None and authorization.lower().startswith("bearer "):
-        token = authorization[len("bearer "):].strip()
+        token = authorization[len("bearer ") :].strip()
         user_id = decode_access_token(token)
         resolved = get_user_by_id(user_id) if user_id is not None else None
         if resolved is None:
             logger.warning(
                 "audit_event",
-                extra={"extra_fields": {"event": "auth_failed", "path": request.url.path, "reason": "invalid_token"}},
+                extra={
+                    "extra_fields": {
+                        "event": "auth_failed",
+                        "path": request.url.path,
+                        "reason": "invalid_token",
+                    }
+                },
             )
             raise UnauthorizedError("Invalid or expired token.")
 
@@ -166,7 +189,13 @@ def require_auth(
         if not _check_rate_limit(email):
             logger.warning(
                 "audit_event",
-                extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": email}},
+                extra={
+                    "extra_fields": {
+                        "event": "rate_limited",
+                        "path": request.url.path,
+                        "client": email,
+                    }
+                },
             )
             raise RateLimitExceededError("Rate limit exceeded. Please slow down.")
         request.state.client_name = email

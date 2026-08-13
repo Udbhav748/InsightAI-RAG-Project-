@@ -67,10 +67,10 @@ class ToolRegistry:
     """
 
     def __init__(self) -> None:
-        self._tools: dict[str, BaseTool] = {}
-        self._output_adapters: dict[str, TypeAdapter] = {}
+        self._tools: dict[str, BaseTool[Any]] = {}
+        self._output_adapters: dict[str, TypeAdapter[Any]] = {}
 
-    def register(self, tool: BaseTool) -> None:
+    def register(self, tool: BaseTool[Any]) -> None:
         """Register a tool, building its output TypeAdapter once so
         execute()'s output validation is a cheap schema check, not a
         per-call schema build."""
@@ -79,7 +79,7 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         self._output_adapters[tool.name] = TypeAdapter(tool.output_schema)
 
-    def get(self, name: str) -> BaseTool:
+    def get(self, name: str) -> BaseTool[Any]:
         """Return the tool registered under `name`. Raises
         ToolNotFoundError if none."""
         if name not in self._tools:

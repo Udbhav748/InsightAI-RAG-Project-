@@ -8,7 +8,7 @@ identically on an ephemeral deployment.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.database import SessionLocal, db_enabled
 from app.models.db_models import Document
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def persist_document(
@@ -92,7 +92,9 @@ def delete_document_metadata(document_id: str) -> None:
         with SessionLocal() as db:
             db.query(Document).filter(Document.document_id == document_id).delete()
             db.commit()
-        logger.info("document_metadata_deleted", extra={"extra_fields": {"document_id": document_id}})
+        logger.info(
+            "document_metadata_deleted", extra={"extra_fields": {"document_id": document_id}}
+        )
     except Exception as exc:
         logger.warning(
             "document_metadata_delete_failed",

@@ -38,6 +38,7 @@ def _log_retry(retry_state) -> None:
         },
     )
 
+
 # model_id is unused by LeafSense's endpoint (every id runs the same hybrid
 # model) — kept as a fixed, descriptive literal rather than a config value
 # since it has no actual effect on the call.

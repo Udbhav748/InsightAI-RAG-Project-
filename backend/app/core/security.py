@@ -22,7 +22,7 @@ import re
 import time
 from collections import defaultdict
 
-from fastapi import Request
+from fastapi import HTTPException, Request, status
 
 from app.core.config import settings
 from app.core.exceptions import RateLimitExceededError
@@ -43,16 +43,12 @@ class InputValidator:
     def validate_query(cls, query: str) -> str:
         """Validate and sanitize user query."""
         if not query or not query.strip():
-            from fastapi import HTTPException
-
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Query cannot be empty",
             )
 
         if len(query) > cls.MAX_QUERY_LENGTH:
-            from fastapi import HTTPException
-
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Query exceeds maximum length of {cls.MAX_QUERY_LENGTH} characters",
@@ -65,8 +61,6 @@ class InputValidator:
     @classmethod
     def validate_document_id(cls, doc_id: str) -> str:
         """Validate document ID format."""
-        from fastapi import HTTPException
-
         if not doc_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -90,8 +84,6 @@ class InputValidator:
     @classmethod
     def validate_session_id(cls, session_id: str) -> str:
         """Validate session ID format."""
-        from fastapi import HTTPException
-
         if not session_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -168,9 +160,7 @@ async def rate_limit_dependency(request: Request) -> None:
         return
     client_id = get_client_ip(request)
     if not await rate_limiter.is_allowed(client_id):
-        raise RateLimitExceededError(
-            "Too many requests. Please try again later."
-        )
+        raise RateLimitExceededError("Too many requests. Please try again later.")
 
 
 # Global per-IP rate limiter instance for the unauthenticated auth surface.

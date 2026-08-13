@@ -6,10 +6,9 @@ need adjusting. All tables are created by init_db() (create_all) and
 tracked for real migrations via Alembic (backend/alembic/).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
-    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -23,7 +22,7 @@ from app.core.database import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Tenant(Base):

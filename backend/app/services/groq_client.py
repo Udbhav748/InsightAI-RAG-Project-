@@ -24,8 +24,8 @@ from app.core.exceptions import (
     LLMEmptyResponseError,
     LLMTimeoutError,
 )
-from app.core.usage_tracking import record_usage
 from app.core.metrics import get_metrics
+from app.core.usage_tracking import record_usage
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -95,9 +95,7 @@ class GroqClient(LLMClient):
         prompt_tokens = getattr(usage, "prompt_tokens", None) or 0
         completion_tokens = getattr(usage, "completion_tokens", None) or 0
         total_tokens = prompt_tokens + completion_tokens
-        estimated_cost_usd = round(
-            (total_tokens / 1000) * settings.groq_cost_per_1k_tokens, 6
-        )
+        estimated_cost_usd = round((total_tokens / 1000) * settings.groq_cost_per_1k_tokens, 6)
 
         record_usage(
             prompt_tokens=prompt_tokens,
@@ -177,9 +175,7 @@ class GroqClient(LLMClient):
         prompt_tokens = getattr(usage, "prompt_tokens", None) or 0
         completion_tokens = getattr(usage, "completion_tokens", None) or 0
         total_tokens = prompt_tokens + completion_tokens
-        estimated_cost_usd = round(
-            (total_tokens / 1000) * settings.groq_cost_per_1k_tokens, 6
-        )
+        estimated_cost_usd = round((total_tokens / 1000) * settings.groq_cost_per_1k_tokens, 6)
 
         record_usage(
             prompt_tokens=prompt_tokens,

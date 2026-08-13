@@ -190,8 +190,7 @@ class FAISSVectorStore(VectorStore):
         if not settings.chunk_dedup_enabled:
             return False
         positions = [
-            i for i, record in enumerate(self._metadata)
-            if record["document_id"] == document_id
+            i for i, record in enumerate(self._metadata) if record["document_id"] == document_id
         ]
         for i in positions:
             existing_vector = self._index.reconstruct(i)
@@ -237,13 +236,16 @@ class FAISSVectorStore(VectorStore):
             allowed_document_ids = set(document_ids) if document_ids is not None else None
 
             results = []
-            for score, position in zip(scores[0], positions[0]):
+            for score, position in zip(scores[0], positions[0], strict=False):
                 if position == -1:
                     continue
                 record = self._metadata[position]
                 if tenant_id is not None and record["metadata"].get("tenant_id") != tenant_id:
                     continue
-                if allowed_document_ids is not None and record["document_id"] not in allowed_document_ids:
+                if (
+                    allowed_document_ids is not None
+                    and record["document_id"] not in allowed_document_ids
+                ):
                     continue
                 results.append(self._record_to_chunk(record, float(score)))
                 if len(results) >= top_k:
@@ -252,7 +254,11 @@ class FAISSVectorStore(VectorStore):
             return results
 
     def search_bm25(
-        self, query: str, top_k: int, tenant_id: int | None = None, document_ids: list[str] | None = None
+        self,
+        query: str,
+        top_k: int,
+        tenant_id: int | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[RetrievedChunk]:
         """BM25 lexical search — a FAISSVectorStore-specific capability
         alongside search() (semantic), not part of the VectorStore ABC.
@@ -266,7 +272,9 @@ class FAISSVectorStore(VectorStore):
         with self._lock:
             return [
                 self._record_to_chunk(record, score)
-                for record, score in self._bm25_index.search(query, top_k, tenant_id=tenant_id, document_ids=document_ids)
+                for record, score in self._bm25_index.search(
+                    query, top_k, tenant_id=tenant_id, document_ids=document_ids
+                )
             ]
 
     def delete_document(self, document_id: str) -> int:
@@ -423,8 +431,7 @@ class FAISSVectorStore(VectorStore):
 
         if index.ntotal != len(metadata):
             raise MetadataSyncError(
-                f"Loaded index has {index.ntotal} vectors but metadata has "
-                f"{len(metadata)} entries."
+                f"Loaded index has {index.ntotal} vectors but metadata has {len(metadata)} entries."
             )
 
         with self._lock:

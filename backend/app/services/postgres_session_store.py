@@ -14,7 +14,7 @@ max_turns_per_session per session.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.database import SessionLocal
 from app.models.db_models import ChatSession, ChatTurn
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PostgresSessionStore:
@@ -44,10 +44,7 @@ class PostgresSessionStore:
 
         overflow = count - self._max_sessions + 1
         stale = (
-            db.query(ChatSession)
-            .order_by(ChatSession.last_accessed_at.asc())
-            .limit(overflow)
-            .all()
+            db.query(ChatSession).order_by(ChatSession.last_accessed_at.asc()).limit(overflow).all()
         )
         for session in stale:
             db.delete(session)
@@ -70,7 +67,8 @@ class PostgresSessionStore:
             )
             db.commit()
         logger.info(
-            "session_created", extra={"extra_fields": {"session_id": session_id, "tenant_id": tenant_id}}
+            "session_created",
+            extra={"extra_fields": {"session_id": session_id, "tenant_id": tenant_id}},
         )
         return session_id
 
@@ -81,10 +79,7 @@ class PostgresSessionStore:
                 return None
             session.last_accessed_at = _utcnow()
             db.commit()
-            return [
-                {"role": turn.role, "content": turn.content}
-                for turn in session.turns
-            ]
+            return [{"role": turn.role, "content": turn.content} for turn in session.turns]
 
     def append_turn(self, session_id: str, role: str, content: str) -> bool:
         with SessionLocal() as db:

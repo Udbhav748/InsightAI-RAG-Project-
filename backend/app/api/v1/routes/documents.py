@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.api.v1.routes.query import get_image_vector_store, get_llm_client, get_vector_store
-from app.core.auth import require_auth
 from app.core import permissions
+from app.core.auth import require_auth
 from app.core.config import settings
 from app.core.exceptions import (
     ApprovalRequiredError,
@@ -23,10 +23,13 @@ from app.models.schemas import (
     DocumentProcessingResponse,
     HighlightResponse,
 )
-from app.services import s3_sync_service
-from app.services import approval_service
+from app.services import approval_service, s3_sync_service
 from app.services.document_processing_service import DocumentProcessingService
-from app.services.document_repository import delete_document_metadata, get_document_owner, list_documents
+from app.services.document_repository import (
+    delete_document_metadata,
+    get_document_owner,
+    list_documents,
+)
 from app.services.image_captioning_service import image_storage_dir, load_image_manifest
 from app.services.upload_service import UPLOAD_DIR
 from app.services.validation_service import validate_pdf_upload

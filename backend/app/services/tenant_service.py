@@ -81,7 +81,13 @@ def resolve_tenant(client_name: str) -> tuple[int, str] | None:
             db.refresh(tenant)
             logger.info(
                 "tenant_created",
-                extra={"extra_fields": {"client_name": client_name, "tenant_id": tenant.id, "role": tenant.role}},
+                extra={
+                    "extra_fields": {
+                        "client_name": client_name,
+                        "tenant_id": tenant.id,
+                        "role": tenant.role,
+                    }
+                },
             )
             tenant_id, stored_role = tenant.id, tenant.role
 
@@ -103,7 +109,11 @@ def find_api_key(key_hash: str) -> tuple[str, int, str] | None:
             return None
         tenant = db.query(Tenant).filter(Tenant.id == api_key.tenant_id).first()
         stored_role = tenant.role if tenant is not None else "member"
-        return api_key.client_name, api_key.tenant_id, effective_role(api_key.client_name, stored_role)
+        return (
+            api_key.client_name,
+            api_key.tenant_id,
+            effective_role(api_key.client_name, stored_role),
+        )
 
 
 def seed_keys_from_settings() -> None:

@@ -1,5 +1,6 @@
 """Routes for natural language question-answering against uploaded documents."""
 
+import contextlib
 import json
 import logging
 from collections.abc import Iterator
@@ -26,7 +27,11 @@ from app.services.feedback_service import record_feedback
 from app.services.llm_client import LLMClient
 from app.services.llm_provider import build_llm_client
 from app.services.rag_service import ChatService
-from app.services.session_repository import get_session_owner, list_sessions, set_session_title_if_unset
+from app.services.session_repository import (
+    get_session_owner,
+    list_sessions,
+    set_session_title_if_unset,
+)
 from app.services.session_store import get_session_store
 from app.services.validation_service import validate_image_upload
 from app.services.vector_store import VectorStore
@@ -63,10 +68,8 @@ def get_vector_store() -> VectorStore:
         return store
 
     store = FAISSVectorStore()
-    try:
+    with contextlib.suppress(VectorStoreNotFoundError):
         store.load()
-    except VectorStoreNotFoundError:
-        pass
     from app.core.metrics import get_metrics
 
     get_metrics().record_vectors(store.total_vectors())
@@ -92,10 +95,8 @@ def get_image_vector_store() -> VectorStore:
         index_path=data_dir / settings.image_vector_index_filename,
         metadata_path=data_dir / settings.image_vector_metadata_filename,
     )
-    try:
+    with contextlib.suppress(VectorStoreNotFoundError):
         store.load()
-    except VectorStoreNotFoundError:
-        pass
     return store
 
 

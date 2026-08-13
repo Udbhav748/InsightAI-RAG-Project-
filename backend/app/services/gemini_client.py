@@ -21,8 +21,8 @@ from app.core.exceptions import (
     LLMEmptyResponseError,
     LLMTimeoutError,
 )
-from app.core.usage_tracking import record_usage
 from app.core.metrics import get_metrics
+from app.core.usage_tracking import record_usage
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -49,9 +49,7 @@ class GeminiClient(LLMClient):
         try:
             self._client = genai.Client(
                 api_key=settings.gemini_api_key,
-                http_options=types.HttpOptions(
-                    timeout=settings.gemini_timeout_seconds * 1000
-                ),
+                http_options=types.HttpOptions(timeout=settings.gemini_timeout_seconds * 1000),
             )
         except Exception as exc:
             raise LLMConfigurationError(f"Failed to configure Gemini client: {exc}") from exc
@@ -239,9 +237,7 @@ class GeminiClient(LLMClient):
         contents = [
             types.Content(
                 parts=[
-                    types.Part(
-                        inline_data=types.Blob(mime_type=mime_type, data=image_bytes)
-                    ),
+                    types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
                     types.Part(text=prompt),
                 ]
             )

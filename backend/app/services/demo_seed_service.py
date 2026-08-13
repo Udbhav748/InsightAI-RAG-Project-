@@ -50,7 +50,9 @@ async def seed_if_empty(vector_store: VectorStore) -> None:
     if not pdf_paths:
         logger.warning(
             "demo_seed_skipped",
-            extra={"extra_fields": {"reason": "no bundled PDFs found", "dir": str(DEMO_CORPUS_DIR)}},
+            extra={
+                "extra_fields": {"reason": "no bundled PDFs found", "dir": str(DEMO_CORPUS_DIR)}
+            },
         )
         return
 

@@ -71,10 +71,7 @@ def try_vision_qa(
         return None
 
     pages = page_images[: settings.vision_qa_max_pages]
-    prompt = (
-        f"{_QA_PROMPT}\n\nDocument: {document_id}\nQuestion: {query}\n\n"
-        "Answer in plain text."
-    )
+    prompt = f"{_QA_PROMPT}\n\nDocument: {document_id}\nQuestion: {query}\n\nAnswer in plain text."
 
     for path in pages:
         try:

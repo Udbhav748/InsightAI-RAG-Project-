@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 def _is_complex(prompt: str) -> bool:
-    return REFLECTION_INSTRUCTION in prompt or len(prompt) > settings.model_routing_complex_prompt_chars
+    return (
+        REFLECTION_INSTRUCTION in prompt
+        or len(prompt) > settings.model_routing_complex_prompt_chars
+    )
 
 
 class RoutingLLMClient(LLMClient):

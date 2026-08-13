@@ -67,19 +67,23 @@ class InMemorySessionStore:
 
     def _evict_lru_if_needed(self) -> None:
         """Evict least-recently-accessed session if at capacity.
-        
+
         Called with lock held.
         """
         if len(self._sessions) >= self._max_sessions:
             # Find session with oldest last_accessed
             lru_session_id = min(
-                self._sessions.keys(),
-                key=lambda sid: self._sessions[sid].last_accessed
+                self._sessions.keys(), key=lambda sid: self._sessions[sid].last_accessed
             )
-            evicted = self._sessions.pop(lru_session_id)
+            self._sessions.pop(lru_session_id)
             logger.info(
                 "session_evicted_lru",
-                extra={"extra_fields": {"session_id": lru_session_id, "max_sessions": self._max_sessions}},
+                extra={
+                    "extra_fields": {
+                        "session_id": lru_session_id,
+                        "max_sessions": self._max_sessions,
+                    }
+                },
             )
 
     def create_session(self, tenant_id: int | None = None) -> str:
@@ -109,7 +113,7 @@ class InMemorySessionStore:
 
     def append_turn(self, session_id: str, role: str, content: str) -> bool:
         """Append a turn to the session's history. Returns False if session not found.
-        
+
         Trims oldest turns if history exceeds max_turns_per_session.
         """
         with self._lock:
@@ -119,7 +123,7 @@ class InMemorySessionStore:
             session.history.append({"role": role, "content": content})
             # Trim to max_turns_per_session (keep most recent)
             if len(session.history) > self._max_turns_per_session:
-                session.history = session.history[-self._max_turns_per_session:]
+                session.history = session.history[-self._max_turns_per_session :]
             session.last_accessed = time.time()
         return True
 

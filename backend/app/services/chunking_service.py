@@ -21,7 +21,9 @@ from app.models.document import DocumentChunk, ExtractedDocument
 logger = logging.getLogger(__name__)
 
 
-def chunk_document(document: ExtractedDocument, tenant_id: int | None = None) -> list[DocumentChunk]:
+def chunk_document(
+    document: ExtractedDocument, tenant_id: int | None = None
+) -> list[DocumentChunk]:
     """Split document.extracted_text into DocumentChunks.
 
     Chunk size and overlap come from Settings (chunk_size, chunk_overlap).

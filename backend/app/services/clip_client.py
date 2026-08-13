@@ -4,7 +4,7 @@ The CLIP service keeps its own transformers/torch stack in its own
 process; InsightAI never imports torch or CLIP code — this module makes
 plain HTTP calls, the same isolation vision_client.py uses for LeafSense.
 
-Contract (docs/MULTIUSER_MULTIMODAL_PLAN.md Phase 4): 
+Contract (docs/MULTIUSER_MULTIMODAL_PLAN.md Phase 4):
 
 - POST /embed/text   body {"text": "..."} -> {"embedding": [...], "dimension": N}
 - POST /embed/image  multipart field "file" -> {"embedding": [...], "dimension": N}
@@ -50,11 +50,15 @@ def _collect_embedding(payload: dict) -> ClipEmbedding:
         embedding = payload["embedding"]
         dimension = int(payload["dimension"])
     except (ValueError, KeyError, TypeError) as exc:
-        raise ClipServiceError(f"CLIP service returned an unexpected response shape: {exc}") from exc
+        raise ClipServiceError(
+            f"CLIP service returned an unexpected response shape: {exc}"
+        ) from exc
     try:
         vector = [float(v) for v in embedding]
     except (TypeError, ValueError) as exc:
-        raise ClipServiceError(f"CLIP service embedding contained non-numeric values: {exc}") from exc
+        raise ClipServiceError(
+            f"CLIP service embedding contained non-numeric values: {exc}"
+        ) from exc
     if len(vector) != dimension:
         raise ClipServiceError(
             f"CLIP service embedding length ({len(vector)}) does not match declared "

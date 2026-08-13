@@ -16,10 +16,15 @@ from __future__ import annotations
 import logging
 import time
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
-from app.models.document import RetrievedChunk
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
+
+    from app.models.document import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +86,13 @@ def rerank(query: str, candidates: list[RetrievedChunk], top_k: int) -> list[Ret
         raise RerankingError(f"Failed to re-rank candidates: {exc}") from exc
     processing_duration = time.perf_counter() - start
 
-    ranked = sorted(zip(candidates, raw_scores), key=lambda pair: pair[1], reverse=True)
+    ranked = sorted(
+        zip(candidates, raw_scores, strict=False), key=lambda pair: pair[1], reverse=True
+    )
     results = [
-        chunk.model_copy(update={"metadata": {**chunk.metadata, "rerank_score": float(rerank_score)}})
+        chunk.model_copy(
+            update={"metadata": {**chunk.metadata, "rerank_score": float(rerank_score)}}
+        )
         for chunk, rerank_score in ranked[:top_k]
     ]
 

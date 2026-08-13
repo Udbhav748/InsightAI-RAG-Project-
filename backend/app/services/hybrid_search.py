@@ -60,7 +60,11 @@ class BM25Index:
         self._bm25 = BM25Okapi(corpus)
 
     def search(
-        self, query: str, top_k: int, tenant_id: int | None = None, document_ids: list[str] | None = None
+        self,
+        query: str,
+        top_k: int,
+        tenant_id: int | None = None,
+        document_ids: list[str] | None = None,
     ) -> list[tuple[dict, float]]:
         """Return up to top_k (record, score) pairs, highest score first.
         score is BM25Okapi's raw score: unbounded above, exactly 0.0 for a
@@ -79,14 +83,18 @@ class BM25Index:
         candidate_positions = range(len(scores))
         if tenant_id is not None:
             candidate_positions = [
-                i for i in candidate_positions if self._records[i]["metadata"].get("tenant_id") == tenant_id
+                i
+                for i in candidate_positions
+                if self._records[i]["metadata"].get("tenant_id") == tenant_id
             ]
         if document_ids is not None:
             allowed = set(document_ids)
             candidate_positions = [
                 i for i in candidate_positions if self._records[i]["document_id"] in allowed
             ]
-        ranked_positions = sorted(candidate_positions, key=lambda i: scores[i], reverse=True)[:top_k]
+        ranked_positions = sorted(candidate_positions, key=lambda i: scores[i], reverse=True)[
+            :top_k
+        ]
         return [(self._records[i], float(scores[i])) for i in ranked_positions]
 
 
@@ -147,7 +155,9 @@ def hybrid_search(
     tenant_id is passed through to all retrievers unchanged — see
     FAISSVectorStore.search's docstring for its filtering semantics.
     """
-    resolved_candidate_k = candidate_k if candidate_k is not None else settings.retrieval_candidate_k
+    resolved_candidate_k = (
+        candidate_k if candidate_k is not None else settings.retrieval_candidate_k
+    )
     semantic_weight = settings.hybrid_semantic_weight
 
     start = time.perf_counter()
@@ -185,14 +195,14 @@ def hybrid_search(
     clip_norm = _min_max_normalize([chunk.score for chunk in clip_results])
 
     fused: dict[str, dict] = {}
-    for chunk, norm_score in zip(semantic_results, semantic_norm):
+    for chunk, norm_score in zip(semantic_results, semantic_norm, strict=False):
         fused[chunk.chunk_id] = {
             "chunk": chunk,
             "semantic": norm_score,
             "bm25": 0.0,
             "clip": 0.0,
         }
-    for chunk, norm_score in zip(bm25_results, bm25_norm):
+    for chunk, norm_score in zip(bm25_results, bm25_norm, strict=False):
         entry = fused.get(chunk.chunk_id)
         if entry is None:
             fused[chunk.chunk_id] = {
@@ -203,7 +213,7 @@ def hybrid_search(
             }
         else:
             entry["bm25"] = norm_score
-    for chunk, norm_score in zip(clip_results, clip_norm):
+    for chunk, norm_score in zip(clip_results, clip_norm, strict=False):
         entry = fused.get(chunk.chunk_id)
         if entry is None:
             fused[chunk.chunk_id] = {

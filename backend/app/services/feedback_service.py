@@ -11,7 +11,7 @@ backend/).
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.config import settings
 from app.services import s3_sync_service
@@ -74,7 +74,7 @@ def record_feedback(
     FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
     event = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "message_id": message_id,
         "rating": rating,
         "comment": comment,

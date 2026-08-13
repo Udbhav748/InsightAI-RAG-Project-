@@ -5,6 +5,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.routes import (
+    admin,
+    approvals,
+    auth,
+    documents,
+    health,
+    query,
+)
+from app.api.v1.routes import (
+    metrics as metrics_routes,
+)
 from app.core.config import settings
 from app.core.database import db_enabled, init_db
 from app.core.error_handlers import register_exception_handlers
@@ -12,15 +23,6 @@ from app.core.logging import configure_logging
 from app.core.metrics import RequestTimer, get_metrics
 from app.core.request_context import request_id_var
 from app.core.security import security_headers_middleware
-from app.api.v1.routes import (
-    admin,
-    approvals,
-    auth,
-    documents,
-    health,
-    metrics as metrics_routes,
-    query,
-)
 from app.services import s3_sync_service
 from app.services.demo_seed_service import seed_if_empty
 from app.services.tenant_service import seed_keys_from_settings

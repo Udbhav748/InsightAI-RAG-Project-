@@ -44,7 +44,9 @@ def parse_structured_answer(raw: str) -> StructuredAnswer | None:
 
     cleaned = _FENCE_END_RE.sub("", _FENCE_RE.sub("", raw.strip())).strip()
     if not cleaned:
-        logger.info("structured_output_parse_failed", extra={"extra_fields": {"reason": "only_fence"}})
+        logger.info(
+            "structured_output_parse_failed", extra={"extra_fields": {"reason": "only_fence"}}
+        )
         return None
 
     try:

@@ -14,7 +14,7 @@ app/core/auth.py's require_auth for how an issued JWT gets back to
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
@@ -127,7 +127,7 @@ def create_access_token(user_id: int, email: str) -> str:
         raise AuthConfigurationError(
             "JWT_SECRET_KEY is not configured; individual user login is unavailable."
         )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "email": email,

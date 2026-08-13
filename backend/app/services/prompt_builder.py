@@ -88,7 +88,7 @@ _INSTRUCTIONS = (
     "Cite your evidence inline: immediately after each factual claim, add "
     "the bracket number(s) of the excerpt(s) it came from — e.g. "
     '"Project scope defines what work is included [1]." If a claim draws '
-    "on more than one excerpt, cite them together, e.g. \"...confirmed in "
+    'on more than one excerpt, cite them together, e.g. "...confirmed in '
     'testing [1][3]." Every sentence stating a fact from the context needs '
     "at least one citation; don't cite anything for parts of the answer "
     "that aren't drawn from the context (e.g. the fallback line above, or "
@@ -127,9 +127,7 @@ _WEB_RESULTS_INSTRUCTION = (
 def _format_history(history: list[dict] | None) -> str:
     if not history:
         return ""
-    lines = "\n".join(
-        f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history
-    )
+    lines = "\n".join(f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history)
     return f"Conversation history:\n{lines}\n\n"
 
 
@@ -213,9 +211,7 @@ def strip_sources_section(answer: str) -> str:
 # The JSON object shape requested in JSON-mode (structured-output) answers,
 # mirrored by app/models/schemas.py's StructuredAnswer. Kept in sync with
 # that model — change both when the shape changes.
-_STRUCTURED_OUTPUT_SCHEMA = (
-    '{"answer": "<your answer text>", "sources": ["<document_id>", ...]}'
-)
+_STRUCTURED_OUTPUT_SCHEMA = '{"answer": "<your answer text>", "sources": ["<document_id>", ...]}'
 
 
 def build_structured_prompt(

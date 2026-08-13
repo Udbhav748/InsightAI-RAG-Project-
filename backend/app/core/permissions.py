@@ -30,7 +30,13 @@ APPROVAL_RESOLVE = "approval_resolve"
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
-        {DOCUMENT_DELETE, DOCUMENT_LIST_ALL_TENANTS, ANALYTICS_VIEW, APPROVAL_VIEW, APPROVAL_RESOLVE}
+        {
+            DOCUMENT_DELETE,
+            DOCUMENT_LIST_ALL_TENANTS,
+            ANALYTICS_VIEW,
+            APPROVAL_VIEW,
+            APPROVAL_RESOLVE,
+        }
     ),
     "member": frozenset(),
 }

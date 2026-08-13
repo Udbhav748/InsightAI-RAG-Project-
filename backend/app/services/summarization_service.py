@@ -9,7 +9,6 @@ the "summarize" action of ChatService's planner (see rag_service.py).
 import logging
 import time
 
-from app.core.config import settings
 from app.core.exceptions import DocumentNotFoundError
 from app.models.document import RetrievedChunk
 from app.services.llm_client import LLMClient

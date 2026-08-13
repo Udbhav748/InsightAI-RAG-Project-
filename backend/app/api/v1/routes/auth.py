@@ -24,7 +24,12 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/signup", response_model=AuthTokenResponse, status_code=201, dependencies=[Depends(rate_limit_dependency)])
+@router.post(
+    "/signup",
+    response_model=AuthTokenResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limit_dependency)],
+)
 def signup(payload: SignupRequest) -> AuthTokenResponse:
     """Create a personal account (and its own private tenant — see
     user_service.create_user) and return a ready-to-use JWT.
@@ -36,18 +41,24 @@ def signup(payload: SignupRequest) -> AuthTokenResponse:
     user_id, tenant_id, _role = create_user(payload.email, payload.password)
     logger.info(
         "audit_event",
-        extra={"extra_fields": {"event": "user_signed_up", "user_id": user_id, "tenant_id": tenant_id}},
+        extra={
+            "extra_fields": {"event": "user_signed_up", "user_id": user_id, "tenant_id": tenant_id}
+        },
     )
     token = create_access_token(user_id, payload.email)
     return AuthTokenResponse(access_token=token)
 
 
-@router.post("/login", response_model=AuthTokenResponse, dependencies=[Depends(rate_limit_dependency)])
+@router.post(
+    "/login", response_model=AuthTokenResponse, dependencies=[Depends(rate_limit_dependency)]
+)
 def login(payload: LoginRequest) -> AuthTokenResponse:
     user_id, tenant_id, _role = authenticate_user(payload.email, payload.password)
     logger.info(
         "audit_event",
-        extra={"extra_fields": {"event": "user_logged_in", "user_id": user_id, "tenant_id": tenant_id}},
+        extra={
+            "extra_fields": {"event": "user_logged_in", "user_id": user_id, "tenant_id": tenant_id}
+        },
     )
     token = create_access_token(user_id, payload.email)
     return AuthTokenResponse(access_token=token)

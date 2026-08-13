@@ -25,8 +25,10 @@ from app.services.embedding_service import generate_embeddings
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.image_captioning_service import (
     caption_images,
-    image_storage_dir as caption_image_storage_dir,
     write_image_manifest,
+)
+from app.services.image_captioning_service import (
+    image_storage_dir as caption_image_storage_dir,
 )
 from app.services.llm_client import LLMClient
 from app.services.pii_service import detect_pii
@@ -36,8 +38,16 @@ from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_MIME_EXT = {"png": "png", "jpeg": "jpg", "jpg": "jpg", "gif": "gif",
-                   "bmp": "bmp", "webp": "webp", "tiff": "tif", "jp2": "jp2"}
+_IMAGE_MIME_EXT = {
+    "png": "png",
+    "jpeg": "jpg",
+    "jpg": "jpg",
+    "gif": "gif",
+    "bmp": "bmp",
+    "webp": "webp",
+    "tiff": "tif",
+    "jp2": "jp2",
+}
 
 
 def _ext_for_mime(mime_type: str) -> str:
@@ -86,7 +96,12 @@ def _persist_images(image_records: list[dict]) -> list[ExtractedImage]:
 
 
 class DocumentProcessingService:
-    def __init__(self, vector_store: VectorStore, llm_client: LLMClient | None = None, image_vector_store=None):
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        llm_client: LLMClient | None = None,
+        image_vector_store=None,
+    ):
         self._vector_store = vector_store
         # Optional, only consulted when Settings.image_captioning_enabled:
         # captioning needs a vision-capable client, which needs a configured
@@ -170,9 +185,7 @@ class DocumentProcessingService:
                             tenant_id=tenant_id,
                             chunk_index_start=len(chunks) + len(multimodal_chunks),
                         )
-                        images_captioned = len(
-                            {c.metadata["image_id"] for c in caption_chunks}
-                        )
+                        images_captioned = len({c.metadata["image_id"] for c in caption_chunks})
                         captions_by_image_id = {
                             c.metadata["image_id"]: c.text
                             for c in caption_chunks
@@ -279,7 +292,9 @@ class DocumentProcessingService:
                 for other_id in self._vector_store.list_document_ids(tenant_id=tenant_id):
                     if other_id == document_id:
                         continue
-                    other_first = self._vector_store.first_chunk_vector(other_id, tenant_id=tenant_id)
+                    other_first = self._vector_store.first_chunk_vector(
+                        other_id, tenant_id=tenant_id
+                    )
                     if other_first is None:
                         continue
                     similarity = float(np.dot(new_first, other_first))

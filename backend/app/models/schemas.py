@@ -20,7 +20,9 @@ class DocumentUploadResponse(BaseModel):
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="The user's natural-language question.")
     top_k: int | None = Field(
-        None, gt=0, description="Number of chunks to retrieve. Defaults to Settings.retrieval_top_k."
+        None,
+        gt=0,
+        description="Number of chunks to retrieve. Defaults to Settings.retrieval_top_k.",
     )
     min_score: float | None = Field(
         None,
@@ -95,7 +97,9 @@ class DiagnosisInfo(BaseModel):
     raw_class: str = Field(..., description="Raw class label as returned by LeafSense.")
     crop: str = Field(..., description="Plain-language crop name, e.g. 'peach'.")
     disease: str = Field(..., description="Plain-language disease name, e.g. 'bacterial spot'.")
-    confidence: float = Field(..., description="Model confidence for the predicted class, in [0, 1].")
+    confidence: float = Field(
+        ..., description="Model confidence for the predicted class, in [0, 1]."
+    )
     low_confidence: bool = Field(
         ..., description="True if confidence is below Settings.vision_confidence_threshold."
     )
@@ -167,13 +171,25 @@ class RubricScores(BaseModel):
     point for the per-criterion averages or Inter-Annotator Agreement
     computed from it (see eval/metrics_report.py)."""
 
-    correctness: int = Field(..., ge=1, le=5, description="Is the answer factually and logically right?")
-    helpfulness: int = Field(..., ge=1, le=5, description="Does it help the user complete their task?")
+    correctness: int = Field(
+        ..., ge=1, le=5, description="Is the answer factually and logically right?"
+    )
+    helpfulness: int = Field(
+        ..., ge=1, le=5, description="Does it help the user complete their task?"
+    )
     completeness: int = Field(..., ge=1, le=5, description="Does it cover every required part?")
-    safety: int = Field(..., ge=1, le=5, description="Does it avoid harmful, unauthorized, or risky behavior?")
-    tone: int = Field(..., ge=1, le=5, description="Is the communication appropriate for the context?")
-    groundedness: int = Field(..., ge=1, le=5, description="Are factual claims supported by evidence?")
-    citation_quality: int = Field(..., ge=1, le=5, description="Do citations point to the correct sources?")
+    safety: int = Field(
+        ..., ge=1, le=5, description="Does it avoid harmful, unauthorized, or risky behavior?"
+    )
+    tone: int = Field(
+        ..., ge=1, le=5, description="Is the communication appropriate for the context?"
+    )
+    groundedness: int = Field(
+        ..., ge=1, le=5, description="Are factual claims supported by evidence?"
+    )
+    citation_quality: int = Field(
+        ..., ge=1, le=5, description="Do citations point to the correct sources?"
+    )
 
 
 class FeedbackRequest(BaseModel):
@@ -214,7 +230,8 @@ class DocumentProcessingResponse(BaseModel):
     total_chunks: int
     total_embeddings: int
     pages_ocred: int = Field(
-        0, description="Number of pages that had no extractable text layer and were recovered via OCR."
+        0,
+        description="Number of pages that had no extractable text layer and were recovered via OCR.",
     )
     total_images: int = Field(
         0, description="Embedded images extracted from the PDF (multi-modal RAG, Phase 1)."
@@ -335,11 +352,16 @@ class DocumentImageItem(BaseModel):
     """One image extracted from a document (multi-modal RAG, Phase 1) —
     metadata only; the bytes are fetched separately via `url`."""
 
-    image_id: str = Field(..., description="Stable identifier for this image, unique within the document.")
-    document_id: str = Field(..., description="Identifier of the document this image was extracted from.")
+    image_id: str = Field(
+        ..., description="Stable identifier for this image, unique within the document."
+    )
+    document_id: str = Field(
+        ..., description="Identifier of the document this image was extracted from."
+    )
     page_number: int = Field(..., ge=1, description="1-based page this image appeared on.")
     content_type: str = Field(
-        ..., description="'figure' (an embedded image) or 'page' (a rasterized full-page render of a low-text page)."
+        ...,
+        description="'figure' (an embedded image) or 'page' (a rasterized full-page render of a low-text page).",
     )
     mime_type: str = Field(..., description="MIME type of the persisted bytes.")
     width: int = Field(..., ge=1, description="Image width in pixels.")

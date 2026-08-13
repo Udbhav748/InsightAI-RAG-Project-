@@ -23,7 +23,7 @@ tools/implementations.py, constructed in tools/factory.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -90,8 +90,18 @@ class ToolSpec(BaseModel):
     output_schema: dict[str, Any]
 
 
+# Bound to BaseModel and shared by every tool's declared args_schema/execute
+# pair. Generic on T_Args (rather than a fixed `args: BaseModel` parameter)
+# so each concrete tool can narrow to its own Pydantic input type without
+# violating Liskov substitution: RetrievalTool.execute(args: RetrievalInput,
+# ...) satisfies BaseTool[RetrievalInput], and callers that only hold a
+# BaseTool[Any] (the registry's storage type) still type-check because Any
+# is compatible in both variance directions.
+T_Args = TypeVar("T_Args", bound=BaseModel)
+
+
 @runtime_checkable
-class BaseTool(Protocol):
+class BaseTool(Protocol[T_Args]):
     """The tool interface. A tool is a named capability with a declared
     Pydantic args schema and a declared output type; execute() validates
     its work against those and returns a ToolResult.
@@ -102,7 +112,7 @@ class BaseTool(Protocol):
 
     name: str
     description: str
-    args_schema: type[BaseModel]
+    args_schema: type[T_Args]
     output_schema: type
 
-    async def execute(self, args: BaseModel, context: ToolContext) -> ToolResult: ...
+    async def execute(self, args: T_Args, context: ToolContext) -> ToolResult: ...

@@ -30,8 +30,7 @@ def get_llm_client_for_provider(provider: str) -> LLMClient:
     provider_cls = _PROVIDERS.get(provider)
     if provider_cls is None:
         raise LLMConfigurationError(
-            f"Unknown llm_provider '{provider}'. Expected one of: "
-            f"{', '.join(sorted(_PROVIDERS))}."
+            f"Unknown llm_provider '{provider}'. Expected one of: {', '.join(sorted(_PROVIDERS))}."
         )
     return provider_cls()
 

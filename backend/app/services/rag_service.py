@@ -21,21 +21,22 @@ LLMClient interfaces, never on a concrete implementation (FAISSVectorStore,
 GeminiClient); those are constructed elsewhere and handed in.
 """
 
+import hashlib
 import logging
 import re
 import time
-import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
-from functools import lru_cache
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
-from app.core.usage_tracking import current_usage, reset_usage
 from app.core.metrics import get_metrics
+from app.core.usage_tracking import current_usage, reset_usage
 from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
+from app.services.agent_events import log_agent_handoff
 from app.services.llm_client import LLMClient
+from app.services.local_research_agent import LocalResearchAgent
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
     PROMPT_VERSION,
@@ -45,19 +46,17 @@ from app.services.prompt_builder import (
     strip_sources_section,
 )
 from app.services.prompt_injection_service import detect_possible_injection
+from app.services.research_agent import ResearchAgent, ResearchFindings
 from app.services.retrieval_service import retrieve
+from app.services.router_agent import RouterAgent
 from app.services.structured_output import parse_structured_answer
 from app.services.summarization_service import summarize_document
+from app.services.tools.base import ToolContext
+from app.services.tools.factory import build_tool_registry
 from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
 from app.services.vision_qa_service import try_vision_qa
 from app.services.web_search_service import search_web, web_search_ready
-from app.services.agent_events import log_agent_handoff
-from app.services.research_agent import ResearchAgent, ResearchFindings
-from app.services.router_agent import RouterAgent
-from app.services.local_research_agent import LocalResearchAgent
-from app.services.tools.base import ToolContext
-from app.services.tools.factory import build_tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +94,7 @@ def _capture_prompt(prompt: str, *, variant: str) -> None:
             }
         },
     )
+
 
 # Each entry is (normalized exact phrases, canned response). Checked in
 # order; the query must match one of the phrases entirely (after
@@ -162,7 +162,7 @@ _CONVERSATIONAL_INTENTS = [
         },
         "I'm here and working — I just didn't find anything relevant to that in "
         "your uploaded documents. Try asking a specific question about what's in "
-        "them, like \"what does this document say about...\".",
+        'them, like "what does this document say about...".',
     ),
 ]
 
@@ -241,14 +241,18 @@ def _web_source_references(results: list[WebSearchResult], start: int = 1) -> li
     """
     return [
         SourceReference(
-            number=i, document_id="web", chunk_id=result.url, excerpt=_excerpt(result.snippet), url=result.url
+            number=i,
+            document_id="web",
+            chunk_id=result.url,
+            excerpt=_excerpt(result.snippet),
+            url=result.url,
         )
         for i, result in enumerate(results, start=start)
     ]
 
 
 def _answer_source(chunks: list[RetrievedChunk], web_results: list[WebSearchResult]) -> str:
-    """"documents" | "web" | "mixed", based on which context actually made
+    """ "documents" | "web" | "mixed", based on which context actually made
     it into the final prompt — not on what was attempted. A web search that
     was tried but returned nothing doesn't count as "web"."""
     if not web_results:
@@ -265,16 +269,91 @@ def _answer_source(chunks: list[RetrievedChunk], web_results: list[WebSearchResu
 # lists; fine for a signal that's a pointer to double-check, not a gate.
 _GROUNDEDNESS_STOPWORDS = frozenset(
     {
-        "a", "an", "the", "and", "or", "but", "if", "then", "else", "when",
-        "than", "that", "this", "these", "those", "of", "in", "on", "at",
-        "to", "from", "for", "with", "without", "by", "as", "is", "are",
-        "was", "were", "be", "been", "being", "do", "does", "did", "have",
-        "has", "had", "will", "would", "can", "could", "should", "may",
-        "might", "must", "not", "no", "yes", "it", "its", "he", "she",
-        "they", "we", "you", "i", "my", "your", "our", "their", "the",
-        "about", "into", "between", "over", "under", "again", "also",
-        "just", "very", "too", "same", "some", "such", "only", "other",
-        "any", "all", "both", "each", "few", "more", "most", "much",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "when",
+        "than",
+        "that",
+        "this",
+        "these",
+        "those",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "from",
+        "for",
+        "with",
+        "without",
+        "by",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "do",
+        "does",
+        "did",
+        "have",
+        "has",
+        "had",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "not",
+        "no",
+        "yes",
+        "it",
+        "its",
+        "he",
+        "she",
+        "they",
+        "we",
+        "you",
+        "i",
+        "my",
+        "your",
+        "our",
+        "their",
+        "about",
+        "into",
+        "between",
+        "over",
+        "under",
+        "again",
+        "also",
+        "just",
+        "very",
+        "too",
+        "same",
+        "some",
+        "such",
+        "only",
+        "other",
+        "any",
+        "all",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "much",
     }
 )
 
@@ -288,7 +367,9 @@ def _content_tokens(text: str) -> set[str]:
     }
 
 
-def _grounding_score(answer: str, chunks: list[RetrievedChunk], web_results: list[WebSearchResult]) -> float:
+def _grounding_score(
+    answer: str, chunks: list[RetrievedChunk], web_results: list[WebSearchResult]
+) -> float:
     """Fraction of the answer's content tokens that also appear in the
     retrieved context (chunk text + web snippets). 1.0 if the answer has
     no content tokens to compare. A purely lexical proxy for groundedness —
@@ -401,7 +482,11 @@ def _build_diagnosis_query(prediction: VisionPrediction, user_query: str | None)
     "Bacterial_spot" exists for both peach and tomato, with different
     corpus content), so crop alone disambiguates which document's chunks
     should actually match."""
-    base = f"{prediction.disease} on {prediction.crop}" if prediction.disease != "healthy" else f"healthy {prediction.crop}"
+    base = (
+        f"{prediction.disease} on {prediction.crop}"
+        if prediction.disease != "healthy"
+        else f"healthy {prediction.crop}"
+    )
     return f"{base}. {user_query}" if user_query else base
 
 
@@ -612,7 +697,9 @@ class ChatService:
             loop = asyncio.get_event_loop()
             return loop.run_until_complete(_run())
 
-    def _inject_memory(self, history: list[dict] | None, session_id: str | None) -> list[dict] | None:
+    def _inject_memory(
+        self, history: list[dict] | None, session_id: str | None
+    ) -> list[dict] | None:
         """Append the session's remembered facts to the history passed to
         the router and generation prompts, as a synthetic system turn.
 
@@ -648,10 +735,10 @@ class ChatService:
         exception guard."""
         prompt = (
             "Extract the durable factual claims from this question-answer "
-            'exchange — the concrete facts a later question might want to '
+            "exchange — the concrete facts a later question might want to "
             'refer back to (e.g. "project deadline", "team size"). Exclude '
             "conversational filler, opinions, and transient remarks.\n"
-            'Return ONLY a single JSON object, no prose, matching exactly '
+            "Return ONLY a single JSON object, no prose, matching exactly "
             '{"facts": [{"key": "<short lowercase label>", "value": "<the '
             'claim>", "confidence": "high" | "medium" | "low"}]}. '
             'Return {"facts": []} if there are no durable facts.\n\n'
@@ -776,7 +863,12 @@ class ChatService:
         the checklist's Agent Handoff Accuracy is computed from). reason is
         the trigger — "planned" (router chose research) or "weak_grade"
         (retrieval graded weak/insufficient)."""
-        log_agent_handoff("router" if reason == "planned" else "retrieval_grader", "research", query, reason=reason)
+        log_agent_handoff(
+            "router" if reason == "planned" else "retrieval_grader",
+            "research",
+            query,
+            reason=reason,
+        )
         return self._research_agent.run(query, confirm_web_search=confirm_web_search)
 
     def _research_steps(self, findings: ResearchFindings) -> int:
@@ -882,7 +974,9 @@ class ChatService:
         free-text path (parse_structured_answer never raises) — structured
         output is a win-when-it-works enhancement, never a new failure mode.
         """
-        prompt = build_structured_prompt(query, chunks, history=history, web_results=web_results, persona=persona)
+        prompt = build_structured_prompt(
+            query, chunks, history=history, web_results=web_results, persona=persona
+        )
         _capture_prompt(prompt, variant="structured")
         logger.info(
             "generation_requested",
@@ -938,7 +1032,9 @@ class ChatService:
 
         logger.info(
             "retrieval_graded",
-            extra={"extra_fields": {"grade": grade, "top_score": top_score, "chunk_count": len(chunks)}},
+            extra={
+                "extra_fields": {"grade": grade, "top_score": top_score, "chunk_count": len(chunks)}
+            },
         )
         get_metrics().record_retrieval_grade(grade)
         return grade
@@ -954,7 +1050,9 @@ class ChatService:
             return query
         prompt = (
             "Conversation history:\n"
-            + "\n".join(f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history)
+            + "\n".join(
+                f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history
+            )
             + f"\n\nFollow-up question: {query}\n\n"
             "Rewrite the follow-up question as a standalone question that "
             "makes sense without the conversation history. Return ONLY the "
@@ -973,7 +1071,7 @@ class ChatService:
         layered on top of _is_ungrounded, never a stricter gate that can
         make an otherwise-fine answer fail closed.
         """
-        citation_numbers = sorted(set(int(n) for n in re.findall(r"\[(\d+)\]", answer)))
+        citation_numbers = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)})
         if not citation_numbers:
             return True
         chunk_by_number = {i + 1: chunk for i, chunk in enumerate(chunks)}
@@ -983,7 +1081,9 @@ class ChatService:
         if not cited_pairs:
             return True
         prompt = (
-            "Answer:\n" + answer + "\n\n"
+            "Answer:\n"
+            + answer
+            + "\n\n"
             + "\n\n".join(f"Excerpt [{n}]:\n{text}" for n, text in cited_pairs)
             + "\n\nFor each excerpt number above, does the answer's claim "
             "attributed to it actually match what that excerpt says? "
@@ -1007,7 +1107,7 @@ class ChatService:
         prompt = (
             f"Question: {query}\nAnswer: {answer}\n\n"
             "Suggest up to 3 short, natural follow-up questions the user "
-            'might ask next. Return ONLY a JSON array of strings, e.g. '
+            "might ask next. Return ONLY a JSON array of strings, e.g. "
             '["question one?", "question two?"]. Return an empty array [] '
             "if you can't think of good ones."
         )
@@ -1127,7 +1227,8 @@ class ChatService:
         if llm_calls >= _MAX_LLM_CALLS:
             get_metrics().inc_counter("loop_capped_total", {"stage": "reflection"})
             logger.warning(
-                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}}
+                "loop_capped",
+                extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}},
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -1158,7 +1259,8 @@ class ChatService:
         if llm_calls >= _MAX_LLM_CALLS:
             get_metrics().inc_counter("loop_capped_total", {"stage": "web_fallback"})
             logger.warning(
-                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}}
+                "loop_capped",
+                extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}},
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -1220,7 +1322,8 @@ class ChatService:
         if llm_calls >= _MAX_LLM_CALLS:
             get_metrics().inc_counter("loop_capped_total", {"stage": "reflection"})
             logger.warning(
-                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}}
+                "loop_capped",
+                extra={"extra_fields": {"llm_calls": llm_calls, "stage": "reflection"}},
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -1254,7 +1357,8 @@ class ChatService:
         if llm_calls >= _MAX_LLM_CALLS:
             get_metrics().inc_counter("loop_capped_total", {"stage": "web_fallback"})
             logger.warning(
-                "loop_capped", extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}}
+                "loop_capped",
+                extra={"extra_fields": {"llm_calls": llm_calls, "stage": "web_fallback"}},
             )
             return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -1368,10 +1472,14 @@ class ChatService:
             # loop. Check cache first (only cache final responses after
             # corrective loop, and only for plain retrieve — a research
             # answer depends on live web state, so it's never cached).
-            cache_key = self._make_cache_key(query, session_id, self._vector_store, tenant_id=tenant_id)
+            cache_key = self._make_cache_key(
+                query, session_id, self._vector_store, tenant_id=tenant_id
+            )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
-                logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
+                logger.info(
+                    "cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}}
+                )
                 return cached
 
             steps_taken += 1  # retrieval
@@ -1447,7 +1555,9 @@ class ChatService:
             # before the web research handoff: local documents are the
             # primary source of truth. Off by default.
             if settings.local_research_agent_enabled and grade != "good":
-                local_findings = self._local_research_agent.run(retrieval_query, tenant_id=tenant_id)
+                local_findings = self._local_research_agent.run(
+                    retrieval_query, tenant_id=tenant_id
+                )
                 if local_findings.answer:
                     steps_taken += 1  # local research pass
                     return self._respond(
@@ -1465,7 +1575,9 @@ class ChatService:
                 if settings.research_agent_enabled and settings.web_search_enabled:
                     research_attempted = True
                     findings = self._research_handoff(
-                        query, confirm_web_search, reason="planned" if plan.action == "research" else "weak_grade"
+                        query,
+                        confirm_web_search,
+                        reason="planned" if plan.action == "research" else "weak_grade",
                     )
                     if findings.answer:
                         steps_taken += self._research_steps(findings)
@@ -1676,10 +1788,14 @@ class ChatService:
 
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
             # Check cache first (only cache final responses after corrective loop)
-            cache_key = self._make_cache_key(query, session_id, self._vector_store, tenant_id=tenant_id)
+            cache_key = self._make_cache_key(
+                query, session_id, self._vector_store, tenant_id=tenant_id
+            )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
-                logger.info("cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}})
+                logger.info(
+                    "cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}}
+                )
                 yield {"type": "done", "payload": cached}
                 return
 
@@ -1713,7 +1829,9 @@ class ChatService:
             # documents before the web research handoff.
             if settings.local_research_agent_enabled and grade != "good":
                 yield _trace_event("local_research", {"query": retrieval_query})
-                local_findings = self._local_research_agent.run(retrieval_query, tenant_id=tenant_id)
+                local_findings = self._local_research_agent.run(
+                    retrieval_query, tenant_id=tenant_id
+                )
                 if local_findings.answer:
                     steps_taken += 1  # local research pass
                     yield {"type": "answer_chunk", "text": local_findings.answer}
@@ -1738,7 +1856,9 @@ class ChatService:
                         {"reason": "planned" if plan.action == "research" else "weak_grade"},
                     )
                     findings = self._research_handoff(
-                        query, confirm_web_search, reason="planned" if plan.action == "research" else "weak_grade"
+                        query,
+                        confirm_web_search,
+                        reason="planned" if plan.action == "research" else "weak_grade",
                     )
                     for step in findings.steps:
                         yield _trace_event(f"research_{step['stage']}", step)
@@ -1776,7 +1896,13 @@ class ChatService:
             llm_calls = 1
             steps_taken += 1  # generation
 
-            answer, llm_calls, steps_taken, web_results, web_search_attempted = yield from self._correct_streamed(
+            (
+                answer,
+                llm_calls,
+                steps_taken,
+                web_results,
+                web_search_attempted,
+            ) = yield from self._correct_streamed(
                 query,
                 chunks,
                 answer,
@@ -1820,18 +1946,32 @@ class ChatService:
         except AppError as exc:
             logger.info(
                 "chat_stream_error",
-                extra={"extra_fields": {"error_type": type(exc).__name__, "status_code": exc.status_code}},
+                extra={
+                    "extra_fields": {
+                        "error_type": type(exc).__name__,
+                        "status_code": exc.status_code,
+                    }
+                },
             )
             yield {
                 "type": "error",
-                "detail": {"error_type": type(exc).__name__, "message": exc.detail, "status_code": exc.status_code},
+                "detail": {
+                    "error_type": type(exc).__name__,
+                    "message": exc.detail,
+                    "status_code": exc.status_code,
+                },
             }
             return
         except Exception as exc:
             chat_error = ChatServiceError(f"Unexpected error while handling chat query: {exc}")
             logger.info(
                 "chat_stream_error",
-                extra={"extra_fields": {"error_type": type(chat_error).__name__, "status_code": chat_error.status_code}},
+                extra={
+                    "extra_fields": {
+                        "error_type": type(chat_error).__name__,
+                        "status_code": chat_error.status_code,
+                    }
+                },
             )
             yield {
                 "type": "error",
@@ -1898,7 +2038,9 @@ class ChatService:
         reset_usage()  # per-request LLM token/cost rollup
         logger.info(
             "plan_decided",
-            extra={"extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}},
+            extra={
+                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}
+            },
         )
 
         history = self._inject_memory(history, session_id)
@@ -1913,7 +2055,10 @@ class ChatService:
 
             steps_taken += 1  # retrieval
             chunks = retrieve(
-                diagnosis_query, self._vector_store, tenant_id=tenant_id, image_vector_store=self._image_vector_store
+                diagnosis_query,
+                self._vector_store,
+                tenant_id=tenant_id,
+                image_vector_store=self._image_vector_store,
             )
 
             steps_taken += 1  # grading
@@ -1925,7 +2070,9 @@ class ChatService:
             if grade != "good":
                 if settings.research_agent_enabled and settings.web_search_enabled:
                     research_attempted = True
-                    findings = self._research_handoff(diagnosis_query, confirm_web_search, reason="diagnose_weak_grade")
+                    findings = self._research_handoff(
+                        diagnosis_query, confirm_web_search, reason="diagnose_weak_grade"
+                    )
                     if findings.answer:
                         steps_taken += self._research_steps(findings)
                         return self._respond(
@@ -1947,11 +2094,15 @@ class ChatService:
                             session_id=session_id,
                         )
                 if settings.web_search_enabled and not research_attempted:
-                    web_results = self._search_web(diagnosis_query, confirm_web_search=confirm_web_search)
+                    web_results = self._search_web(
+                        diagnosis_query, confirm_web_search=confirm_web_search
+                    )
                     web_search_attempted = True
                     steps_taken += 1  # web search
 
-            answer = self._generate(diagnosis_query, chunks, recent_history, web_results=web_results)
+            answer = self._generate(
+                diagnosis_query, chunks, recent_history, web_results=web_results
+            )
             llm_calls = 1
             steps_taken += 1  # generation
 
@@ -1971,7 +2122,9 @@ class ChatService:
             # same retrieval/prompt/LLM exceptions handle_query can raise.
             raise
         except Exception as exc:
-            raise ChatServiceError(f"Unexpected error while handling image diagnosis: {exc}") from exc
+            raise ChatServiceError(
+                f"Unexpected error while handling image diagnosis: {exc}"
+            ) from exc
 
         tool_used = "web_search" if web_results else "diagnose"
         return self._respond(

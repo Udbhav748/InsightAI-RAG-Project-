@@ -70,16 +70,22 @@ def _download_prefix(prefix: str, local_dir: Path) -> None:
             filename = obj["Key"].rsplit("/", 1)[-1]
             if not filename:
                 continue
-            client.download_file(settings.s3_sync_bucket_name, obj["Key"], str(local_dir / filename))
+            client.download_file(
+                settings.s3_sync_bucket_name, obj["Key"], str(local_dir / filename)
+            )
             count += 1
-    logger.info("s3_sync_downloaded", extra={"extra_fields": {"prefix": prefix, "file_count": count}})
+    logger.info(
+        "s3_sync_downloaded", extra={"extra_fields": {"prefix": prefix, "file_count": count}}
+    )
 
 
 def upload_file(local_path: Path, prefix: str) -> None:
     if not settings.s3_sync_enabled:
         return
     try:
-        _client().upload_file(str(local_path), settings.s3_sync_bucket_name, f"{prefix}/{local_path.name}")
+        _client().upload_file(
+            str(local_path), settings.s3_sync_bucket_name, f"{prefix}/{local_path.name}"
+        )
     except Exception:
         logger.warning(
             "s3_sync_upload_failed",

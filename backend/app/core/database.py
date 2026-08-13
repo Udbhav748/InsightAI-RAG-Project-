@@ -76,8 +76,9 @@ def run_migrations() -> None:
 
     Idempotent: `upgrade head` on an already-current database is a no-op.
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -113,7 +114,7 @@ def init_db() -> None:
 
     try:
         run_migrations()
-    except OperationalError as exc:
+    except OperationalError:
         host = _database_host_for_log()
         logger.error(
             "db_unreachable",
@@ -140,7 +141,9 @@ def init_db() -> None:
         )
         Base.metadata.create_all(bind=engine)
         _stamp_migrations_at_head()
-    logger.info("db_ready", extra={"extra_fields": {"url_scheme": settings.database_url.split("://")[0]}})
+    logger.info(
+        "db_ready", extra={"extra_fields": {"url_scheme": settings.database_url.split("://")[0]}}
+    )
 
 
 def _stamp_migrations_at_head() -> None:
@@ -151,8 +154,9 @@ def _stamp_migrations_at_head() -> None:
     the same create_all fallback and the next real migration would be skipped
     silently forever.
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
