@@ -127,6 +127,7 @@ def list_documents(tenant_id: int | None, collection: str | None = None) -> list
                 "pages_ocred": doc.pages_ocred,
                 "collection": doc.collection,
                 "upload_timestamp": doc.upload_timestamp,
+                "tenant_id": doc.tenant_id,
             }
             for doc in query.all()
         ]

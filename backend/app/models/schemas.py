@@ -341,6 +341,11 @@ class DocumentListItem(BaseModel):
     pages_ocred: int
     upload_timestamp: datetime
     collection: str | None = None
+    tenant_id: int | None = Field(
+        default=None,
+        description="Owning tenant. Only meaningful when listed via all_tenants=true — "
+        "otherwise every row belongs to the caller's own tenant already.",
+    )
 
 
 class DocumentListResponse(BaseModel):
