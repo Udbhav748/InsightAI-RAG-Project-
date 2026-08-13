@@ -9,7 +9,6 @@ const FOCUSABLE_SELECTOR =
 export default function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   const dialogRef = useRef(null)
   const previouslyFocusedRef = useRef(null)
-  const widthClass = size === 'full' ? 'max-w-4xl' : 'max-w-md'
 
   useEffect(() => {
     if (!open) return undefined

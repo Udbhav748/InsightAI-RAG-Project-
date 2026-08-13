@@ -44,13 +44,18 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
         onKeyDown={handleKeyDown}
         rows={1}
         placeholder="Ask a question about your documents..."
-        className="max-h-[200px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none dark:text-ink-primary dark:placeholder-ink-muted"
+        className="min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none dark:text-ink-primary dark:placeholder-ink-muted"
       />
+      {/* Fixed (not w-auto) so the closed control can't balloon to its
+          widest option's content width — on a narrow mobile viewport that
+          was squeezing the textarea enough to wrap its placeholder onto
+          multiple lines, growing this whole bar's height and breaking
+          alignment with the sibling "New chat" button next to it. */}
       <select
         value={persona}
         onChange={(event) => onPersonaChange?.(event.target.value)}
         aria-label="Answer style"
-        className="input w-auto shrink-0 px-2 py-2 text-xs"
+        className="input w-[4.5rem] shrink-0 px-1.5 py-2 text-xs sm:w-auto sm:px-2"
       >
         <option value="">Default</option>
         <option value="concise">Concise</option>

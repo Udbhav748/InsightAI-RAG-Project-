@@ -60,6 +60,34 @@ export async function listDocuments(options = {}) {
 }
 
 /**
+ * List images extracted from a document (GET /documents/{id}/images) —
+ * multi-modal RAG (image_extraction_enabled), metadata only. Each item's
+ * `url` is the API path to fetch the actual bytes from — authenticated,
+ * so it can't be used as a plain <img src>; see fetchDocumentImageBlob.
+ * @param {string} documentId
+ * @returns {Promise<{image_id: string, document_id: string, page_number: number, content_type: string, mime_type: string, width: number, height: number, byte_size: number, url: string}[]>}
+ */
+export async function listDocumentImages(documentId) {
+  const { data } = await api.get(`/documents/${encodeURIComponent(documentId)}/images`)
+  return data.images
+}
+
+/**
+ * Fetch one extracted image's bytes as an object URL — same
+ * fetch-as-blob-then-objectURL pattern PdfPreviewModal.jsx uses for the
+ * source PDF, needed because the image endpoint requires the same
+ * Authorization header every other API call carries (api.js's
+ * interceptor), which a plain <img src="..."> can't attach.
+ * Caller owns the returned URL and must URL.revokeObjectURL it when done.
+ * @param {string} url One image's `url` field from listDocumentImages.
+ * @returns {Promise<string>}
+ */
+export async function fetchDocumentImageBlob(url) {
+  const { data } = await api.get(url, { responseType: 'blob' })
+  return URL.createObjectURL(data)
+}
+
+/**
  * The backend now has a real document list endpoint (listDocuments above),
  * but only when a database is configured — upload history is also tracked
  * client-side from real, successful uploads so Documents still works fully

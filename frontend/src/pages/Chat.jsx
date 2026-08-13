@@ -76,6 +76,7 @@ export default function Chat() {
                 message={message}
                 isLast={message.id === lastAssistantId}
                 onRegenerate={regenerate}
+                isRegenerating={isSending}
                 onFollowUpClick={(q) => ask(q, persona)}
                 query={queryFor(message)}
               />

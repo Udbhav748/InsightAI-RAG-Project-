@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowUpDown, FileText, Image as ImageIcon, MessageSquare, Table2, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowUpDown, Eye, FileText, Image as ImageIcon, MessageSquare, Table2, Trash2, UploadCloud } from 'lucide-react'
 import SearchInput from '../components/ui/SearchInput'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
+import PdfPreviewModal from '../components/chat/PdfPreviewModal'
+import ImageGalleryModal from '../components/documents/ImageGalleryModal'
 import { deleteDocument, getUploadHistory, listDocuments, removeFromUploadHistory } from '../services/documentService'
 import useToast from '../hooks/useToast'
 import getErrorMessage from '../utils/errorMessage'
@@ -58,6 +60,8 @@ export default function Documents() {
   const [collectionFilter, setCollectionFilter] = useState('')
   const [pendingDelete, setPendingDelete] = useState(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [previewDoc, setPreviewDoc] = useState(null)
+  const [galleryDoc, setGalleryDoc] = useState(null)
   const navigate = useNavigate()
   const { showToast } = useToast()
 
@@ -227,12 +231,14 @@ export default function Documents() {
                     result, so this renders nothing for documents uploaded
                     before those fields existed or with the features off. */}
                 {doc.images_captioned > 0 && (
-                  <span
-                    title={`${doc.images_captioned} image(s) captioned`}
-                    className="flex shrink-0 items-center gap-1 text-slate-400 dark:text-ink-muted"
+                  <button
+                    type="button"
+                    onClick={() => setGalleryDoc(doc)}
+                    title={`View ${doc.images_captioned} extracted image(s)`}
+                    className="flex shrink-0 items-center gap-1 text-slate-400 transition-colors hover:text-accent-600 dark:text-ink-muted dark:hover:text-accent-500"
                   >
                     <ImageIcon size={13} strokeWidth={1.75} />
-                  </span>
+                  </button>
                 )}
                 {doc.total_tables > 0 && (
                   <span
@@ -245,9 +251,17 @@ export default function Documents() {
                 <StatusBadge status={effectiveStatus(doc)} />
                 <button
                   type="button"
+                  onClick={() => setPreviewDoc(doc)}
+                  aria-label={`View ${doc.original_filename}`}
+                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-accent-500/10 hover:text-accent-600 dark:text-ink-muted dark:hover:text-accent-500 sm:ml-0"
+                >
+                  <Eye size={15} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => setPendingDelete(doc)}
                   aria-label={`Delete ${doc.original_filename}`}
-                  className="ml-auto rounded-lg p-2 text-slate-400 transition-colors hover:bg-danger/10 hover:text-danger dark:text-ink-muted sm:ml-0"
+                  className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-danger/10 hover:text-danger dark:text-ink-muted"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -275,6 +289,25 @@ export default function Documents() {
         Delete <span className="font-medium text-slate-800 dark:text-ink-primary">{pendingDelete?.original_filename}</span>?
         This permanently removes it from the server — its content will no longer be searchable in chat. This can't be undone.
       </Modal>
+
+      {/* Opens at page 1 with no excerpt to highlight — unlike the citation
+          flow in SourceReferences.jsx, there's no specific passage to jump
+          to here, just "let me look at the document". Reuses the same
+          modal so both entry points render/highlight identically. */}
+      <PdfPreviewModal
+        open={!!previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        documentId={previewDoc?.document_id}
+        pageNumber={1}
+        title={previewDoc?.original_filename}
+      />
+
+      <ImageGalleryModal
+        open={!!galleryDoc}
+        onClose={() => setGalleryDoc(null)}
+        documentId={galleryDoc?.document_id}
+        title={galleryDoc ? `${galleryDoc.original_filename} — extracted images` : undefined}
+      />
     </div>
   )
 }

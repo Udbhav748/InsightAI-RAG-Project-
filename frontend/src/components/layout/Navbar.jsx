@@ -4,6 +4,8 @@ import { Menu, Search, User } from 'lucide-react'
 const TITLES = {
   '/': 'Home',
   '/chat': 'Chat',
+  '/history': 'History',
+  '/diagnose': 'Leaf Diagnosis',
   '/upload': 'Upload Document',
   '/documents': 'Documents',
   '/settings': 'Settings',

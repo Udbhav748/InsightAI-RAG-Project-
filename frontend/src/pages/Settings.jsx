@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BarChart3, CheckCircle2, Info, Loader2, Moon, Server, Sun, Trash2, XCircle } from 'lucide-react'
+import { BarChart3, CheckCircle2, Info, Loader2, Moon, ShieldCheck, Server, Sun, ThumbsDown, ThumbsUp, Trash2, XCircle } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
@@ -8,8 +8,14 @@ import useToast from '../hooks/useToast'
 import useAuth from '../hooks/useAuth'
 import { getHealthStatus } from '../services/healthService'
 import { getUploadHistory, removeFromUploadHistory } from '../services/documentService'
-import { getUsageSummary } from '../services/adminService'
+import { getFeedback, getUsageSummary, listApprovals, resolveApproval } from '../services/adminService'
 import getErrorMessage from '../utils/errorMessage'
+
+function approvalSummary(approval) {
+  if (approval.action === 'web_search') return `Search the web for: "${approval.payload?.query ?? ''}"`
+  if (approval.action === 'document_delete') return `Delete document ${approval.payload?.document_id ?? ''}`
+  return approval.action
+}
 
 function StatusRow({ label, value, ok, okLabel = 'Ready', badLabel = 'Missing' }) {
   return (
@@ -103,6 +109,67 @@ export default function Settings() {
   }, [user?.role])
 
   const maxUsageCount = usage.length > 0 ? Math.max(...usage.map((row) => row.request_count)) : 1
+
+  const [approvals, setApprovals] = useState([])
+  const [approvalsLoading, setApprovalsLoading] = useState(false)
+  const [approvalsError, setApprovalsError] = useState(null)
+  const [resolvingId, setResolvingId] = useState(null)
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return undefined
+    let active = true
+    setApprovalsLoading(true)
+    setApprovalsError(null)
+    listApprovals({ status: 'pending' })
+      .then((data) => {
+        if (active) setApprovals(data.approvals ?? [])
+      })
+      .catch((error) => {
+        if (active) setApprovalsError(getErrorMessage(error, 'Could not load the approval queue.'))
+      })
+      .finally(() => {
+        if (active) setApprovalsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [user?.role])
+
+  const handleResolveApproval = async (approvalId, approved) => {
+    setResolvingId(approvalId)
+    try {
+      await resolveApproval(approvalId, approved)
+      setApprovals((current) => current.filter((approval) => approval.approval_id !== approvalId))
+      showToast(approved ? 'Approved.' : 'Rejected.', 'success')
+    } catch (error) {
+      showToast(getErrorMessage(error, 'Could not resolve the approval. Please try again.'), 'error')
+    } finally {
+      setResolvingId(null)
+    }
+  }
+
+  const [feedback, setFeedback] = useState([])
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [feedbackError, setFeedbackError] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    setFeedbackLoading(true)
+    setFeedbackError(null)
+    getFeedback(20)
+      .then((data) => {
+        if (active) setFeedback(data.events ?? [])
+      })
+      .catch((error) => {
+        if (active) setFeedbackError(getErrorMessage(error, 'Could not load feedback.'))
+      })
+      .finally(() => {
+        if (active) setFeedbackLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 py-4">
@@ -246,6 +313,125 @@ export default function Settings() {
           )}
         </Card>
       )}
+
+      {user?.role === 'admin' && (
+        <Card padding="lg">
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-ink-secondary">
+            <ShieldCheck size={15} strokeWidth={1.5} />
+            Approval queue
+          </h3>
+          {approvalsLoading ? (
+            <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
+              <Loader2 size={14} className="animate-spin" />
+              Loading pending approvals…
+            </p>
+          ) : approvalsError ? (
+            <p className="text-sm text-danger">{approvalsError}</p>
+          ) : approvals.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-ink-muted">
+              No pending approvals — nothing is waiting on web_search_requires_approval or
+              document_delete_requires_approval right now.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {approvals.map((approval) => {
+                const isResolving = resolvingId === approval.approval_id
+                const disabled = resolvingId != null && !isResolving
+                return (
+                  <div
+                    key={approval.approval_id}
+                    className="rounded-lg border border-border-light px-3.5 py-3 dark:border-border"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-ink-muted">
+                          {approval.action === 'web_search' ? 'Web search' : 'Document deletion'}
+                        </p>
+                        <p className="mt-0.5 truncate text-sm text-slate-700 dark:text-ink-secondary">
+                          {approvalSummary(approval)}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-slate-400 dark:text-ink-muted">
+                          Requested by {approval.requested_by ?? 'unknown'} ·{' '}
+                          {new Date(approval.created_at * 1000).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleResolveApproval(approval.approval_id, false)}
+                          loading={isResolving}
+                          disabled={disabled}
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={() => handleResolveApproval(approval.approval_id, true)}
+                          loading={isResolving}
+                          disabled={disabled}
+                        >
+                          Approve
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card padding="lg">
+        <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-ink-secondary">
+          <ThumbsUp size={15} strokeWidth={1.5} />
+          Recent feedback
+        </h3>
+        {feedbackLoading ? (
+          <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-ink-muted">
+            <Loader2 size={14} className="animate-spin" />
+            Loading feedback…
+          </p>
+        ) : feedbackError ? (
+          <p className="text-sm text-danger">{feedbackError}</p>
+        ) : feedback.length === 0 ? (
+          <p className="text-sm text-slate-500 dark:text-ink-muted">
+            No feedback yet — use the thumbs control on a chat reply to record one.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {feedback.map((event) => {
+              const positive = event.rating === 'up'
+              const Icon = positive ? ThumbsUp : ThumbsDown
+              return (
+                <li key={event.timestamp + event.message_id} className="flex items-start gap-3 text-sm">
+                  <span
+                    className={`mt-0.5 inline-flex shrink-0 items-center rounded-full p-1.5 ${
+                      positive ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                    }`}
+                  >
+                    <Icon size={12} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {event.comment ? (
+                      <p className="text-slate-700 dark:text-ink-secondary">{event.comment}</p>
+                    ) : (
+                      <p className="text-slate-400 dark:text-ink-muted">
+                        {positive ? 'Liked this reply.' : 'Disliked this reply.'}
+                      </p>
+                    )}
+                    <p className="mt-0.5 text-xs text-slate-400 dark:text-ink-muted">
+                      {new Date(event.timestamp).toLocaleString()} · {event.reviewer_id ?? 'anonymous'}
+                    </p>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Card>
 
       <Card padding="lg" className="flex items-start gap-3">
         <Info size={18} className="mt-0.5 shrink-0 text-slate-400 dark:text-ink-muted" />

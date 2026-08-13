@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, ClipboardList, Copy, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
+import { Check, ClipboardList, Copy, Loader2, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
 import AgentTraceStrip from './AgentTraceStrip'
 import CitedAnswer from './CitedAnswer'
 import RubricReviewModal from './RubricReviewModal'
@@ -9,7 +9,7 @@ import { sendFeedback } from '../../services/feedbackService'
 import useToast from '../../hooks/useToast'
 import getErrorMessage from '../../utils/errorMessage'
 
-export default function ChatBubble({ message, isLast, onRegenerate, onFollowUpClick, query }) {
+export default function ChatBubble({ message, isLast, onRegenerate, isRegenerating, onFollowUpClick, query }) {
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState(null) // null | 'up' | 'down'
   const [rubricModalOpen, setRubricModalOpen] = useState(false)
@@ -107,9 +107,14 @@ export default function ChatBubble({ message, isLast, onRegenerate, onFollowUpCl
               <button
                 type="button"
                 onClick={onRegenerate}
-                className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-secondary"
+                disabled={isRegenerating}
+                className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-900/5 hover:text-slate-600 disabled:pointer-events-none disabled:opacity-50 dark:text-ink-muted dark:hover:bg-white/[0.05] dark:hover:text-ink-secondary"
               >
-                <RotateCcw size={12} strokeWidth={1.75} />
+                {isRegenerating ? (
+                  <Loader2 size={12} strokeWidth={1.75} className="animate-spin" />
+                ) : (
+                  <RotateCcw size={12} strokeWidth={1.75} />
+                )}
                 Regenerate
               </button>
             )}
