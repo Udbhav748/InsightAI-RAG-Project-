@@ -15,19 +15,7 @@
       html.dark { background-color: #0b0b0d; }
       html:not(.dark) { background-color: #f6f7fb; }
     </style>
-    <script>
-      // Apply the saved theme before first paint so there's no flash of
-      // the wrong color scheme. Mirrors ThemeContext's storage key and
-      // default.
-      ;(function () {
-        try {
-          var stored = localStorage.getItem('insightai-theme')
-          document.documentElement.classList.toggle('dark', stored === 'dark' || stored !== 'light')
-        } catch (e) {
-          document.documentElement.classList.add('dark')
-        }
-      })()
-    </script>
+    <script src="/theme-init.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

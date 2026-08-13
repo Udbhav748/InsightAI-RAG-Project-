@@ -21,7 +21,13 @@ RUN npm run build
 # ---- Serve stage ----
 FROM nginx:alpine
 
+# Re-declared: ARGs don't cross build stages. Same default as the build
+# stage above, so the CSP's connect-src always matches whatever origin
+# the JS bundle was actually built to call (see nginx.conf's comment).
+ARG VITE_API_BASE_URL=http://localhost:8000
+
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN sed -i "s#__API_BASE_ORIGIN__#${VITE_API_BASE_URL}#g" /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

@@ -200,6 +200,20 @@ class Settings(BaseSettings):
     # the routes that have no identity to key on yet.
     rate_limit_enabled: bool = True
 
+    # Optional. Comma-separated IPs of reverse proxies this app trusts to
+    # set X-Forwarded-For honestly (e.g. the Caddy/nginx/load-balancer
+    # hop directly in front of this process — see Caddyfile). security.py's
+    # get_client_ip() only reads X-Forwarded-For when request.client.host
+    # (the actual TCP peer) is in this set; otherwise it uses that peer
+    # address directly. Without this, X-Forwarded-For is attacker-
+    # controlled on any request that reaches this process directly (or
+    # through an untrusted intermediary), letting a client rotate a fake
+    # header value to defeat the per-IP brute-force limiter on
+    # /auth/login and /auth/signup. Empty by default (no proxy trusted,
+    # X-Forwarded-For ignored) — set this explicitly once a real reverse
+    # proxy sits in front of the app.
+    trusted_proxy_ips: str = ""
+
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"
 
@@ -840,6 +854,13 @@ class Settings(BaseSettings):
         """Parsed, whitespace-trimmed set of admin_client_names. Empty set
         (not an error) when unset — no client is admin by default."""
         return {name.strip() for name in self.admin_client_names.split(",") if name.strip()}
+
+    @property
+    def trusted_proxy_ips_set(self) -> set[str]:
+        """Parsed, whitespace-trimmed set of trusted_proxy_ips. Empty set
+        (not an error) when unset — no proxy is trusted by default, so
+        X-Forwarded-For is ignored everywhere until this is configured."""
+        return {ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip()}
 
 
 settings = Settings()

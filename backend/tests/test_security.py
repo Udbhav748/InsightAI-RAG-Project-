@@ -6,16 +6,14 @@ the shared `client` fixture. Two extra fixtures here lower the rate limit
 so the 60-req/min sliding window can be exercised without 60+ requests.
 """
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core import auth
 from app.core.config import settings
 from app.main import app
-from app.services.prompt_builder import build_prompt, _INSTRUCTIONS
 from app.models.document import RetrievedChunk
+from app.services.prompt_builder import _INSTRUCTIONS, build_prompt
 
 VALID_HEADERS = {"X-API-Key": settings.api_key}
 INVALID_HEADERS = {"X-API-Key": "not-the-real-key"}
@@ -111,8 +109,10 @@ class TestRateLimit:
     def low_limit(self, monkeypatch):
         # Collapse the window so one client is limited after just 2
         # requests, and start from a clean bucket so tests don't inherit
-        # the other tests' auth traffic.
-        monkeypatch.setattr(auth, "_RATE_LIMIT_PER_MINUTE", 2)
+        # the other tests' auth traffic. _check_rate_limit reads the
+        # limit off settings directly (not a module-level constant), so
+        # that's what has to be patched.
+        monkeypatch.setattr(settings, "rate_limit_per_minute", 2)
         auth._rate_limit_store.clear()
         return 2
 
@@ -190,3 +190,71 @@ class TestAPIKeyHashing:
         # never appear as a key.
         table = settings.api_key_table
         assert settings.api_key not in table
+
+
+def _make_request(client_host, headers=None):
+    """Minimal Starlette Request over a bare ASGI scope — enough for
+    get_client_ip, which only reads request.client and request.headers."""
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+        "client": (client_host, 12345) if client_host is not None else None,
+    }
+    return Request(scope)
+
+
+class TestGetClientIp:
+    """X-Forwarded-For must only be trusted when the direct TCP peer is a
+    configured trusted proxy — otherwise it's an attacker-controlled
+    header that would let a client spoof its way past the per-IP
+    brute-force limiter on /auth/login and /auth/signup."""
+
+    def test_untrusted_peer_ignores_forwarded_header(self, monkeypatch):
+        from app.core.security import get_client_ip
+
+        monkeypatch.setattr(settings, "trusted_proxy_ips", "")
+        request = _make_request("203.0.113.5", {"X-Forwarded-For": "9.9.9.9"})
+        # No trusted proxy configured — the spoofed header is ignored,
+        # the real TCP peer is used.
+        assert get_client_ip(request) == "203.0.113.5"
+
+    def test_trusted_peer_honors_forwarded_header(self, monkeypatch):
+        from app.core.security import get_client_ip
+
+        monkeypatch.setattr(settings, "trusted_proxy_ips", "10.0.0.1")
+        request = _make_request("10.0.0.1", {"X-Forwarded-For": "203.0.113.5, 10.0.0.1"})
+        assert get_client_ip(request) == "203.0.113.5"
+
+    def test_untrusted_peer_with_no_header_uses_peer(self, monkeypatch):
+        from app.core.security import get_client_ip
+
+        monkeypatch.setattr(settings, "trusted_proxy_ips", "")
+        request = _make_request("203.0.113.5")
+        assert get_client_ip(request) == "203.0.113.5"
+
+    def test_no_client_returns_unknown(self, monkeypatch):
+        from app.core.security import get_client_ip
+
+        monkeypatch.setattr(settings, "trusted_proxy_ips", "")
+        request = _make_request(None)
+        assert get_client_ip(request) == "unknown"
+
+
+class TestSecurityHeaders:
+    def test_csp_present_on_normal_routes(self, client):
+        response = client.get("/health")
+        csp = response.headers.get("content-security-policy")
+        assert csp is not None
+        assert "default-src 'self'" in csp
+        assert "script-src 'self'" in csp
+
+    def test_csp_absent_on_docs(self, client):
+        response = client.get("/docs")
+        assert "content-security-policy" not in {k.lower() for k in response.headers}
+
+    def test_baseline_headers_present_everywhere(self, client):
+        response = client.get("/health")
+        assert response.headers.get("x-content-type-options") == "nosniff"
+        assert response.headers.get("x-frame-options") == "DENY"
