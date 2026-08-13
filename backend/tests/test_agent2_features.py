@@ -63,7 +63,11 @@ class TestLintConfig:
     def test_ruff_selects_core_rule_sets(self):
         with (BACKEND_ROOT / "pyproject.toml").open("rb") as fh:
             ruff = tomllib.load(fh)["tool"]["ruff"]
-        selected = set(ruff["select"])
+        # select/ignore live under [tool.ruff.lint], not [tool.ruff]
+        # itself — that's been this file's actual structure since it was
+        # first added (see pyproject.toml), this test just checked the
+        # wrong table.
+        selected = set(ruff["lint"]["select"])
         # Pyflakes (undefined names/unused) and import sorting must be on —
         # they catch real bugs the suite's philosophy cares about.
         assert "F" in selected
