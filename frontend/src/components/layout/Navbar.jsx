@@ -17,7 +17,10 @@ const TITLES = {
 
 // ⌘K on macOS, Ctrl+K everywhere else — match the hint to the actual
 // modifier the user needs to press (CommandPalette listens for both).
-const SHORTCUT_HINT = /Mac|iPhone|iPod|iPad/i.test(navigator.platform) ? '⌘K' : 'Ctrl K'
+// navigator.platform is deprecated and unreliable on some browsers; prefer
+// the modern userAgentData API, falling back to platform for legacy engines.
+const navPlatform = navigator.userAgentData?.platform ?? navigator.platform ?? ''
+const SHORTCUT_HINT = /Mac|iPhone|iPod|iPad/i.test(navPlatform) ? '⌘K' : 'Ctrl K'
 
 export default function Navbar({ onMenuClick, onSearchClick }) {
   const { pathname } = useLocation()

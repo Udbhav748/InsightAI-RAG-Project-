@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, ClipboardList, Copy, Loader2, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
+import { Check, ClipboardList, Copy, FileText, Globe, Layers, Loader2, RotateCcw, Sparkles, ThumbsDown, ThumbsUp, User } from 'lucide-react'
 import AgentTraceStrip from './AgentTraceStrip'
 import CitedAnswer from './CitedAnswer'
 import RubricReviewModal from './RubricReviewModal'
@@ -9,6 +9,12 @@ import { sendFeedback } from '../../services/feedbackService'
 import useToast from '../../hooks/useToast'
 import getErrorMessage from '../../utils/errorMessage'
 
+const ANSWER_SOURCE_META = {
+  documents: { label: 'Documents', icon: FileText },
+  web: { label: 'Web', icon: Globe },
+  mixed: { label: 'Documents + web', icon: Layers },
+}
+
 export default function ChatBubble({ message, isLast, onRegenerate, isRegenerating, onFollowUpClick, query }) {
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState(null) // null | 'up' | 'down'
@@ -16,6 +22,7 @@ export default function ChatBubble({ message, isLast, onRegenerate, isRegenerati
   const [rubricSubmitted, setRubricSubmitted] = useState(false)
   const { showToast } = useToast()
   const isUser = message.role === 'user'
+  const answerSourceMeta = ANSWER_SOURCE_META[message.answerSource ?? 'documents'] ?? ANSWER_SOURCE_META.documents
 
   const handleCopy = async () => {
     try {
@@ -80,10 +87,33 @@ export default function ChatBubble({ message, isLast, onRegenerate, isRegenerati
             <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
               Low confidence — double-check this against the source.
             </p>
-          )}
-        </div>
+        )}
+      </div>
 
-        {!isUser && !message.isStreaming && message.followUpQuestions?.length > 0 && (
+      {!isUser && !message.isStreaming && (
+        <>
+          {/* answer_source badge — only worth showing when retrieval pulled
+              from web / mixed, since "documents" is the default. */}
+          {!message.isError && message.answerSource && message.answerSource !== 'documents' && (
+            <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-border-light bg-slate-900/5 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:border-border dark:bg-white/[0.03] dark:text-ink-muted">
+              <answerSourceMeta.icon size={10} strokeWidth={2} />
+              {answerSourceMeta.label}
+            </span>
+          )}
+          {message.hallucinationDetected && (
+            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
+              This answer may be under-grounded — double-check it against the cited sources.
+            </p>
+          )}
+          {!message.hallucinationDetected && message.groundingScore != null && message.groundingScore < 0.5 && (
+            <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
+              Low groundedness ({Math.round(message.groundingScore * 100)}%) — double-check this against the cited sources.
+            </p>
+          )}
+        </>
+      )}
+
+      {!isUser && !message.isStreaming && message.followUpQuestions?.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {message.followUpQuestions.map((q) => (
               <Button key={q} variant="ghost" size="sm" onClick={() => onFollowUpClick?.(q)}>
