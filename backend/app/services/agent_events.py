@@ -45,5 +45,10 @@ def log_agent_completed(agent: str, task: str, start: float, *, outcome: str, **
 
 def log_agent_handoff(frm: str, to: str, task: str, **extra) -> None:
     """Record that `frm` handed `task` off to `to` — the from/to pair is
-    what Handoff Accuracy is computed from."""
+    what Handoff Accuracy is computed from. Also bumps the
+    agent_handoffs_total Prometheus metric the agent-metrics dashboard's
+    handoff breakdown panel reads."""
     _emit("agent_handoff", from_agent=frm, to_agent=to, task_length=len(task), **extra)
+    from app.core.metrics import get_metrics
+
+    get_metrics().record_agent_handoff(frm=frm, to=to)

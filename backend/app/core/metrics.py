@@ -196,6 +196,31 @@ class Metrics:
             "errors_total", {"taxonomy_category": taxonomy_category, "status_code": str(status_code)}
         )
 
+    def record_retrieval_grade(self, grade: str) -> None:
+        """One retrieval grading outcome — the distribution of good/weak/
+        insufficient grades the RAG pipeline dashboard's primary panel
+        draws (see monitoring/grafana/dashboards/rag_pipeline.json)."""
+        self.inc_counter("retrieval_grades_total", {"grade": grade})
+
+    def record_web_search_fallback(self, *, stage: str) -> None:
+        """One corrective-loop web-search fallback (stage: which path fired
+        it — 'retrieval' when a weak grade pulled web context in before
+        generation, 'reflection'/'research' for the retry paths). Feeds the
+        web-search fallback rate panel in rag_pipeline.json."""
+        self.inc_counter("web_search_fallbacks_total", {"stage": stage})
+
+    def record_agent_handoff(self, *, frm: str, to: str) -> None:
+        """One agent handoff (e.g. router -> research, retrieval_grader ->
+        research). Feeds the agent-metrics dashboard's handoff breakdown."""
+        self.inc_counter("agent_handoffs_total", {"from": frm, "to": to})
+
+    def record_vectors(self, count: int) -> None:
+        """Set the total number of vectors currently indexed (FAISS index
+        size, or pgvector row count when PGVECTOR_ENABLED). A gauge so the
+        system dashboard's "vector count" stat reflects the live store
+        rather than accumulating over time."""
+        self.set_gauge("insightai_vectors_total", float(count))
+
     # --- Rendering -------------------------------------------------------
 
     def render(self) -> str:

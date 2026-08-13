@@ -110,8 +110,7 @@ def _search_with_timeout(
         executor.shutdown(wait=False)
 
 
-@track_tool("retrieval")
-def retrieve(
+def _retrieve_core(
     query: str,
     vector_store: VectorStore,
     top_k: int | None = None,
@@ -120,8 +119,13 @@ def retrieve(
     document_ids: list[str] | None = None,
     image_vector_store=None,
 ) -> list[RetrievedChunk]:
-    """Retrieve (optionally hybrid + reranked), then drop results below
-    min_score.
+    """Core retrieval logic: retrieve (optionally hybrid + reranked), then
+    drop results below min_score. Split out of the @track_tool-wrapped
+    public retrieve() below so the dynamic tool registry
+    (services/tools/) can invoke retrieval without double-instrumenting
+    it: the registry is the single instrumentation point on the agent
+    path, @track_tool is the single one on the inline path, and both call
+    this same code so the two can't drift.
 
     top_k and min_score default to Settings when not given explicitly.
     tenant_id (not part of RetrievalInput's user-facing schema — it's
@@ -225,3 +229,30 @@ def retrieve(
         )
 
     return filtered
+
+
+@track_tool("retrieval")
+def retrieve(
+    query: str,
+    vector_store: VectorStore,
+    top_k: int | None = None,
+    min_score: float | None = None,
+    tenant_id: int | None = None,
+    document_ids: list[str] | None = None,
+    image_vector_store=None,
+) -> list[RetrievedChunk]:
+    """Public, instrumented retrieval entry point — the inline ChatService
+    path. Validates args, runs _retrieve_core, and logs one
+    tool_invocation event (see tool_registry.py's @track_tool). The
+    dynamic tool registry calls _retrieve_core directly instead, so a
+    single retrieval call is never counted twice.
+    """
+    return _retrieve_core(
+        query,
+        vector_store,
+        top_k=top_k,
+        min_score=min_score,
+        tenant_id=tenant_id,
+        document_ids=document_ids,
+        image_vector_store=image_vector_store,
+    )

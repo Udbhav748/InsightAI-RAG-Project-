@@ -207,7 +207,7 @@ class TestStreamQuerySummarize:
 
 class TestStreamQueryErrorHandling:
     def test_retrieval_failure_yields_error_event_not_an_exception(self, monkeypatch):
-        def _raise_not_found(query, vector_store, top_k=None, min_score=None, tenant_id=None):
+        def _raise_not_found(query, vector_store, top_k=None, min_score=None, tenant_id=None, **kwargs):
             raise VectorStoreNotFoundError("No vector store found.")
 
         monkeypatch.setattr(rag_service_module, "retrieve", _raise_not_found)

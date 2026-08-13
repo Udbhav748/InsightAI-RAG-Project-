@@ -33,11 +33,14 @@ _INSTRUCTIONS = (
 MAX_SUMMARY_INPUT_CHARS = 8000
 
 
-@track_tool("summarization")
-def summarize_document(
+def _summarize_document_core(
     document_id: str, vector_store: VectorStore, llm_client: LLMClient, tenant_id: int | None = None
 ) -> tuple[str, list[RetrievedChunk]]:
-    """Return (summary, chunks) for document_id.
+    """Core summarization logic (see summarize_document() below). Split
+    out of the @track_tool-wrapped public function so the dynamic tool
+    registry (services/tools/) can invoke summarization without double-
+    instrumenting it: the registry is the single instrumentation point on
+    the agent path, @track_tool is the single one on the inline path.
 
     Raises DocumentNotFoundError if no chunks are stored for document_id —
     including when it exists but belongs to a different tenant than
@@ -84,3 +87,23 @@ def summarize_document(
     )
 
     return summary, chunks
+
+
+@track_tool("summarization")
+def summarize_document(
+    document_id: str, vector_store: VectorStore, llm_client: LLMClient, tenant_id: int | None = None
+) -> tuple[str, list[RetrievedChunk]]:
+    """Public, instrumented summarization entry point — the inline
+    ChatService path. Validates args, runs _summarize_document_core, and
+    logs one tool_invocation event. The dynamic tool registry calls
+    _summarize_document_core directly instead, so a single
+    summarization call is never counted twice.
+
+    Raises DocumentNotFoundError if no chunks are stored for document_id —
+    including when it exists but belongs to a different tenant than
+    tenant_id, which is deliberately indistinguishable from "doesn't
+    exist" (same reasoning as the DELETE /documents/{id} route: a
+    non-owner shouldn't be able to tell a real document_id from a made-up
+    one just by which error they get).
+    """
+    return _summarize_document_core(document_id, vector_store, llm_client, tenant_id=tenant_id)

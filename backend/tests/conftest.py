@@ -25,7 +25,28 @@ import os
 # Settings() and database.py's engine are both built once at import time.
 os.environ["DATABASE_URL"] = ""
 
+import pytest
+
 SCHEMA_COMPLIANCE = {"total": 0, "passed": 0}
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_store():
+    """Clear the global per-client rate-limit buckets before each test.
+
+    auth.py keeps its sliding-window counters in a module-global store
+    that is never reset during a process lifetime. TestSecurity's own
+    low_limit fixture clears it, but the rest of the suite makes far more
+    than the default 60 authenticated requests per client per minute —
+    without a reset here, whichever test happens to run once that bucket
+    fills gets an unrelated 401. Clearing before every test isolates the
+    rate limiter to whatever that one test actually does.
+    """
+    from app.core.auth import _rate_limit_store
+
+    _rate_limit_store.clear()
+    yield
+    _rate_limit_store.clear()
 
 
 def assert_matches_schema(model_cls, payload: dict):

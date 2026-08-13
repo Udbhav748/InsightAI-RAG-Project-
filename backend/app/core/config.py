@@ -185,6 +185,21 @@ class Settings(BaseSettings):
     # design; revisit if session lifetime needs to shrink).
     jwt_expiry_minutes: int = 1440
 
+    # Per-IP rate limit for unauthenticated endpoints (auth/signup,
+    # auth/login — the brute-force surface), and the per-identity limit
+    # enforced in core/auth.py for authenticated paths (API keys and JWT
+    # users alike). Enforced in-process (a sliding window per identity),
+    # not persisted — resets on restart, acceptable for a free-tier demo.
+    rate_limit_per_minute: int = 60
+    rate_limit_window_seconds: int = 60
+
+    # When True, the per-IP limiter is applied to the unauthenticated
+    # auth routes (login/signup) via security.py's dependency. The
+    # per-identity limiter in core/auth.py is always on for authenticated
+    # paths — this flag only controls the IP-based brute-force guard on
+    # the routes that have no identity to key on yet.
+    rate_limit_enabled: bool = True
+
     # Origin of the frontend app; used to configure CORS.
     frontend_url: str = "http://localhost:5173"
 
@@ -249,6 +264,36 @@ class Settings(BaseSettings):
 
     # Filename for the persisted chunk metadata (JSON), inside vector_store_dir_name.
     vector_metadata_filename: str = "metadata.json"
+
+    # --- pgvector vector store (off by default) ---------------------------
+    # When True (and DATABASE_URL is set — pgvector lives in Postgres, so
+    # there's nowhere to store vectors without it), get_vector_store() in
+    # query.py returns a PGVECTORVectorStore (services/pgvector_store.py)
+    # instead of the FAISSVectorStore. Embeddings are stored in a
+    # Postgres table with a pgvector column (see alembic migration 0006),
+    # giving delete_document a native, scalable remove-by-id (no
+    # index-rebuild), and letting the same tenant-scoped
+    # WHERE tenant_id filtering used everywhere else apply directly to
+    # vectors. FAISS remains the default and the migration path stays
+    # opt-in: the pgvector table is created by Alembic regardless, but the
+    # app only reads/writes it when this flag is on. Note: enabling it on a
+    # deployment that already has a populated FAISS index starts with an
+    # empty pgvector table — re-upload documents (or backfill the table)
+    # before relying on it.
+    pgvector_enabled: bool = False
+
+    # Vector dimensions pgvector_store.py assumes for its embeddings table.
+    # Must match the embedding model's output size (384 for the default
+    # all-MiniLM-L6-v2); mismatch is caught at create_index() time and
+    # reported as a clear error rather than a Postgres "wrong dimensions"
+    # failure deep in a query.
+    pgvector_dimensions: int = 384
+
+    # The Postgres table pgvector_store.py stores vectors in. Single table
+    # for every tenant, with tenant_id a column — not one table per
+    # tenant — matching how the rest of the app's relational models do
+    # multi-tenancy (see app/models/... tenant_id columns).
+    pgvector_table_name: str = "document_embeddings"
 
     # Default number of chunks to return from retrieval.
     retrieval_top_k: int = 5
@@ -681,6 +726,75 @@ class Settings(BaseSettings):
     # Agent 3.3 — Similarity threshold for the duplicate-document check
     # above.
     duplicate_document_similarity_threshold: float = 0.95
+
+    # --- Agent memory (off by default) --------------------------------------
+    # When True, ChatService keeps a bounded per-session working memory
+    # (services/agent_memory.py): conversation turns plus durable key/value
+    # facts extracted from answers, injected back into later router and
+    # generation prompts as a "Remembered from earlier in this conversation"
+    # block. This is what makes a follow-up like "and what about the other
+    # document?" consistent with what was established earlier, independent
+    # of how much live history survives trimming. In-memory and bounded
+    # (same LRU discipline as the session store) — no new persistence
+    # layer, so an ephemeral deployment keeps working exactly as before.
+    agent_memory_enabled: bool = False
+
+    # Bounds for the per-process agent-memory store, mirroring the session
+    # store's own caps so memory can't grow without limit.
+    agent_memory_max_sessions: int = 1000
+    agent_memory_max_turns_per_session: int = 10
+    agent_memory_max_facts_per_session: int = 20
+
+    # When True (and agent_memory_enabled), one extra LLM call per answered
+    # request extracts durable key/value facts from the answer and stores
+    # them in the session's memory — the fact block a later question can
+    # draw on. Off by default: added latency + one LLM call per request,
+    # only worth it when the fact block is actually used.
+    agent_memory_fact_extraction_enabled: bool = False
+
+    # --- AgentExecutor orchestration (off by default) ----------------------
+    # When True, ChatService routes eligible queries through
+    # AgentExecutor (services/agent_executor.py) — the planner produces an
+    # ExecutionPlan and the executor runs a ReAct loop over the dynamic
+    # tool registry (services/tools/) instead of ChatService's inline
+    # orchestration. Same interfaces, same grounding/citation guarantees
+    # (the executor's synthesis reuses prompt_builder and the sources
+    # machinery), just orchestration moved out of ChatService — the
+    # architectural boundary the 10/10 upgrade asks for. Off by default:
+    # unchanged inline behavior is the safe default; the executor is the
+    # opt-in path. The executor still delegates to the specialized agents
+    # (document_analyst/web_researcher/fact_checker/summarizer) when its
+    # plan calls for them.
+    agent_executor_enabled: bool = False
+
+    # Max steps (tool invocations + LLM synthesis) one AgentExecutor run
+    # may execute before it stops and synthesizes from what it has —
+    # the executor's loop guard, mirroring the research agent's
+    # research_total_timeout_seconds budget.
+    agent_executor_max_steps: int = 6
+
+    # --- Nightly eval job (off by default) ----------------------------------
+    # When True, the startup/shutdown hook (see eval/nightly_eval.py) and
+    # the .github/workflows/nightly-eval.yml scheduled workflow run the
+    # eval harness and gate against a baseline. The workflow itself is
+    # independent of this flag (it runs on its own schedule), but
+    # NIGHTLY_EVAL_ENABLED=true lets a deployment opt the app's own
+    # process into running a regression check on startup. Off by default —
+    # the eval harness calls the live LLM and costs quota, so it must be
+    # deliberately enabled.
+    nightly_eval_enabled: bool = False
+
+    # Dataset (inside backend/eval/) the nightly eval runs against, and
+    # the committed baseline JSON (relative to backend/) it gates on. The
+    # baseline is updated intentionally via eval/regression_check.py
+    # re-baselining — see eval/README.md.
+    nightly_eval_dataset: str = "dataset_v1.json"
+    nightly_eval_baseline: str = "eval/baselines/v2_groq.json"
+
+    # Absolute regression tolerance (0-1 scale) for the nightly gate,
+    # passed through to regression_check.py --tol. 0.05 matches the eval
+    # workflow's manual default.
+    nightly_eval_tolerance: float = 0.05
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

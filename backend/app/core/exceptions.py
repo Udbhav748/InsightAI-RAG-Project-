@@ -28,6 +28,18 @@ class UnauthorizedError(AppError):
     error_code = "UNAUTHORIZED"
 
 
+class RateLimitExceededError(AppError):
+    """The caller exceeded the per-identity (API key / JWT user) or per-IP
+    sliding-window request limit. Distinct from UnauthorizedError (401):
+    a rate-limited request may be perfectly well authenticated — it's just
+    too fast — so it must not look like an auth failure to the caller.
+    The error_handlers taxonomy already reserved this category."""
+
+    status_code = 429
+    taxonomy_category = "rate_limit"
+    error_code = "RATE_LIMIT_EXCEEDED"
+
+
 class UnsupportedFileTypeError(AppError):
     status_code = 415
     taxonomy_category = "input"

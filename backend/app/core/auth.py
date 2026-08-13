@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from fastapi import Header, Request
 
 from app.core.config import settings
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import RateLimitExceededError, UnauthorizedError
 from app.core.request_context import set_client_name
 from app.services.tenant_service import find_api_key, resolve_tenant
 from app.services.user_service import decode_access_token, get_user_by_id
@@ -111,7 +111,7 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
                 "audit_event",
                 extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": client_name}},
             )
-            raise UnauthorizedError("Rate limit exceeded. Please slow down.")
+            raise RateLimitExceededError("Rate limit exceeded. Please slow down.")
         # Resolve the tenant (and role) for this client (creating the row
         # on first sight when the DB is enabled); both None when the DB is
         # disabled, in which case downstream persistence AND role-gating
@@ -159,6 +159,16 @@ def require_auth(
             raise UnauthorizedError("Invalid or expired token.")
 
         email, tenant_id, role = resolved
+        # Rate limit the JWT path too — the README's "60 req/min per
+        # identity" applies to both auth methods, and an unthrottled JWT
+        # path would let a stolen/loose token hammer the API the same way
+        # the (now IP-limited) login endpoint would have been hammered.
+        if not _check_rate_limit(email):
+            logger.warning(
+                "audit_event",
+                extra={"extra_fields": {"event": "rate_limited", "path": request.url.path, "client": email}},
+            )
+            raise RateLimitExceededError("Rate limit exceeded. Please slow down.")
         request.state.client_name = email
         request.state.tenant_id = tenant_id
         request.state.role = role

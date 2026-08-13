@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_vector_store() -> VectorStore:
-    """Load the persisted FAISS index once and reuse it on every request.
+    """Load the persisted vector index once and reuse it on every request.
 
     Shared with the upload route (see documents.py) so both hit the same
     in-memory index — a document processed via /upload is immediately
@@ -46,12 +46,30 @@ def get_vector_store() -> VectorStore:
     DocumentProcessingService creates it on the first embedding batch, and
     VectorStore.search() already raises VectorStoreNotFoundError on an
     uninitialized store, so /chat still 404s correctly until then.
+
+    Backend selection: FAISS by default; when PGVECTOR_ENABLED (and
+    DATABASE_URL, which pgvector requires), a PgvectorVectorStore backed by
+    the document_embeddings table instead. The swap is config-driven so a
+    deployment can migrate between stores without touching routes or
+    orchestration services, which depend only on the VectorStore ABC.
     """
+    if settings.pgvector_enabled:
+        from app.services.pgvector_store import PgvectorVectorStore
+
+        store = PgvectorVectorStore()
+        from app.core.metrics import get_metrics
+
+        get_metrics().record_vectors(store.total_vectors())
+        return store
+
     store = FAISSVectorStore()
     try:
         store.load()
     except VectorStoreNotFoundError:
         pass
+    from app.core.metrics import get_metrics
+
+    get_metrics().record_vectors(store.total_vectors())
     return store
 
 
@@ -89,7 +107,18 @@ def get_llm_client() -> LLMClient:
 
 
 def get_chat_service() -> ChatService:
-    return ChatService(get_vector_store(), get_llm_client(), image_vector_store=get_image_vector_store())
+    # Agent memory is the shared per-process singleton (services/
+    # agent_memory.py) when the feature is enabled, else None — ChatService
+    # treats None as "memory disabled", so enabling the flag later is the
+    # entire wiring surface.
+    from app.services.agent_memory import get_agent_memory
+
+    return ChatService(
+        get_vector_store(),
+        get_llm_client(),
+        image_vector_store=get_image_vector_store(),
+        agent_memory=get_agent_memory() if settings.agent_memory_enabled else None,
+    )
 
 
 @router.post("/chat", response_model=ChatResponse)

@@ -56,6 +56,8 @@ from app.services.agent_events import log_agent_handoff
 from app.services.research_agent import ResearchAgent, ResearchFindings
 from app.services.router_agent import RouterAgent
 from app.services.local_research_agent import LocalResearchAgent
+from app.services.tools.base import ToolContext
+from app.services.tools.factory import build_tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -410,7 +412,13 @@ class PlanDecision:
 
 
 class ChatService:
-    def __init__(self, vector_store: VectorStore, llm_client: LLMClient, image_vector_store=None):
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        llm_client: LLMClient,
+        image_vector_store=None,
+        agent_memory=None,
+    ):
         self._vector_store = vector_store
         self._llm_client = llm_client
         # Phase 4 cross-modal store: image vectors (CLIP space) belong to
@@ -429,6 +437,34 @@ class ChatService:
         self._router_agent = RouterAgent(llm_client, fallback_planner=self._plan)
         self._research_agent = ResearchAgent(llm_client)
         self._local_research_agent = LocalResearchAgent(llm_client, vector_store)
+        # Dynamic tool registry (services/tools/): the agent-facing
+        # invocation surface. Where this service's inline paths call
+        # retrieve()/search_web()/etc. directly (each @track_tool'd once),
+        # a future Planner/Executor agent calls registry.execute(name, args)
+        # instead. Construction is cheap — no I/O until execute() runs.
+        self._tool_registry = build_tool_registry()
+        self._tool_context = ToolContext(
+            vector_store=vector_store,
+            llm_client=llm_client,
+            agent_memory=agent_memory,
+        )
+        # AgentExecutor (services/agent_executor.py): the opt-in
+        # planner→ReAct-executor orchestration layer behind
+        # Settings.agent_executor_enabled. When enabled, eligible queries
+        # are handed to a PlanningAgent that produces an ExecutionPlan and
+        # an AgentExecutor that runs it tool-by-tool over the registry
+        # above, instead of this service's inline corrective loop. Built
+        # lazily (construction is cheap — no LLM calls) and only invoked
+        # when the flag is on, so the inline path is byte-for-byte
+        # unchanged by default.
+        self._agent_executor = None
+        # Agent memory (services/agent_memory.py): a bounded per-session
+        # working memory of turns + extracted facts, injected into later
+        # prompts. Optional — None (the default) disables it entirely; the
+        # route wires the shared singleton when Settings.agent_memory_enabled.
+        # Every interaction is best-effort and never raises into the
+        # pipeline: memory is a quality enhancement, not a new failure mode.
+        self._agent_memory = agent_memory
         # Response cache: keyed by (normalized_query, session_id, doc_set_hash)
         # Only caches final responses after corrective loop completes.
         # Max 256 entries, LRU eviction.
@@ -495,6 +531,210 @@ class ChatService:
                 return PlanDecision(action="summarize", document_id=match.group(0))
 
         return PlanDecision(action="retrieve")
+
+    def _agent_executor_instance(self):
+        """Lazily construct the AgentExecutor (services/agent_executor.py)
+        the first time it's needed. Cheap — no LLM calls until execute().
+        Deliberately not built in __init__: the executor is only ever
+        exercised when Settings.agent_executor_enabled, and constructing it
+        unconditionally would force every /chat request (and the eval
+        harness, which constructs ChatService directly) through its import
+        chain even when disabled."""
+        if self._agent_executor is None:
+            from app.services.agent_executor import AgentExecutor
+            from app.services.planning_agent import PlanningAgent
+
+            self._agent_executor = AgentExecutor(
+                llm_client=self._llm_client,
+                tool_registry=self._tool_registry,
+                planning_agent=PlanningAgent(self._llm_client, self._tool_registry),
+                agent_memory=self._agent_memory,
+            )
+        return self._agent_executor
+
+    def _handle_via_executor(
+        self,
+        query: str,
+        history: list[dict] | None,
+        session_id: str | None,
+        tenant_id: int | None,
+        top_k: int | None,
+        min_score: float | None,
+        confirm_web_search: bool,
+        persona: str | None,
+    ) -> ChatResponse:
+        """Run a query through the AgentExecutor path and return a
+        ChatResponse. The executor is async; handle_query is sync, so this
+        bridges by driving the executor's coroutine on a short-lived event
+        loop. Called only when Settings.agent_executor_enabled."""
+        import asyncio
+
+        executor = self._agent_executor_instance()
+        context = ToolContext(
+            vector_store=self._vector_store,
+            llm_client=self._llm_client,
+            tenant_id=tenant_id,
+            session_id=session_id,
+            agent_memory=self._agent_memory,
+        )
+
+        async def _run() -> ChatResponse:
+            result = await executor.execute(
+                query,
+                context=context,
+                session_id=session_id,
+                history=history,
+                top_k=top_k,
+                min_score=min_score,
+                confirm_web_search=confirm_web_search,
+                persona=persona,
+            )
+            return ChatResponse(
+                answer=result.answer,
+                retrieved_chunks=result.retrieved_chunks,
+                sources=result.sources,
+                processing_time=round(result.processing_time, 4),
+                tool_used=result.tool_used,
+                steps_taken=result.steps_taken,
+                answer_source=result.answer_source,
+                hallucination_detected=result.hallucination_detected,
+                hallucination_score=result.hallucination_score,
+                follow_up_questions=result.follow_up_questions,
+                session_id=session_id or "",
+            )
+
+        try:
+            return asyncio.run(_run())
+        except RuntimeError:
+            # A running event loop (async test / async route) can't be
+            # asyncio.run()'d over — drive the coroutine on the existing
+            # loop instead.
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(_run())
+
+    def _inject_memory(self, history: list[dict] | None, session_id: str | None) -> list[dict] | None:
+        """Append the session's remembered facts to the history passed to
+        the router and generation prompts, as a synthetic system turn.
+
+        No-op (returns history unchanged) when agent memory is disabled, no
+        session is in play, or nothing is remembered yet — the injected
+        block is the durable fact layer, while the live conversation turns
+        already flow through history as normal user/assistant turns. A
+        memory failure degrades to the un-augmented history, never raises.
+        """
+        if self._agent_memory is None or not settings.agent_memory_enabled or not session_id:
+            return history
+        try:
+            block = self._agent_memory.build_context(session_id)
+        except Exception as exc:
+            logger.warning(
+                "agent_memory_context_failed",
+                extra={"extra_fields": {"session_id": session_id, "error": str(exc)}},
+            )
+            return history
+        if not block:
+            return history
+        # Drop any earlier synthetic memory turn so a re-route (or a
+        # retried request) doesn't stack stale fact blocks, then append the
+        # fresh one last — trailing turns survive the history cap slicing.
+        turns = [t for t in (history or []) if t.get("role") != "system"]
+        return turns + [{"role": "system", "content": block}]
+
+    def _extract_facts(self, query: str, answer: str) -> list[tuple[str, str, str]]:
+        """Extract durable factual claims from a Q&A exchange via one
+        JSON-mode LLM call. Returns a list of (key, value, confidence)
+        tuples; [] on any parse failure or when the model found nothing
+        worth remembering. Never raises — callers wrap this in _remember's
+        exception guard."""
+        prompt = (
+            "Extract the durable factual claims from this question-answer "
+            'exchange — the concrete facts a later question might want to '
+            'refer back to (e.g. "project deadline", "team size"). Exclude '
+            "conversational filler, opinions, and transient remarks.\n"
+            'Return ONLY a single JSON object, no prose, matching exactly '
+            '{"facts": [{"key": "<short lowercase label>", "value": "<the '
+            'claim>", "confidence": "high" | "medium" | "low"}]}. '
+            'Return {"facts": []} if there are no durable facts.\n\n'
+            f"Question: {query}\nAnswer: {answer}"
+        )
+        raw = self._llm_client.generate(prompt).strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        import json
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            start, end = raw.find("{"), raw.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return []
+            try:
+                payload = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                return []
+        facts = payload.get("facts") if isinstance(payload, dict) else None
+        if not isinstance(facts, list):
+            return []
+        out: list[tuple[str, str, str]] = []
+        for item in facts:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key", "")).strip().lower()
+            value = str(item.get("value", "")).strip()
+            if not key or not value:
+                continue
+            confidence = str(item.get("confidence", "medium")).strip().lower()
+            if confidence not in ("high", "medium", "low"):
+                confidence = "medium"
+            out.append((key, value, confidence))
+        return out
+
+    def _remember(
+        self,
+        session_id: str | None,
+        query: str,
+        answer: str,
+        chunks: list[RetrievedChunk],
+        query_type: str,
+    ) -> None:
+        """Record this exchange into agent memory: the two turns always,
+        and — when fact extraction is enabled — durable key/value facts
+        extracted from the answer. Small talk is skipped for fact
+        extraction (nothing worth remembering). Best-effort and fully
+        swallowed on failure — memory is a quality enhancement, never a new
+        failure mode."""
+        if self._agent_memory is None or not settings.agent_memory_enabled or not session_id:
+            return
+        try:
+            self._agent_memory.add_turn(session_id, "user", query)
+            self._agent_memory.add_turn(session_id, "assistant", answer)
+        except Exception as exc:
+            logger.warning(
+                "agent_memory_turn_failed",
+                extra={"extra_fields": {"session_id": session_id, "error": str(exc)}},
+            )
+            return
+
+        if not settings.agent_memory_fact_extraction_enabled or query_type == "conversational":
+            return
+        try:
+            facts = self._extract_facts(query, answer)
+        except Exception as exc:
+            logger.warning(
+                "agent_memory_extraction_failed",
+                extra={"extra_fields": {"session_id": session_id, "error": str(exc)}},
+            )
+            return
+        if not facts:
+            return
+        source_chunk_ids = [chunk.chunk_id for chunk in chunks]
+        for key, value, confidence in facts:
+            self._agent_memory.upsert_fact(
+                session_id, key, value, confidence=confidence, source_chunk_ids=source_chunk_ids
+            )
+        logger.info(
+            "agent_memory_facts_stored",
+            extra={"extra_fields": {"session_id": session_id, "fact_count": len(facts)}},
+        )
 
     def _route(self, query: str, history: list[dict] | None = None) -> PlanDecision:
         """Decide the query's action: the keyword planner, upgraded by the
@@ -700,6 +940,7 @@ class ChatService:
             "retrieval_graded",
             extra={"extra_fields": {"grade": grade, "top_score": top_score, "chunk_count": len(chunks)}},
         )
+        get_metrics().record_retrieval_grade(grade)
         return grade
 
     def _contextualize_query(self, query: str, history: list[dict] | None) -> str:
@@ -827,7 +1068,10 @@ class ChatService:
             # web_search_ready(). Callers should retry after fixing config.
             return []
         try:
-            return search_web(query)
+            results = search_web(query)
+            if results:
+                get_metrics().record_web_search_fallback(stage="retrieval")
+            return results
         except WebSearchError as exc:
             logger.warning("web_search_failed", extra={"extra_fields": {"error": str(exc)}})
             return []
@@ -1059,11 +1303,34 @@ class ChatService:
         steps_taken = 1  # planning
         reset_usage()  # per-request LLM token/cost rollup
 
+        # Agent memory: append the session's remembered facts to the
+        # history before routing/generation, so the router and the model
+        # can draw on what was established earlier in the conversation.
+        history = self._inject_memory(history, session_id)
+
         plan = self._route(query, history)
         logger.info(
             "plan_decided",
             extra={"extra_fields": {"action": plan.action, "query_length": len(query)}},
         )
+
+        if settings.agent_executor_enabled and plan.action in ("retrieve", "research"):
+            # AgentExecutor orchestration (Feature: planner → ReAct
+            # executor over the dynamic tool registry). Only for the
+            # retrieval/research paths — small talk and summarization stay
+            # on the cheap inline paths (conversational needs no tools at
+            # all, and summarize is a single tool call that the executor
+            # would add planning overhead to for no benefit).
+            return self._handle_via_executor(
+                query,
+                history=history,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                top_k=top_k,
+                min_score=min_score,
+                confirm_web_search=confirm_web_search,
+                persona=persona,
+            )
 
         if plan.action == "conversational":
             return self._respond(
@@ -1353,6 +1620,8 @@ class ChatService:
         steps_taken = 1  # planning
         reset_usage()  # per-request LLM token/cost rollup
 
+        history = self._inject_memory(history, session_id)
+
         plan = self._route(query, history)
         logger.info(
             "plan_decided",
@@ -1632,6 +1901,8 @@ class ChatService:
             extra={"extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}},
         )
 
+        history = self._inject_memory(history, session_id)
+
         recent_history = history[-_MAX_HISTORY_TURNS:] if history else None
 
         try:
@@ -1797,6 +2068,11 @@ class ChatService:
                 }
             )
         logger.info("chat_query_handled", extra={"extra_fields": log_fields})
+
+        # Agent memory: record this exchange (turns, and — when fact
+        # extraction is enabled — durable facts) so later questions in the
+        # session can draw on it. Best-effort; never affects the response.
+        self._remember(session_id, query, answer, retrieved_chunks, query_type)
 
         return ChatResponse(
             answer=answer,

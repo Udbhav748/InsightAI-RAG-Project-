@@ -126,9 +126,12 @@ class TestRateLimit:
         response = client.post(
             "/chat", headers=VALID_HEADERS, json={"query": "What is scope?"}
         )
-        assert response.status_code == 401
+        # 429 (rate limited), not 401 — the request was well-authenticated,
+        # just too fast, and must not be misreported as an auth failure.
+        assert response.status_code == 429
         body = response.json()
         assert "rate limit" in body["detail"].lower()
+        assert body["error_code"] == "RATE_LIMIT_EXCEEDED"
 
     def test_rate_limited_audit_event_logged(self, client, low_limit, caplog):
         import logging

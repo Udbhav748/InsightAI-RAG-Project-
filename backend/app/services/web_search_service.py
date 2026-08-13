@@ -166,20 +166,17 @@ def _parse_bing(data: dict) -> list[WebSearchResult]:
     return results
 
 
-@track_tool("web_search")
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(1),
-    retry=retry_if_exception_type(WebSearchError),
-    reraise=True,
-    before_sleep=_log_retry,
-)
-def search_web(query: str, max_results: int | None = None) -> list[WebSearchResult]:
-    """Fetch top web results for query.
+def _search_web_core(query: str, max_results: int | None = None) -> list[WebSearchResult]:
+    """Core web-search logic (see search_web() below). Split out of the
+    @track_tool/@retry-wrapped public function so the dynamic tool
+    registry (services/tools/) can invoke web search without double-
+    instrumenting it: the registry is the single instrumentation point on
+    the agent path, @track_tool is the single one on the inline path.
 
-    Raises WebSearchError on failure — callers (ChatService) are expected
-    to catch it and degrade gracefully (treat it like zero results) rather
-    than fail the whole chat request over a best-effort fallback tool.
+    Raises WebSearchError on failure — callers (ChatService, the tool
+    registry) are expected to catch it and degrade gracefully (treat it
+    like zero results) rather than fail the whole chat request over a
+    best-effort fallback tool.
 
     Returns [] (never raises) when the configured provider isn't actually
     usable (unknown provider, or keyed provider without its key) — the
@@ -221,3 +218,31 @@ def search_web(query: str, max_results: int | None = None) -> list[WebSearchResu
     )
 
     return results
+
+
+@track_tool("web_search")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type(WebSearchError),
+    reraise=True,
+    before_sleep=_log_retry,
+)
+def search_web(query: str, max_results: int | None = None) -> list[WebSearchResult]:
+    """Public, instrumented web-search entry point — the inline
+    ChatService path. Validates args, runs _search_web_core (with retry),
+    and logs one tool_invocation event. The dynamic tool registry calls
+    _search_web_core directly instead, so a single web-search call is
+    never counted twice.
+
+    Raises WebSearchError on failure — callers are expected to catch it
+    and degrade gracefully (treat it like zero results) rather than fail
+    the whole chat request over a best-effort fallback tool.
+
+    Returns [] (never raises) when the configured provider isn't actually
+    usable (unknown provider, or keyed provider without its key) — the
+    "force-disable without key" behavior of Feature #7. The distinct
+    "web_search_unavailable" event is logged by web_search_ready() so the
+    operator can tell "disabled" from "searched and found nothing".
+    """
+    return _search_web_core(query, max_results=max_results)

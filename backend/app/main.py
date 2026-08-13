@@ -11,6 +11,7 @@ from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.metrics import RequestTimer, get_metrics
 from app.core.request_context import request_id_var
+from app.core.security import security_headers_middleware
 from app.api.v1.routes import (
     admin,
     approvals,
@@ -63,6 +64,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Apply the security-headers middleware (core/security.py) to every
+    response — one more Starlette-style wrapper because main.py already
+    uses the @app.middleware("http") decorator shape for its other
+    cross-cutting concerns, so registering this the same way keeps the
+    file's middleware section consistent."""
+    return await security_headers_middleware(request, call_next)
 
 
 @app.middleware("http")
