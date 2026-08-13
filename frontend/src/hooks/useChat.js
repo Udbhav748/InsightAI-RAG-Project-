@@ -47,6 +47,13 @@ export default function useChat(initialSessionId, initialDocumentIds) {
   const messagesRef = useRef([])
   const sessionIdRef = useRef(null)
   const documentIdsRef = useRef(initialDocumentIds ?? null)
+  // Keep the ref in sync with the latest initialDocumentIds — a caller can
+  // pass a different scoped collection than the one this hook instance was
+  // constructed with (e.g. navigating via a different link), and without this
+  // the stale mount-time value would scope every retrieval to the wrong set.
+  useEffect(() => {
+    documentIdsRef.current = initialDocumentIds ?? null
+  }, [initialDocumentIds])
 
   // Resume a past conversation (opened from the History page) instead of
   // starting/continuing the localStorage-tracked session — additive to
@@ -144,6 +151,9 @@ export default function useChat(initialSessionId, initialDocumentIds) {
                 content: payload.answer,
                 sources: payload.sources ?? [],
                 retrievalConfidence: payload.retrieval_confidence,
+                answerSource: payload.answer_source ?? 'documents',
+                hallucinationDetected: payload.hallucination_detected ?? false,
+                groundingScore: payload.grounding_score ?? null,
                 isClarifyingQuestion: payload.is_clarifying_question ?? false,
                 followUpQuestions: payload.follow_up_questions ?? [],
                 isStreaming: false,

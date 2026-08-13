@@ -27,13 +27,6 @@ function buildChatPayload(query, options) {
   return payload
 }
 
-export async function sendChatMessage(query, options = {}) {
-  // Generation can be slow on a cold embedding-model / LLM call, so this
-  // request gets a longer timeout than the shared api instance default.
-  const { data } = await api.post('/chat', buildChatPayload(query, options), { timeout: 60000 })
-  return data
-}
-
 /**
  * Send a chat query to POST /chat/stream and consume the Server-Sent
  * Events response as it arrives.
