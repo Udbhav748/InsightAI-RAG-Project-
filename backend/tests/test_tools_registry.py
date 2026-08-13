@@ -11,11 +11,12 @@ import asyncio
 
 import pytest
 
+from app.core.config import settings
 from app.models.document import RetrievedChunk, WebSearchResult
-from app.services.tools.factory import build_tool_registry
-from app.services.tools.base import ToolContext
-from app.services.tools.registry import ToolNotFoundError
 from app.services.tool_registry import ToolInputError, ToolOutputError
+from app.services.tools.base import ToolContext
+from app.services.tools.factory import build_tool_registry
+from app.services.tools.registry import ToolNotFoundError
 
 
 def run(coro):
@@ -115,21 +116,49 @@ class TestRetrievalTool:
 
 
 class TestWebSearchTool:
-    def test_disabled_provider_returns_empty_success(self, monkeypatch):
-        from app.services.tools.implementations import web_search_ready
+    def test_master_switch_disabled_returns_empty_without_calling_provider(self, monkeypatch):
+        """Regression test: WEB_SEARCH_ENABLED=false must hold on the
+        AgentExecutor/tool-registry path exactly like it does on the
+        inline ChatService path (rag_service._search_web), not just be a
+        suggestion in PlanningAgent's prompt. web_search_ready() and
+        _search_web_core are mocked to prove real results even so —
+        the master switch must short-circuit before either is reached."""
+        monkeypatch.setattr(settings, "web_search_enabled", False)
+        ready_calls = []
+        search_calls = []
+        monkeypatch.setattr(
+            "app.services.tools.implementations.web_search_ready",
+            lambda: ready_calls.append(1) or True,
+        )
+        monkeypatch.setattr(
+            "app.services.tools.implementations._search_web_core",
+            lambda q, mr=None: (
+                search_calls.append(1)
+                or [WebSearchResult(title="T", url="https://e.com", snippet="s")]
+            ),
+        )
 
         registry = build_tool_registry()
+        result = run(registry.execute("web_search", {"query": "hello"}, make_context()))
+
+        assert result.success
+        assert result.data == []
+        assert ready_calls == []
+        assert search_calls == []
+
+    def test_disabled_provider_returns_empty_success(self, monkeypatch):
+        registry = build_tool_registry()
         context = make_context()
+        monkeypatch.setattr(settings, "web_search_enabled", True)
         monkeypatch.setattr("app.services.tools.implementations.web_search_ready", lambda: False)
         result = run(registry.execute("web_search", {"query": "hello"}, context))
         assert result.success
         assert result.data == []
 
     def test_enabled_provider_returns_results(self, monkeypatch):
-        from app.services.tools.implementations import _search_web_core
-
         registry = build_tool_registry()
         context = make_context()
+        monkeypatch.setattr(settings, "web_search_enabled", True)
         monkeypatch.setattr("app.services.tools.implementations.web_search_ready", lambda: True)
         monkeypatch.setattr(
             "app.services.tools.implementations._search_web_core",

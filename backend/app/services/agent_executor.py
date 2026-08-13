@@ -110,12 +110,6 @@ class AgentExecutor:
             if step.tool == "synthesize":
                 break
 
-            step.tool = (
-                "web_search"
-                if step.tool == "web_search" and settings.web_search_enabled
-                else step.tool
-            )
-
             step_start = time.perf_counter()
             try:
                 result = await self._tools.execute(step.tool, step.args, context)
@@ -370,12 +364,6 @@ class AgentExecutor:
 
             if step.tool == "synthesize":
                 break
-
-            step.tool = (
-                "web_search"
-                if step.tool == "web_search" and settings.web_search_enabled
-                else step.tool
-            )
 
             yield {
                 "type": "trace",

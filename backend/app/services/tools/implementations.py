@@ -82,6 +82,22 @@ class WebSearchTool:
     output_schema = list[WebSearchResult]
 
     async def execute(self, args: WebSearchInput, context: ToolContext) -> ToolResult:
+        # Master switch (Settings.web_search_enabled): checked here, not
+        # just left to the planner's prompt ("only if web_search_enabled
+        # in settings" — planning_agent.py's _PLAN_PROMPT_TEMPLATE), which
+        # is an instruction the LLM can ignore, not an enforcement point.
+        # web_search_ready() below deliberately does NOT check this flag
+        # (see its own docstring — it's "distinct from the master switch",
+        # only provider/key availability), so without this check a
+        # deployment that sets AGENT_EXECUTOR_ENABLED=true and leaves
+        # WEB_SEARCH_ENABLED at its documented-safe default of False would
+        # still let the planner trigger real outbound search calls (the
+        # default provider, DuckDuckGo, needs no key, so web_search_ready()
+        # alone would happily let it through). Same degrade-to-empty
+        # semantics as every other "can't search right now" branch below —
+        # a disabled tool is a normal outcome, never an error.
+        if not context.settings.web_search_enabled:
+            return ToolResult(success=True, data=[])
         # Human-approval gate (Settings.web_search_requires_approval):
         # the tool only fires when the client explicitly confirmed the
         # search on the request (confirm_web_search=true), mirroring the
