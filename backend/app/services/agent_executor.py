@@ -1,7 +1,14 @@
-"""AgentExecutor: Runs ReAct loop - Plan -> Act -> Observe -> Repeat.
+"""AgentExecutor: runs a genuine ReAct loop - Plan -> Act -> Observe ->
+Repeat, one step at a time.
 
-The executor takes a PlanningAgent and ToolRegistry and executes the
-plan step by step, accumulating context for the final synthesis.
+Each iteration asks PlanningAgent.plan_next() for exactly one next step,
+given every Observation gathered so far this run, executes it against the
+ToolRegistry, and folds the result back in as the next Observation before
+asking again. This is what lets a later step react to what an earlier one
+actually returned (skip web_search once retrieval alone answered the
+question; stop early if a tool came back empty) — a fixed upfront plan
+can't do that, since every step's args would already be committed before
+any tool had run.
 """
 
 from __future__ import annotations
@@ -14,7 +21,9 @@ from typing import TYPE_CHECKING
 from app.core.config import settings
 from app.core.exceptions import ChatServiceError
 from app.models.schemas import ChatResponse, SourceReference
+from app.services.planning_agent import Observation
 from app.services.prompt_builder import build_prompt, strip_sources_section
+from app.services.tool_registry import _summarize_output
 from app.services.tools.base import ToolContext, ToolResult
 
 if TYPE_CHECKING:
@@ -92,20 +101,17 @@ class AgentExecutor:
         if self._memory and settings.agent_memory_enabled and session_id:
             history = self._inject_memory(history, session_id)
 
-        plan = await self._planner.plan(query, history)
         step_results: list[_StepResult] = []
+        observations: list[Observation] = []
         all_chunks: list = []
         all_web_results: list = []
         tool_used = "retrieval"
         answer_source = "documents"
         llm_calls = 0
 
-        for i, step in enumerate(plan.steps):
-            if i >= _MAX_ITERATIONS:
-                logger.warning(
-                    "agent_max_iterations_reached", extra={"extra_fields": {"max": _MAX_ITERATIONS}}
-                )
-                break
+        for _ in range(_MAX_ITERATIONS):
+            step = await self._planner.plan_next(query, history, observations)
+            llm_calls += 1
 
             if step.tool == "synthesize":
                 break
@@ -122,6 +128,13 @@ class AgentExecutor:
 
             step_latency = (time.perf_counter() - step_start) * 1000
             step_results.append(_StepResult(step=step, result=result, latency_ms=step_latency))
+            observations.append(
+                Observation(
+                    step=step,
+                    success=result.success,
+                    summary=_summarize_output(result.data) if result.success else result.error,
+                )
+            )
 
             if step.tool == "retrieval" and result.success and result.data:
                 all_chunks.extend(result.data)
@@ -138,6 +151,13 @@ class AgentExecutor:
                 tool_used = "diagnose"
             elif step.tool == "vision_qa" and result.success and result.data:
                 tool_used = "vision_qa"
+        else:
+            # Loop exhausted _MAX_ITERATIONS without the planner ever
+            # choosing "synthesize" — synthesize from whatever was
+            # gathered rather than looping forever.
+            logger.warning(
+                "agent_max_iterations_reached", extra={"extra_fields": {"max": _MAX_ITERATIONS}}
+            )
 
         answer, used_web = await self._synthesize(
             query, all_chunks, all_web_results, history, persona, step_results, llm_calls
@@ -343,24 +363,22 @@ class AgentExecutor:
         if self._memory and settings.agent_memory_enabled and session_id:
             history = self._inject_memory(history, session_id)
 
-        plan = await self._planner.plan(query, history)
-        yield {"type": "trace", "stage": "planning", "detail": {"steps": len(plan.steps)}}
-
         step_results: list[_StepResult] = []
+        observations: list[Observation] = []
         all_chunks: list = []
         all_web_results: list = []
         tool_used = "retrieval"
         answer_source = "documents"
         llm_calls = 0
 
-        for i, step in enumerate(plan.steps):
-            if i >= _MAX_ITERATIONS:
-                yield {
-                    "type": "trace",
-                    "stage": "warning",
-                    "detail": {"message": "max iterations reached"},
-                }
-                break
+        for _ in range(_MAX_ITERATIONS):
+            yield {
+                "type": "trace",
+                "stage": "planning",
+                "detail": {"step_index": len(observations)},
+            }
+            step = await self._planner.plan_next(query, history, observations)
+            llm_calls += 1
 
             if step.tool == "synthesize":
                 break
@@ -383,6 +401,13 @@ class AgentExecutor:
 
             step_latency = (time.perf_counter() - step_start) * 1000
             step_results.append(_StepResult(step=step, result=result, latency_ms=step_latency))
+            observations.append(
+                Observation(
+                    step=step,
+                    success=result.success,
+                    summary=_summarize_output(result.data) if result.success else result.error,
+                )
+            )
 
             if step.tool == "retrieval" and result.success and result.data:
                 all_chunks.extend(result.data)
@@ -416,6 +441,15 @@ class AgentExecutor:
                     "stage": "tool_error",
                     "detail": {"tool": step.tool, "error": result.error},
                 }
+        else:
+            # Loop exhausted _MAX_ITERATIONS without the planner ever
+            # choosing "synthesize" — synthesize from whatever was
+            # gathered rather than looping forever.
+            yield {
+                "type": "trace",
+                "stage": "warning",
+                "detail": {"message": "max iterations reached"},
+            }
 
         yield {
             "type": "trace",
@@ -483,8 +517,9 @@ class AgentExecutor:
             steps_taken=steps_taken,
             answer_source=answer_source if all_web_results else "documents",
             hallucination_detected=hallucination_detected,
-            hallucination_score=hallucination_score,
+            grounding_score=hallucination_score,
             follow_up_questions=follow_up_questions,
+            session_id=session_id or "",
         )
 
         yield {"type": "done", "payload": payload}

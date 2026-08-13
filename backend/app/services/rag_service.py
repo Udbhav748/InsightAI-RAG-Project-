@@ -536,9 +536,10 @@ class ChatService:
         # AgentExecutor (services/agent_executor.py): the opt-in
         # planner→ReAct-executor orchestration layer behind
         # Settings.agent_executor_enabled. When enabled, eligible queries
-        # are handed to a PlanningAgent that produces an ExecutionPlan and
-        # an AgentExecutor that runs it tool-by-tool over the registry
-        # above, instead of this service's inline corrective loop. Built
+        # are handed to an AgentExecutor that asks PlanningAgent for one
+        # next tool step at a time — each step sees every earlier step's
+        # result before it's chosen — instead of this service's inline
+        # corrective loop. Built
         # lazily (construction is cheap — no LLM calls) and only invoked
         # when the flag is on, so the inline path is byte-for-byte
         # unchanged by default.
@@ -690,7 +691,7 @@ class ChatService:
                 steps_taken=result.steps_taken,
                 answer_source=result.answer_source,
                 hallucination_detected=result.hallucination_detected,
-                hallucination_score=result.hallucination_score,
+                grounding_score=result.hallucination_score,
                 follow_up_questions=result.follow_up_questions,
                 session_id=session_id or "",
             )

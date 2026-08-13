@@ -3,11 +3,12 @@
 1. Specialized agents (services/agents/): DocumentAnalyst, WebResearcher,
    FactChecker, Summarizer — each wraps an existing capability behind the
    Agent ABC.
-2. PlanningAgent (services/planning_agent.py): LLM planner that emits an
-   ExecutionPlan, with defensive JSON parsing and a deterministic
-   fallback plan.
-3. AgentExecutor (services/agent_executor.py): the ReAct
-   plan→act→observe→synthesize loop over the dynamic tool registry.
+2. PlanningAgent (services/planning_agent.py): LLM planner that decides
+   one next step at a time (plan_next), with defensive JSON parsing and a
+   deterministic fallback step.
+3. AgentExecutor (services/agent_executor.py): the genuine ReAct
+   plan→act→observe→repeat loop over the dynamic tool registry — each
+   iteration's plan_next() call sees every earlier step's actual result.
 4. ChatService._handle_via_executor: the flag-gated wiring so eligible
    queries route through the executor.
 5. pgvector config surface (Settings.pgvector_*): the store swap is
@@ -28,13 +29,13 @@ import json
 import pytest
 
 from app.core.config import settings
-from app.models.document import RetrievedChunk, WebSearchResult
+from app.models.document import RetrievedChunk
+from app.services.agents.base import AgentContext
 from app.services.agents.document_analyst import DocumentAnalyst
 from app.services.agents.fact_checker import FactChecker
 from app.services.agents.summarizer import Summarizer
 from app.services.agents.web_researcher import WebResearcher
-from app.services.agents.base import AgentContext
-from app.services.planning_agent import PlanningAgent, PlanStep
+from app.services.planning_agent import Observation, PlanningAgent, PlanStep
 from app.services.tools.base import ToolContext
 from app.services.tools.factory import build_tool_registry
 
@@ -112,65 +113,78 @@ class TestPlanningAgent:
     def _planner(self, llm=None):
         return PlanningAgent(llm or FakeLLM(), make_registry())
 
-    def test_plan_produces_execution_plan(self):
-        llm = FakeLLM([json.dumps({
-            "steps": [
-                {"tool": "retrieval", "args": {"query": "q"}, "reason": "find"},
-                {"tool": "synthesize", "args": {}, "reason": "answer"},
-            ],
-            "final_answer_tool": "synthesize",
-        })])
-        plan = run(self._planner(llm).plan("some question"))
-        assert len(plan.steps) >= 1
-        assert plan.steps[0].tool == "retrieval"
-        assert plan.final_answer_tool == "synthesize"
+    def test_plan_next_returns_first_step(self):
+        llm = FakeLLM([json.dumps({"tool": "retrieval", "args": {"query": "q"}, "reason": "find"})])
+        step = run(self._planner(llm).plan_next("some question", None, []))
+        assert step.tool == "retrieval"
+        assert step.args == {"query": "q"}
 
-    def test_fallback_plan_on_unparseable_output(self):
+    def test_plan_next_can_choose_synthesize_directly(self):
+        llm = FakeLLM([json.dumps({"tool": "synthesize", "args": {}, "reason": "enough already"})])
+        step = run(self._planner(llm).plan_next("q", None, []))
+        assert step.tool == "synthesize"
+
+    def test_fallback_retrieval_on_unparseable_output_with_no_observations(self):
         llm = FakeLLM(["sure, here's my answer!"])
-        plan = run(self._planner(llm).plan("anything"))
-        assert [s.tool for s in plan.steps] == ["retrieval", "synthesize"]
+        step = run(self._planner(llm).plan_next("anything", None, []))
+        assert step.tool == "retrieval"
 
-    def test_fallback_plan_on_llm_failure(self):
-        plan = run(self._planner(FakeLLM(raise_on_call=True)).plan("anything"))
-        assert plan.steps[0].tool == "retrieval"
+    def test_fallback_synthesize_on_unparseable_output_with_prior_observations(self):
+        # Once at least one step has already run, a broken planner call
+        # must not retry retrieval blindly — it degrades to synthesizing
+        # from whatever's already been gathered.
+        llm = FakeLLM(["sure, here's my answer!"])
+        prior = [
+            Observation(
+                step=PlanStep(tool="retrieval", args={"query": "q"}, reason="find"),
+                success=True,
+                summary={"count": 1, "ids": ["c1"]},
+            )
+        ]
+        step = run(self._planner(llm).plan_next("anything", None, prior))
+        assert step.tool == "synthesize"
 
-    def test_unknown_tool_dropped_from_plan(self):
-        llm = FakeLLM([json.dumps({
-            "steps": [
-                {"tool": "not_a_real_tool", "args": {}, "reason": "nope"},
-                {"tool": "synthesize", "args": {}, "reason": "answer"},
-            ],
-            "final_answer_tool": "synthesize",
-        })])
-        plan = run(self._planner(llm).plan("q"))
-        assert all(step.tool != "not_a_real_tool" for step in plan.steps)
+    def test_fallback_retrieval_on_llm_failure_with_no_observations(self):
+        step = run(self._planner(FakeLLM(raise_on_call=True)).plan_next("anything", None, []))
+        assert step.tool == "retrieval"
 
-    def test_synthesize_appended_when_missing(self):
-        llm = FakeLLM([json.dumps({
-            "steps": [{"tool": "retrieval", "args": {"query": "q"}, "reason": "find"}],
-            "final_answer_tool": "synthesize",
-        })])
-        plan = run(self._planner(llm).plan("q"))
-        assert plan.steps[-1].tool == "synthesize"
+    def test_unknown_tool_falls_back(self):
+        llm = FakeLLM([json.dumps({"tool": "not_a_real_tool", "args": {}, "reason": "nope"})])
+        step = run(self._planner(llm).plan_next("q", None, []))
+        assert step.tool == "retrieval"
+
+    def test_observations_are_included_in_the_prompt(self):
+        """The whole point of plan_next over the old upfront plan(): later
+        steps must actually see what earlier ones returned."""
+        llm = FakeLLM([json.dumps({"tool": "synthesize", "args": {}, "reason": "done"})])
+        prior = [
+            Observation(
+                step=PlanStep(tool="retrieval", args={"query": "q"}, reason="find"),
+                success=True,
+                summary={"count": 3, "ids": ["c1", "c2", "c3"]},
+            )
+        ]
+        run(self._planner(llm).plan_next("q", None, prior))
+        prompt = llm.calls[0][1]
+        assert "retrieval" in prompt
+        assert "c1" in prompt
 
 
 class TestAgentExecutor:
     def _executor(self, llm=None):
         from app.services.agent_executor import AgentExecutor
 
-        return AgentExecutor(
-            llm_client=llm or FakeLLM([
-                json.dumps({
-                    "steps": [
-                        {"tool": "retrieval", "args": {"query": "q"}, "reason": "find"},
-                        {"tool": "synthesize", "args": {}, "reason": "answer"},
-                    ],
-                    "final_answer_tool": "synthesize",
-                }),
+        shared_llm = llm or FakeLLM(
+            [
+                json.dumps({"tool": "retrieval", "args": {"query": "q"}, "reason": "find"}),
+                json.dumps({"tool": "synthesize", "args": {}, "reason": "answer"}),
                 "grounded synthesized answer",
-            ]),
+            ]
+        )
+        return AgentExecutor(
+            llm_client=shared_llm,
             tool_registry=make_registry(),
-            planning_agent=PlanningAgent(llm or FakeLLM(), make_registry()),
+            planning_agent=PlanningAgent(shared_llm, make_registry()),
         )
 
     def test_execute_runs_plan_and_synthesizes(self):
@@ -189,13 +203,21 @@ class TestAgentExecutor:
     def test_execute_with_empty_retrieval_returns_fallback(self):
         from app.services.agent_executor import AgentExecutor
 
+        # Only one planner response is queued on purpose: the first
+        # plan_next() call consumes it (a retrieval step, which comes
+        # back empty against the empty FakeVectorStore below); the
+        # second plan_next() call finds no response left and — since an
+        # observation already exists by then — falls back to
+        # "synthesize" rather than retrying retrieval forever. Proves
+        # the executor degrades to FALLBACK_REPLY, not an error, when
+        # the planner runs dry mid-loop.
+        planner_llm = FakeLLM(
+            [json.dumps({"tool": "retrieval", "args": {"query": "q"}, "reason": "find"})]
+        )
         executor = AgentExecutor(
-            llm_client=FakeLLM([json.dumps({
-                "steps": [{"tool": "retrieval", "args": {"query": "q"}, "reason": "find"}],
-                "final_answer_tool": "synthesize",
-            })]),
+            llm_client=planner_llm,
             tool_registry=make_registry(),
-            planning_agent=PlanningAgent(FakeLLM(), make_registry()),
+            planning_agent=PlanningAgent(planner_llm, make_registry()),
         )
         context = ToolContext(
             vector_store=FakeVectorStore([]),  # nothing to retrieve
@@ -203,6 +225,35 @@ class TestAgentExecutor:
         )
         result = run(executor.execute("nothing here", context=context))
         assert result.answer  # FALLBACK_REPLY or honest "insufficient"
+
+    def test_second_step_reacts_to_first_steps_result(self, monkeypatch):
+        """The behavioral difference a real ReAct loop is supposed to
+        deliver: retrieval already found something, so the planner's
+        second call (seeing that observation) can choose to stop instead
+        of blindly running a second tool step."""
+        # RetrievalTool routes through the real embed_query() for a
+        # non-FAISS store — monkeypatch it like test_tools_registry.py
+        # does, so this test doesn't depend on a live embedding model.
+        monkeypatch.setattr("app.services.retrieval_service.embed_query", lambda q: [0.1, 0.2])
+        llm = FakeLLM(
+            [
+                json.dumps({"tool": "retrieval", "args": {"query": "q"}, "reason": "find"}),
+                json.dumps(
+                    {"tool": "synthesize", "args": {}, "reason": "retrieval already answered it"}
+                ),
+                "grounded synthesized answer",
+            ]
+        )
+        executor = self._executor(llm=llm)
+        context = ToolContext(
+            vector_store=FakeVectorStore([make_chunk()]),
+            llm_client=FakeLLM(["irrelevant"]),
+        )
+        result = run(executor.execute("what is the PMP?", context=context))
+        assert result.answer == "grounded synthesized answer"
+        # Exactly one tool step (retrieval) + synthesis — the planner
+        # stopped as soon as it had enough, not after a fixed plan length.
+        assert result.steps_taken == 2
 
 
 class TestSpecializedAgents:
@@ -255,16 +306,13 @@ class TestChatServiceExecutorWiring:
         from app.models.schemas import ChatResponse
         from app.services.rag_service import ChatService
 
-        llm = FakeLLM([
-            json.dumps({
-                "steps": [
-                    {"tool": "retrieval", "args": {"query": "q"}, "reason": "find"},
-                    {"tool": "synthesize", "args": {}, "reason": "answer"},
-                ],
-                "final_answer_tool": "synthesize",
-            }),
-            "synthesized answer",
-        ])
+        llm = FakeLLM(
+            [
+                json.dumps({"tool": "retrieval", "args": {"query": "q"}, "reason": "find"}),
+                json.dumps({"tool": "synthesize", "args": {}, "reason": "answer"}),
+                "synthesized answer",
+            ]
+        )
         service = ChatService(FakeVectorStore([make_chunk()]), llm)
         response = service._handle_via_executor(
             "what is the PMP?",
@@ -330,7 +378,18 @@ class TestPgvectorStoreSmoke:
         store = PgvectorVectorStore()
         with pytest.raises(Exception):
             store.add_embeddings(
-                [type("EC", (), {"chunk_id": "c", "document_id": "d", "embedding": [0.1] * 5, "metadata": {}})()]
+                [
+                    type(
+                        "EC",
+                        (),
+                        {
+                            "chunk_id": "c",
+                            "document_id": "d",
+                            "embedding": [0.1] * 5,
+                            "metadata": {},
+                        },
+                    )()
+                ]
             )
 
 

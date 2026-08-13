@@ -787,8 +787,9 @@ class Settings(BaseSettings):
 
     # --- AgentExecutor orchestration (off by default) ----------------------
     # When True, ChatService routes eligible queries through
-    # AgentExecutor (services/agent_executor.py) — the planner produces an
-    # ExecutionPlan and the executor runs a ReAct loop over the dynamic
+    # AgentExecutor (services/agent_executor.py) — a genuine ReAct loop:
+    # PlanningAgent decides one next step at a time, reacting to what
+    # earlier steps in the same run actually returned, over the dynamic
     # tool registry (services/tools/) instead of ChatService's inline
     # orchestration. Same interfaces, same grounding/citation guarantees
     # (the executor's synthesis reuses prompt_builder and the sources
