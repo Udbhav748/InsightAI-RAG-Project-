@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Suspense, useEffect, useState } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import Sidebar from '../components/layout/Sidebar'
 import Navbar from '../components/layout/Navbar'
 import CommandPalette from '../components/command/CommandPalette'
+import PageFallback from '../components/ui/PageFallback'
 
 export default function AppLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const location = useLocation()
 
   // Global Cmd/Ctrl+K — mounted here (not per-page) so it works from
   // anywhere in the authenticated app, not just whichever page happens to
@@ -30,7 +33,23 @@ export default function AppLayout() {
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <Navbar onMenuClick={() => setMobileNavOpen(true)} onSearchClick={() => setCommandPaletteOpen(true)} />
           <main className="min-w-0 flex-1 pb-4 print:pb-0">
-            <Outlet />
+            {/* Only the routed page content animates/remounts on navigation —
+                Sidebar/Navbar/CommandPalette above stay mounted, so their
+                state survives and no page ever re-fetches data it already
+                had just because a sibling route changed. */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <Suspense fallback={<PageFallback />}>
+                  <Outlet />
+                </Suspense>
+              </motion.div>
+            </AnimatePresence>
           </main>
         </div>
       </div>

@@ -111,6 +111,17 @@ export default function Settings() {
 
   const maxUsageCount = usage.length > 0 ? Math.max(...usage.map((row) => row.request_count)) : 1
 
+// Per-day rows each carry their own avg_latency_ms; the headline figure
+// should be a request-weighted average across all days, not just the
+// newest row's value.
+const weightedAvgLatencyMs =
+  usage.length === 0
+    ? 0
+    : Math.round(
+        usage.reduce((total, row) => total + (row.request_count ?? 0) * (row.avg_latency_ms ?? 0), 0) /
+          Math.max(1, usage.reduce((total, row) => total + (row.request_count ?? 0), 0))
+      )
+
   const [approvals, setApprovals] = useState([])
   const [approvalsLoading, setApprovalsLoading] = useState(false)
   const [approvalsError, setApprovalsError] = useState(null)
@@ -322,7 +333,7 @@ export default function Settings() {
                 </div>
               ))}
               <p className="pt-1 text-[11px] text-slate-400 dark:text-ink-muted">
-                Requests per day · avg latency {usage[0]?.avg_latency_ms ?? 0} ms
+                Requests per day · avg latency {weightedAvgLatencyMs} ms
               </p>
             </div>
           )}

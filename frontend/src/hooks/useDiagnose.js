@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { diagnoseLeaf } from '../services/diagnoseService'
 import getErrorMessage from '../utils/errorMessage'
 import useToast from './useToast'
-
-const MAX_IMAGE_SIZE_MB = 20
+import { MAX_IMAGE_SIZE_BYTES, MAX_IMAGE_SIZE_MB } from '../constants'
 
 export default function useDiagnose() {
   const [image, setImage] = useState(null)
@@ -31,7 +30,7 @@ export default function useDiagnose() {
         showToast('Please choose an image file (JPG, PNG, WEBP, ...).', 'error')
         return
       }
-      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+      if (file.size > MAX_IMAGE_SIZE_BYTES) {
         showToast(`Image exceeds the ${MAX_IMAGE_SIZE_MB} MB size limit.`, 'error')
         return
       }

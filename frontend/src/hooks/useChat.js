@@ -106,6 +106,12 @@ export default function useChat(initialSessionId, initialDocumentIds) {
         { id: assistantId, role: 'assistant', content: '', sources: [], trace: [], isStreaming: true },
       ])
 
+      // Whether the stream reached a terminal event (done/error). If the
+      // connection ends without either (e.g. the backend dropped the
+      // stream mid-answer), we still resolve the bubble in the finally
+      // block rather than leaving it spinning as isStreaming forever.
+      let reachedTerminal = false
+
       try {
         await streamChatMessage(
           query,
@@ -127,6 +133,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
               updateMessage(assistantId, (message) => ({ ...message, content: message.content + text }))
             },
             onDone: (payload) => {
+              reachedTerminal = true
               // Persist session_id returned by server (new or echoed)
               if (payload.session_id) {
                 sessionIdRef.current = payload.session_id
@@ -143,6 +150,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
               }))
             },
             onError: (detail) => {
+              reachedTerminal = true
               updateMessage(assistantId, (message) => ({
                 ...message,
                 content: getErrorMessage(
@@ -156,6 +164,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
           }
         )
       } catch (error) {
+        reachedTerminal = true
         updateMessage(assistantId, (message) => ({
           ...message,
           content: getErrorMessage(error, "I couldn't answer that — please try again."),
@@ -164,6 +173,23 @@ export default function useChat(initialSessionId, initialDocumentIds) {
         }))
       } finally {
         setIsSending(false)
+        // Stream ended without a done/error event: stop the spinner and,
+        // if nothing at all was received, show a degraded notice instead
+        // of a permanently-empty bubble.
+        if (!reachedTerminal) {
+          updateMessage(assistantId, (message) => {
+            if (!message.isStreaming) return message
+            return {
+              ...message,
+              content: message.content || getErrorMessage(
+                {},
+                "The response was interrupted — please try again."
+              ),
+              isError: message.content ? false : true,
+              isStreaming: false,
+            }
+          })
+        }
       }
     },
     [updateMessage]

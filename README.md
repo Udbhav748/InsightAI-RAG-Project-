@@ -164,7 +164,7 @@ The API is now running at `http://localhost:8000` (interactive docs at `/docs`).
 ```bash
 cd frontend
 npm install
-cp .env.example .env        # defaults to http://localhost:8000
+cp .env.example .env        # leave unset in dev (same-origin /api proxy)
 npm run dev
 ```
 
@@ -175,6 +175,13 @@ The app is now running at `http://localhost:5173`.
 ```bash
 cd backend
 pytest
+```
+
+```bash
+cd frontend
+npx vitest run     # jsdom unit tests
+npm run lint       # eslint
+npm run build      # production build
 ```
 
 ### Leaf Diagnosis (optional)

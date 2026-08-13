@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { addToUploadHistory, uploadDocument } from '../services/documentService'
 import getErrorMessage from '../utils/errorMessage'
 import useToast from './useToast'
+import { MAX_UPLOAD_SIZE_BYTES, MAX_UPLOAD_SIZE_MB } from '../constants'
 
 export default function useUpload() {
   const [file, setFile] = useState(null)
@@ -10,12 +11,23 @@ export default function useUpload() {
   const [errorMessage, setErrorMessage] = useState('')
   const { showToast } = useToast()
 
-  const selectFile = useCallback((selected) => {
-    setFile(selected)
-    setStatus('idle')
-    setProgress(0)
-    setErrorMessage('')
-  }, [])
+  const selectFile = useCallback(
+    (selected) => {
+      if (selected.type !== 'application/pdf') {
+        showToast('Please choose a PDF file.', 'error')
+        return
+      }
+      if (selected.size > MAX_UPLOAD_SIZE_BYTES) {
+        showToast(`PDF exceeds the ${MAX_UPLOAD_SIZE_MB} MB size limit.`, 'error')
+        return
+      }
+      setFile(selected)
+      setStatus('idle')
+      setProgress(0)
+      setErrorMessage('')
+    },
+    [showToast]
+  )
 
   const reset = useCallback(() => {
     setFile(null)

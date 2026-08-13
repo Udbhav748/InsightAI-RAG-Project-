@@ -1,8 +1,8 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import AppLayout from './layouts/AppLayout'
-import Skeleton from './components/ui/Skeleton'
+import PageFallback from './components/ui/PageFallback'
 import ThemeProvider from './contexts/ThemeContext'
 import ToastProvider from './contexts/ToastContext'
 import AuthProvider from './contexts/AuthContext'
@@ -30,32 +30,14 @@ function ProtectedRoute({ children }) {
   return children
 }
 
-// Used both as the pre-auth full-page fallback (ProtectedRoute, no app
-// chrome around it yet) and as the per-route Suspense fallback inside
-// AppLayout (sidebar/navbar already visible) — a generic content-shaped
-// skeleton reads reasonably in either context, unlike a spinner floating
-// alone in whichever of those two layouts it happens to land in.
-function PageFallback() {
+// Login/Signup live outside AppLayout (no sidebar/navbar yet), so each
+// still needs its own Suspense + entrance fade. Unlike the authenticated
+// routes below, there's no AnimatePresence here — an exit-fade between the
+// two is a minor nicety not worth the extra machinery of a second sibling
+// <Routes> tree just to preserve it.
+function AuthPage({ children }) {
   return (
-    <div className="mx-auto max-w-2xl space-y-5 py-4">
-      <div className="space-y-2">
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-3.5 w-64" />
-      </div>
-      <Skeleton className="h-32 w-full rounded-panel" />
-      <Skeleton className="h-32 w-full rounded-panel" />
-    </div>
-  )
-}
-
-function Page({ children }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-    >
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <Suspense fallback={<PageFallback />}>{children}</Suspense>
     </motion.div>
   )
@@ -65,102 +47,44 @@ function AnimatedRoutes() {
   const location = useLocation()
 
   return (
-    <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
-        <Route
-          path="/login"
-          element={
-            <Page>
-              <Login />
-            </Page>
-          }
-        />
-        <Route
-          path="/signup"
-          element={
-            <Page>
-              <Signup />
-            </Page>
-          }
-        />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <AppLayout />
-            </ProtectedRoute>
-          }
-        >
-          <Route
-            index
-            element={
-              <Page>
-                <Home />
-              </Page>
-            }
-          />
-          <Route
-            path="chat"
-            element={
-              <Page>
-                {/* location.key changes on every navigation, even to the same
-                    path, so clicking "New Chat" while already on /chat
-                    remounts the page and starts a fresh conversation. */}
-                <Chat key={location.key} />
-              </Page>
-            }
-          />
-          <Route
-            path="upload"
-            element={
-              <Page>
-                <Upload />
-              </Page>
-            }
-          />
-          <Route
-            path="diagnose"
-            element={
-              <Page>
-                <Diagnose />
-              </Page>
-            }
-          />
-          <Route
-            path="documents"
-            element={
-              <Page>
-                <Documents />
-              </Page>
-            }
-          />
-          <Route
-            path="history"
-            element={
-              <Page>
-                <History />
-              </Page>
-            }
-          />
-          <Route
-            path="settings"
-            element={
-              <Page>
-                <Settings />
-              </Page>
-            }
-          />
-          <Route
-            path="*"
-            element={
-              <Page>
-                <NotFound />
-              </Page>
-            }
-          />
-        </Route>
-      </Routes>
-    </AnimatePresence>
+    <Routes location={location}>
+      <Route
+        path="/login"
+        element={
+          <AuthPage>
+            <Login />
+          </AuthPage>
+        }
+      />
+      <Route
+        path="/signup"
+        element={
+          <AuthPage>
+            <Signup />
+          </AuthPage>
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Home />} />
+        {/* location.key changes on every navigation, even to the same path,
+            so clicking "New Chat" while already on /chat remounts the page
+            and starts a fresh conversation. */}
+        <Route path="chat" element={<Chat key={location.key} />} />
+        <Route path="upload" element={<Upload />} />
+        <Route path="diagnose" element={<Diagnose />} />
+        <Route path="documents" element={<Documents />} />
+        <Route path="history" element={<History />} />
+        <Route path="settings" element={<Settings />} />
+        <Route path="*" element={<NotFound />} />
+      </Route>
+    </Routes>
   )
 }
 

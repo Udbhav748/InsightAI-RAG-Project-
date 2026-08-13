@@ -1,19 +1,42 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)" />
+    <meta
+      name="description"
+      content="InsightAI — chat with your PDFs. Upload a document and ask questions grounded in your own content."
+    />
     <title>InsightAI RAG</title>
     <style>
       html.dark { background-color: #0b0b0d; }
       html:not(.dark) { background-color: #f6f7fb; }
     </style>
+    <script>
+      // Apply the saved theme before first paint so there's no flash of
+      // the wrong color scheme. Mirrors ThemeContext's storage key and
+      // default.
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('insightai-theme')
+          document.documentElement.classList.toggle('dark', stored === 'dark' || stored !== 'light')
+        } catch (e) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:wght@500;600;700;800&display=swap"
       rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M16 8c3.5 0 6 2.5 6 6 0 4.5-4 8-6 10-2-2-6-5.5-6-10 0-3.5 2.5-6 6-6z' fill='%23fff'/%3E%3C/svg%3E"
     />
   </head>
   <body>

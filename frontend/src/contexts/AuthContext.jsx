@@ -1,8 +1,7 @@
-import { createContext, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getMe, login as loginRequest, signup as signupRequest } from '../services/authService'
 import { AUTH_TOKEN_KEY } from '../services/api'
-
-export const AuthContext = createContext(null)
+import { AuthContext } from './auth-context'
 
 export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null)

@@ -1,8 +1,7 @@
-import { createContext, useCallback, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import Toast from '../components/ui/Toast'
-
-export const ToastContext = createContext(null)
+import { ToastContext } from './toast-context'
 
 export default function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([])

@@ -38,7 +38,9 @@ export async function sendChatMessage(query, options = {}) {
  *
  * Uses fetch + a manually-parsed ReadableStream rather than the browser's
  * EventSource: EventSource only supports GET with no custom headers, and
- * this endpoint needs POST (a query body) plus the X-API-Key header.
+ * this endpoint needs POST (a query body) plus the Authorization header
+ * (the JWT, same as every authenticated call — read fresh per request so
+ * a login/logout between calls takes effect immediately).
  *
  * @param {string} query
  * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string }} [options]

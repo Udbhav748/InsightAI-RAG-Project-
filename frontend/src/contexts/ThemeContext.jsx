@@ -1,6 +1,5 @@
-import { createContext, useEffect, useState } from 'react'
-
-export const ThemeContext = createContext(null)
+import { useEffect, useState } from 'react'
+import { ThemeContext } from './theme-context'
 
 const STORAGE_KEY = 'insightai-theme'
 

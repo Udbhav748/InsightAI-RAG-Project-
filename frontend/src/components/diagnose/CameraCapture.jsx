@@ -70,7 +70,6 @@ export default function CameraCapture({ onCapture, disabled }) {
       cancelled = true
       stopStream()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const capture = async () => {

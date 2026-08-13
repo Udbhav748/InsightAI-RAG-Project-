@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { UploadCloud } from 'lucide-react'
+import { MAX_UPLOAD_SIZE_MB } from '../../constants'
 
 export default function UploadZone({ onFileSelected, disabled }) {
   const [isDragging, setIsDragging] = useState(false)
@@ -61,7 +62,7 @@ export default function UploadZone({ onFileSelected, disabled }) {
         <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
           {isDragging ? 'Drop your PDF here' : 'Drag & drop a PDF, or click to browse'}
         </p>
-        <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">PDF only, up to 20MB</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">PDF only, up to {MAX_UPLOAD_SIZE_MB}MB</p>
       </div>
 
       <input

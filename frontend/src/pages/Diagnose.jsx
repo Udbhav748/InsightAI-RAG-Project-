@@ -9,7 +9,7 @@ import useDiagnose from '../hooks/useDiagnose'
 const QUERY_MAX_HEIGHT = 200
 
 export default function Diagnose() {
-  const { image, previewUrl, query, status, result, errorMessage, selectImage, setQueryText, analyze, reset } =
+  const { previewUrl, query, status, result, errorMessage, selectImage, setQueryText, analyze, reset } =
     useDiagnose()
   const [showCamera, setShowCamera] = useState(true)
   const queryRef = useRef(null)

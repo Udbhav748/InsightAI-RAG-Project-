@@ -44,7 +44,7 @@ export default function Chat() {
   // Documents page — scoping every retrieval in this conversation to
   // just those documents.
   const location = useLocation()
-  const { messages, isSending, ask, regenerate, clearSession } = useChat(
+  const { messages, isSending, isLoadingSession, ask, regenerate, clearSession } = useChat(
     location.state?.sessionId,
     location.state?.documentIds
   )
@@ -199,7 +199,12 @@ export default function Chat() {
       )}
 
       <div className="flex-1 space-y-5 overflow-y-auto px-1 py-4 sm:px-3 print:hidden">
-        {messages.length === 0 ? (
+        {isLoadingSession ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400 dark:text-ink-muted">
+            <ProgressBar indeterminate className="h-1.5 w-40" />
+            <p className="text-xs">Loading conversation…</p>
+          </div>
+        ) : messages.length === 0 ? (
           <EmptyState
             icon={MessageCircle}
             title="Ask anything about your documents"

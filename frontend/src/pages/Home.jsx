@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { ArrowRight, FileText, MessageCircle, UploadCloud } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Logo from '../components/ui/Logo'
-import api from '../services/api'
+import { getHealthStatus } from '../services/healthService'
 
 const ACTIONS = [
   {
@@ -29,11 +29,14 @@ const ACTIONS = [
 
 export default function Home() {
   const [status, setStatus] = useState('checking')
+  const [provider, setProvider] = useState('')
 
   useEffect(() => {
-    api
-      .get('/health')
-      .then(() => setStatus('online'))
+    getHealthStatus()
+      .then((health) => {
+        setStatus('online')
+        setProvider(health?.llm?.provider ?? '')
+      })
       .catch(() => setStatus('offline'))
   }, [])
 
@@ -77,7 +80,7 @@ export default function Home() {
           }`}
         />
         {status === 'checking' && 'Checking backend...'}
-        {status === 'online' && 'Backend connected'}
+        {status === 'online' && (provider ? `Backend connected · ${provider}` : 'Backend connected')}
         {status === 'offline' && 'Backend unreachable'}
       </motion.div>
 
