@@ -111,11 +111,11 @@
   }
 
   .btn-primary {
-    @apply btn border border-accent-600/30 bg-white text-slate-900 shadow-soft-light
-           hover:bg-slate-50 hover:border-accent-600/50 hover:-translate-y-px
-           active:translate-y-0
-           dark:border-accent-500/40 dark:bg-white/[0.04] dark:text-ink-primary dark:shadow-none
-           dark:hover:bg-white/[0.07] dark:hover:border-accent-500/60;
+    @apply btn border border-transparent bg-accent-500 text-white shadow-soft-light
+           hover:bg-accent-600 hover:-translate-y-px
+           active:translate-y-0 active:bg-accent-600
+           dark:bg-accent-500 dark:text-white dark:shadow-none
+           dark:hover:bg-accent-400;
   }
 
   .btn-secondary {
