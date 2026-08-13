@@ -75,7 +75,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Seed vector store with demo corpus
-        run: python scripts/ingest_corpus.py ../demo_corpus
+        run: python scripts/ingest_corpus.py demo_corpus
 
       - name: Run evaluation
         run: python eval/run_eval.py --dataset ${{ github.event.inputs.dataset }} --delay ${{ github.event.inputs.delay }}

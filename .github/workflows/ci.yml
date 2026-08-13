@@ -33,6 +33,16 @@ jobs:
       - name: Install backend requirements
         run: pip install -r requirements.txt
 
+      # Fast static gate before the (slower) test run — ruff catches
+      # import/undefined-name/style regressions in seconds. mypy --strict
+      # lives in its own workflow (lint.yml) so a type regression and a
+      # runtime regression fail separately and legibly.
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint (ruff check)
+        run: ruff check app
+
       - name: Run tests
         run: pytest
 
