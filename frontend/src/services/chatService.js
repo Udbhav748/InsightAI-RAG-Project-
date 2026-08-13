@@ -11,7 +11,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 /**
  * Send a chat query to the RAG pipeline.
  * @param {string} query
- * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string }} [options]
+ * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string, persona?: string, documentIds?: string[], confirmWebSearch?: boolean, structuredResponse?: boolean }} [options]
  * @returns {Promise<{answer: string, retrieved_chunks: object[], sources: {document_id: string, chunk_id: string, excerpt: string}[], processing_time: number, tool_used: string, steps_taken: number, session_id: string}>}
  */
 function buildChatPayload(query, options) {
@@ -22,6 +22,8 @@ function buildChatPayload(query, options) {
   if (options.sessionId) payload.session_id = options.sessionId
   if (options.persona) payload.persona = options.persona
   if (options.documentIds?.length) payload.document_ids = options.documentIds
+  if (options.confirmWebSearch != null) payload.confirm_web_search = options.confirmWebSearch
+  if (options.structuredResponse != null) payload.structured_response = options.structuredResponse
   return payload
 }
 
@@ -43,7 +45,7 @@ export async function sendChatMessage(query, options = {}) {
  * a login/logout between calls takes effect immediately).
  *
  * @param {string} query
- * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string }} [options]
+ * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string, persona?: string, documentIds?: string[], confirmWebSearch?: boolean, structuredResponse?: boolean }} [options]
  * @param {{
  *   onTrace?: (stage: string, detail: object) => void,
  *   onChunk?: (text: string) => void,

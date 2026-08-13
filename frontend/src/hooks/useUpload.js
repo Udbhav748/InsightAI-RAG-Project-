@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { addToUploadHistory, uploadDocument } from '../services/documentService'
 import getErrorMessage from '../utils/errorMessage'
 import useToast from './useToast'
@@ -10,6 +10,10 @@ export default function useUpload() {
   const [status, setStatus] = useState('idle') // idle | uploading | success | error
   const [errorMessage, setErrorMessage] = useState('')
   const { showToast } = useToast()
+  // Aborts an in-flight upload if the component unmounts (e.g. the user
+  // navigates away during a long upload) so the request doesn't resolve into
+  // a toast/hook callback on an unmounted context. Reset on every new upload.
+  const abortControllerRef = useRef(null)
 
   const selectFile = useCallback(
     (selected) => {
@@ -41,9 +45,12 @@ export default function useUpload() {
       if (!file) return
       setStatus('uploading')
       setProgress(0)
+      setErrorMessage('')
+      abortControllerRef.current?.abort()
+      const signal = (abortControllerRef.current = new AbortController()).signal
 
       try {
-        const result = await uploadDocument(file, setProgress, collection)
+        const result = await uploadDocument(file, setProgress, collection, signal)
         setStatus('success')
         // DocumentProcessingResponse carries no timestamp — stamp one
         // locally so Documents can sort/display by upload time.
@@ -61,14 +68,25 @@ export default function useUpload() {
         const note = notes.length > 0 ? ` (${notes.join(', ')})` : ''
         showToast(`${result.original_filename} uploaded successfully${note}.`, 'success')
       } catch (error) {
+        // An aborted upload isn't a failure — it was cancelled deliberately
+        // (new upload starting, or component unmounting). Don't flash an
+        // error toast or leave the hook in an error state for it.
+        if (signal.aborted) return
         const message = getErrorMessage(error, 'Upload failed. Please try again.')
         setStatus('error')
         setErrorMessage(message)
         showToast(message, 'error')
+      } finally {
+        abortControllerRef.current = null
       }
     },
     [file, showToast]
   )
+
+  // Abort any in-flight upload on unmount so a request can't resolve into a
+  // toast after the component is gone. The catch above swallows the abort
+  // quietly, leaving whatever status was already committed (idle/uploading).
+  useEffect(() => () => abortControllerRef.current?.abort(), [])
 
   return { file, progress, status, errorMessage, selectFile, reset, startUpload }
 }

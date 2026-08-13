@@ -112,17 +112,23 @@ async def usage_log_middleware(request: Request, call_next):
         return await call_next(request)
 
     start = time.perf_counter()
+    response = None
     try:
         response = await call_next(request)
     finally:
         latency_ms = (time.perf_counter() - start) * 1000
+        # call_next can raise (an unhandled exception escapes the error
+        # handlers); in that case there's no response yet — skip the usage
+        # log line rather than reading an unbound `response` and masking
+        # the original exception with a NameError. status_code defaults to
+        # 500 for the failed-request accounting, matching metrics_middleware.
         record_usage(
             request_id=request_id_var.get() or request.headers.get("X-Request-ID") or "",
             tenant_id=getattr(request.state, "tenant_id", None),
             client_name=getattr(request.state, "client_name", None),
             path=request.url.path,
             method=request.method,
-            status_code=response.status_code,
+            status_code=response.status_code if response is not None else 500,
             latency_ms=round(latency_ms, 2),
         )
     return response

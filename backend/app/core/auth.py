@@ -67,23 +67,49 @@ class _RateLimitBucket:
             return True
 
 
-# Global rate limit store (in-memory, per client_name)
+# Global rate limit store (in-memory, per client_name). Capped to
+# _RATE_LIMIT_STORE_MAX distinct identities so a process that has seen many
+# different API keys (a real concern over a long-running deployment) doesn't
+# grow this dict without bound — the oldest idle identity is evicted on a
+# miss once the cap is hit. The sliding-window timestamps within each bucket
+# are still pruned per-check; this cap is only about the number of tracked
+# *identities*, not their request counts.
+_RATE_LIMIT_STORE_MAX = 1000
 _rate_limit_store: dict[str, _RateLimitBucket] = {}
 _rate_limit_lock = threading.Lock()
 
-# Config (could be moved to Settings later)
-_RATE_LIMIT_PER_MINUTE = 60
-_RATE_LIMIT_WINDOW_SEC = 60
-
 
 def _check_rate_limit(client_name: str) -> bool:
-    """Check and record a request for the given client. Returns True if allowed."""
+    """Check and record a request for the given client. Returns True if allowed.
+
+    Reads its limit/window from Settings (rate_limit_per_minute /
+    rate_limit_window_seconds) rather than a hardcoded constant, so a
+    deployment tuning RATE_LIMIT_PER_MINUTES sees the cap apply to both the
+    per-identity (this) limiter and the per-IP limiter in security.py.
+    """
     with _rate_limit_lock:
         bucket = _rate_limit_store.get(client_name)
         if bucket is None:
+            if len(_rate_limit_store) >= _RATE_LIMIT_STORE_MAX:
+                # Evict the identity with the oldest most-recent request so
+                # the store can't grow without bound. Each bucket keeps its
+                # own timestamps in insertion order via check_and_record's
+                # append, so the oldest request time is the first one still
+                # present; fall back to any key for the truly-stale corner.
+                oldest = min(
+                    _rate_limit_store,
+                    key=lambda name: _rate_limit_store[name].requests[0]
+                    if _rate_limit_store[name].requests
+                    else 0.0,
+                    default=client_name,
+                )
+                _rate_limit_store.pop(oldest, None)
             bucket = _RateLimitBucket()
             _rate_limit_store[client_name] = bucket
-    return bucket.check_and_record(_RATE_LIMIT_PER_MINUTE, _RATE_LIMIT_WINDOW_SEC)
+    return bucket.check_and_record(
+        settings.rate_limit_per_minute,
+        settings.rate_limit_window_seconds,
+    )
 
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)) -> None:

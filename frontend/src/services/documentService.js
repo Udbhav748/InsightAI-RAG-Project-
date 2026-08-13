@@ -8,15 +8,19 @@ const HISTORY_KEY = 'insightai-upload-history'
  * @param {(percent: number) => void} [onProgress]
  * @param {string} [collection] optional named collection to tag the
  *   document into, later used to scope a chat conversation.
+ * @param {AbortSignal} [signal] optional signal to abort the upload (the
+ *   caller owns the AbortController; aborting is treated as a cancellation,
+ *   not an error, by hooks/useUpload).
  * @returns {Promise<{document_id: string, original_filename: string, total_pages: number, total_chunks: number, total_embeddings: number, pages_ocred: number, processing_time: number, status: string}>}
  */
-export async function uploadDocument(file, onProgress, collection) {
+export async function uploadDocument(file, onProgress, collection, signal) {
   const formData = new FormData()
   formData.append('file', file)
   if (collection) formData.append('collection', collection)
 
   const { data } = await api.post('/upload', formData, {
     timeout: 60000,
+    signal,
     onUploadProgress: (event) => {
       if (!onProgress || !event.total) return
       onProgress(Math.round((event.loaded / event.total) * 100))

@@ -18,85 +18,13 @@ itself of the app it's already authenticated to.
 """
 
 import asyncio
-import re
 import time
 from collections import defaultdict
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 
 from app.core.config import settings
 from app.core.exceptions import RateLimitExceededError
-
-
-class InputValidator:
-    """Input validation utilities for security."""
-
-    # Maximum lengths for various inputs
-    MAX_QUERY_LENGTH = 1000
-    MAX_DOCUMENT_ID_LENGTH = 100
-    MAX_SESSION_ID_LENGTH = 100
-
-    # Allowed characters for document IDs
-    DOCUMENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9\-_]+$")
-
-    @classmethod
-    def validate_query(cls, query: str) -> str:
-        """Validate and sanitize user query."""
-        if not query or not query.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Query cannot be empty",
-            )
-
-        if len(query) > cls.MAX_QUERY_LENGTH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Query exceeds maximum length of {cls.MAX_QUERY_LENGTH} characters",
-            )
-
-        # Remove potentially dangerous characters
-        sanitized = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", query)
-        return sanitized.strip()
-
-    @classmethod
-    def validate_document_id(cls, doc_id: str) -> str:
-        """Validate document ID format."""
-        if not doc_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Document ID cannot be empty",
-            )
-
-        if len(doc_id) > cls.MAX_DOCUMENT_ID_LENGTH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Document ID exceeds maximum length of {cls.MAX_DOCUMENT_ID_LENGTH} characters",
-            )
-
-        if not cls.DOCUMENT_ID_PATTERN.match(doc_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Document ID contains invalid characters",
-            )
-
-        return doc_id
-
-    @classmethod
-    def validate_session_id(cls, session_id: str) -> str:
-        """Validate session ID format."""
-        if not session_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Session ID cannot be empty",
-            )
-
-        if len(session_id) > cls.MAX_SESSION_ID_LENGTH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Session ID exceeds maximum length of {cls.MAX_SESSION_ID_LENGTH} characters",
-            )
-
-        return session_id
 
 
 class RateLimiter:

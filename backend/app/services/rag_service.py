@@ -563,21 +563,28 @@ class ChatService:
         session_id: str | None,
         vector_store: VectorStore,
         tenant_id: int | None = None,
+        document_ids: list[str] | None = None,
     ) -> str:
         """Create a cache key from normalized query, session_id, document set
-        hash, and tenant_id.
+        hash, tenant_id, and the scoped document_ids.
 
-        tenant_id must be part of the key: retrieve() now filters by tenant
-        (see retrieval_service.py), so two tenants asking the same question
-        can get different, correctly-scoped chunks — without tenant_id
-        here, the second tenant could get served the first tenant's cached
-        answer straight past that filter.
+        tenant_id and document_ids must both be part of the key: retrieve()
+        filters by both, so two callers asking the same question with
+        different tenant or document scoping can get different, correctly-
+        scoped chunks — without either here, the second caller could be served
+        the first caller's cached answer straight past that filter.
         """
         normalized = _normalize(query)
         doc_hash = str(vector_store.total_vectors())  # simple proxy for document set
         session = session_id or "no-session"
         tenant = str(tenant_id) if tenant_id is not None else "no-tenant"
-        key_str = f"{normalized}|{session}|{doc_hash}|{tenant}"
+        # Sorted, stable representation of the scoped document set — None,
+        # empty, and "all" must collapse to the same unscoped bucket.
+        if document_ids:
+            doc_scope = hashlib.sha256(",".join(sorted(document_ids)).encode()).hexdigest()[:16]
+        else:
+            doc_scope = "no-docs"
+        key_str = f"{normalized}|{session}|{doc_hash}|{tenant}|{doc_scope}"
         return hashlib.sha256(key_str.encode()).hexdigest()[:32]
 
     def _get_cached_response(self, cache_key: str) -> ChatResponse | None:
@@ -1473,7 +1480,7 @@ class ChatService:
             # corrective loop, and only for plain retrieve — a research
             # answer depends on live web state, so it's never cached).
             cache_key = self._make_cache_key(
-                query, session_id, self._vector_store, tenant_id=tenant_id
+                query, session_id, self._vector_store, tenant_id=tenant_id, document_ids=document_ids
             )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
@@ -1789,7 +1796,7 @@ class ChatService:
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
             # Check cache first (only cache final responses after corrective loop)
             cache_key = self._make_cache_key(
-                query, session_id, self._vector_store, tenant_id=tenant_id
+                query, session_id, self._vector_store, tenant_id=tenant_id, document_ids=document_ids
             )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
