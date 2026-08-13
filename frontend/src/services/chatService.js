@@ -9,10 +9,13 @@ import api, { AUTH_TOKEN_KEY } from './api'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 /**
- * Send a chat query to the RAG pipeline.
+ * Assemble the JSON body for a chat request (POST /chat and /chat/stream),
+ * mapping the camelCase option names the hooks pass into the snake_case
+ * fields the backend's ChatRequest schema expects. Falsy optionals are
+ * omitted so the server applies its own defaults (top_k, min_score, etc.).
  * @param {string} query
  * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string, persona?: string, documentIds?: string[], confirmWebSearch?: boolean, structuredResponse?: boolean }} [options]
- * @returns {Promise<{answer: string, retrieved_chunks: object[], sources: {document_id: string, chunk_id: string, excerpt: string}[], processing_time: number, tool_used: string, steps_taken: number, session_id: string}>}
+ * @returns {object} The serialized ChatRequest payload.
  */
 function buildChatPayload(query, options) {
   const payload = { query }
@@ -60,6 +63,15 @@ export async function streamChatMessage(query, options = {}, callbacks = {}) {
   })
 
   if (!response.ok || !response.body) {
+    // streamChatMessage uses raw fetch(), so it bypasses the shared api
+    // instance's axios 401 interceptor (clear token + redirect to /login).
+    // An expired/invalid token here must not surface as a generic chat
+    // error that leaves the user stuck on a broken session — mirror the
+    // exact 401 contract every other request path follows.
+    if (response.status === 401 && window.location.pathname !== '/login') {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY)
+      window.location.href = '/login'
+    }
     const error = new Error(`Request failed with status ${response.status}`)
     error.response = { status: response.status, data: await response.json().catch(() => null) }
     throw error
@@ -89,11 +101,23 @@ export async function streamChatMessage(query, options = {}, callbacks = {}) {
         .join('\n')
 
       if (data) {
-        const event = JSON.parse(data)
-        if (event.type === 'trace') onTrace?.(event.stage, event.detail)
-        else if (event.type === 'answer_chunk') onChunk?.(event.text)
-        else if (event.type === 'error') onError?.(event.detail)
-        else if (event.type === 'done') onDone?.(event.payload)
+        // Isolate per-frame parse failures: a single malformed SSE frame
+        // shouldn't abort the whole stream and discard a perfectly good
+        // in-progress answer — route the failure to the consumer's error
+        // channel and keep draining the response.
+        try {
+          const event = JSON.parse(data)
+          if (event.type === 'trace') onTrace?.(event.stage, event.detail)
+          else if (event.type === 'answer_chunk') onChunk?.(event.text)
+          else if (event.type === 'error') onError?.(event.detail)
+          else if (event.type === 'done') onDone?.(event.payload)
+        } catch {
+          onError?.({
+            error_type: 'stream_parse_error',
+            message: 'Received an unexpected message from the server.',
+            status_code: 0,
+          })
+        }
       }
 
       boundary = buffer.indexOf('\n\n')
