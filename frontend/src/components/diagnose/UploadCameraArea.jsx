@@ -27,7 +27,19 @@ export default function UploadCameraArea({
   const [mode, setMode] = useState('upload') // 'upload' | 'camera'
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
   const queryRef = useRef(null)
+
+  const handleCameraClick = () => {
+    if (disabled) return
+    // In non-secure contexts (e.g. HTTP on local network/phone), getUserMedia is blocked by browser security policy.
+    // Triggering native HTML5 capture="environment" opens the phone camera directly on any origin.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click()
+    } else {
+      setMode('camera')
+    }
+  }
 
   useEffect(() => {
     const el = queryRef.current
@@ -137,7 +149,7 @@ export default function UploadCameraArea({
             type="button"
             variant={mode === 'camera' ? 'primary' : 'secondary'}
             icon={Camera}
-            onClick={() => setMode('camera')}
+            onClick={handleCameraClick}
             disabled={disabled}
             aria-label="Live camera mode"
           >
@@ -205,7 +217,7 @@ export default function UploadCameraArea({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setMode('camera')}
+                  onClick={handleCameraClick}
                   disabled={disabled}
                   className="btn-secondary inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-sm font-medium"
                 >
@@ -219,6 +231,16 @@ export default function UploadCameraArea({
                 data-testid="leaf-file-input"
                 type="file"
                 accept="image/*"
+                className="hidden"
+                disabled={disabled}
+                onChange={handleFileInputChange}
+              />
+              <input
+                ref={cameraInputRef}
+                data-testid="leaf-camera-input"
+                type="file"
+                accept="image/*"
+                capture="environment"
                 className="hidden"
                 disabled={disabled}
                 onChange={handleFileInputChange}

@@ -18,6 +18,7 @@ export default function CameraCapture({ onCapture, disabled }) {
   const streamRef = useRef(null)
   const facingModeRef = useRef('environment')
   const fileInputRef = useRef(null)
+  const nativeCameraInputRef = useRef(null)
   const [cameraState, setCameraState] = useState('starting') // starting | active | error
   const [cameraError, setCameraError] = useState('')
   const [switching, setSwitching] = useState(false)
@@ -123,45 +124,90 @@ export default function CameraCapture({ onCapture, disabled }) {
         />
         {cameraState !== 'active' && (
           <div className="flex h-72 flex-col items-center justify-center gap-3 px-6 text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-light bg-white/5 text-ink-muted">
-              <CameraOff size={20} strokeWidth={1.5} />
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-border-light bg-slate-900/5 text-slate-600 dark:border-border dark:bg-white/5 dark:text-ink-muted">
+              <Camera size={22} strokeWidth={1.75} className="text-accent-500" />
             </span>
-            <p className="max-w-sm text-sm text-slate-400 dark:text-ink-muted">
-              {cameraState === 'starting' ? 'Starting camera...' : cameraError || 'Camera unavailable.'}
-            </p>
+            <div className="space-y-1">
+              <p className="font-medium text-sm text-slate-800 dark:text-ink-primary">
+                {cameraState === 'starting' ? 'Initializing camera...' : 'Use Native Phone Camera'}
+              </p>
+              <p className="max-w-sm text-xs text-slate-500 dark:text-ink-muted">
+                {cameraError || 'Tap below to snap a high-resolution photo with your device camera.'}
+              </p>
+            </div>
+            {cameraState === 'error' && (
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="primary"
+                  icon={Camera}
+                  onClick={() => nativeCameraInputRef.current?.click()}
+                  disabled={disabled}
+                >
+                  Open Device Camera
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  icon={ImagePlus}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                >
+                  Choose from Gallery
+                </Button>
+              </div>
+            )}
           </div>
         )}
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
-      <div className="flex flex-wrap items-center justify-center gap-3">
-        <Button
-          variant="primary"
-          icon={Camera}
-          disabled={disabled || cameraState !== 'active'}
-          onClick={capture}
-        >
-          Capture photo
-        </Button>
-        <Button
-          variant="secondary"
-          icon={RefreshCw}
-          disabled={disabled || cameraState !== 'active' || switching}
-          loading={switching}
-          onClick={switchCamera}
-        >
-          Switch camera
-        </Button>
-        <Button
-          variant="ghost"
-          icon={ImagePlus}
-          disabled={disabled}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          Upload a photo
-        </Button>
-      </div>
+      {cameraState === 'active' && (
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button
+            variant="primary"
+            icon={Camera}
+            disabled={disabled}
+            onClick={capture}
+          >
+            Capture photo
+          </Button>
+          <Button
+            variant="secondary"
+            icon={RefreshCw}
+            disabled={disabled || switching}
+            loading={switching}
+            onClick={switchCamera}
+          >
+            Switch camera
+          </Button>
+          <Button
+            variant="ghost"
+            icon={ImagePlus}
+            disabled={disabled}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload from gallery
+          </Button>
+        </div>
+      )}
 
+      {/* Native Mobile Camera Input */}
+      <input
+        ref={nativeCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          if (file) onCapture(file)
+          event.target.value = ''
+        }}
+      />
+
+      {/* Standard File Picker Input */}
       <input
         ref={fileInputRef}
         type="file"
