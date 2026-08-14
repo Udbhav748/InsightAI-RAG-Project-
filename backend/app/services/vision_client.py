@@ -19,6 +19,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from tenacity import (
@@ -128,9 +129,19 @@ def _get_vision_client() -> httpx.Client:
 
 
 def is_leafsense_online(
-    host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.6, force_refresh: bool = False
+    host: str | None = None,
+    port: int | None = None,
+    timeout: float = 0.6,
+    force_refresh: bool = False,
 ) -> bool:
     """Probe if the LeafSense vision service is actively listening on its port.
+
+    host/port default to whatever settings.vision_service_url actually
+    points at (e.g. "leafsense" inside the Docker Compose network, not
+    "127.0.0.1" -- that only resolves to this same container, never
+    LeafSense's, once they're separate containers rather than both
+    running natively on one host). Callers can still override both for
+    a probe against a specific address.
 
     Caches the online status with a 5-second TTL to avoid redundant 600ms TCP socket
     pre-probes on high-frequency requests.
@@ -139,6 +150,11 @@ def is_leafsense_online(
     now = time.monotonic()
     if not force_refresh and (now - _last_online_check) < _ONLINE_CHECK_TTL:
         return _last_online_status
+
+    if host is None or port is None:
+        parsed = urlparse(settings.vision_service_url)
+        host = host or parsed.hostname or "127.0.0.1"
+        port = port or parsed.port or 8001
 
     try:
         with socket.create_connection((host, port), timeout=timeout):

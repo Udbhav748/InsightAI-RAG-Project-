@@ -723,20 +723,28 @@ version; swap in the SSM steps above wherever they diverge.
    (`postgresql+psycopg2://insightai:insightai-dev-password@postgres:5432/insightai`
    — change that dev password for anything beyond a throwaway demo) for
    persisted users/RBAC/sessions instead of the in-memory fallback.
-5. `cp .env.example .env` and set `VITE_API_BASE_URL` to
-   `https://api.yourdomain.com` (TLS mode) or
-   `http://<instance-public-ip>:8000` (fallback mode).
-6. If using TLS: edit `Caddyfile`'s two placeholder hostnames to your
-   real subdomains first. Then:
+5. `cp .env.example .env` — leave `VITE_API_BASE_URL` unset in both
+   modes. Frontend and backend are served from **one link** either way:
+   nginx (`frontend/nginx.conf`) proxies `/api/*` to the backend
+   container internally, so the browser only ever talks to one origin —
+   `https://yourdomain.com` (TLS mode) or
+   `http://<instance-public-ip>:8080` (fallback mode). Only set it if
+   you're deliberately running frontend and backend on genuinely
+   different hosts instead.
+6. If using TLS: edit `Caddyfile`'s placeholder hostname (`example.com`)
+   to your real domain first. Then:
    `docker compose -f docker-compose.yml -f docker-compose.prod.yml -f
    docker-compose.caddy.yml up -d --build` (TLS mode — the recommended
    default), or
    `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
    --build` (fallback mode, no Caddy overlay).
-7. Verify: TLS mode — `curl https://api.yourdomain.com/health`, then load
-   the frontend at `https://yourdomain.com`. Fallback mode — `curl
-   http://<instance-public-ip>:8000/health`, then load the frontend at
-   `http://<instance-public-ip>:8080`.
+7. Verify: TLS mode — load `https://yourdomain.com` (frontend) and
+   `https://yourdomain.com/api/health` (backend, through the same
+   origin). Fallback mode — load `http://<instance-public-ip>:8080`
+   (frontend) and `http://<instance-public-ip>:8080/api/health`
+   (backend, same nginx proxy, no separate port needed). The backend's
+   own direct port (8000) still works in fallback mode too, if you need
+   to reach it without going through nginx.
 
 ### Ongoing deploys and rollback
 
