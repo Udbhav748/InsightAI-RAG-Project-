@@ -62,7 +62,7 @@ def health_check() -> dict[str, Any]:
         },
         "vector_store": {
             "backend": "pgvector" if settings.pgvector_enabled else "faiss",
-            "model": settings.embedding_model,
+            "model": settings.embedding_model_name,
             "status": "ready",
         },
     }

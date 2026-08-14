@@ -253,7 +253,7 @@ class FAISSVectorStore(VectorStore):
                 record = self._metadata[position]
                 if (
                     tenant_id is not None
-                    and record["metadata"].get("tenant_id") not in (None, tenant_id)
+                    and record["metadata"].get("tenant_id") != tenant_id
                 ):
                     continue
                 if (

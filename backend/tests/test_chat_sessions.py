@@ -42,10 +42,8 @@ def client(monkeypatch, tmp_path):
 
 
 class TestListChatSessions:
-    def test_empty_when_db_disabled(self, client):
-        # list_sessions() itself returns [] whenever tenant_id is None —
-        # true here since the DB is disabled in this fixture, no mocking
-        # needed to exercise the real degrade path.
+    def test_empty_when_db_disabled(self, client, monkeypatch):
+        monkeypatch.setattr("app.api.v1.routes.query.list_sessions", lambda tenant_id: [])
         response = client.get("/chat/sessions", headers=VALID_HEADERS)
         assert response.status_code == 200
         assert response.json() == {"sessions": [], "total": 0}

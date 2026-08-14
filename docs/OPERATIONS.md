@@ -81,7 +81,7 @@ real LLM API and consumes real quota.
 The workflow will:
 1. Check out the repo
 2. Install Python + dependencies + tesseract
-3. Seed the vector store with the bundled demo corpus (`backend/demo_corpus/pmp_key_concepts.pdf`) via `scripts/ingest_corpus.py`
+3. Seed the vector store with demo corpus (`backend/demo_corpus/pmp_key_concepts.pdf`) or agricultural knowledge base (`data/plant_disease_docs/`) via `backend/scripts/bulk_ingest.py`
 4. Run `python eval/run_eval.py` with your chosen inputs
 5. Upload the resulting `eval/results/<timestamp>.json` as a **workflow artifact** (retention: 30 days)
 
@@ -641,9 +641,14 @@ credentials over the network.
 | 8000 | 0.0.0.0/0 | Backend, direct IP access |
 | 8080 | 0.0.0.0/0 | Frontend, direct IP access |
 
-Never open 5432 (Postgres) in either mode — `docker-compose.prod.yml`
-already stops publishing it (`!reset []`), keeping it reachable only from
-other containers on the Compose network.
+Never open 5432 (Postgres) or 8001 (LeafSense) in either mode —
+`docker-compose.prod.yml` already stops publishing both (`!reset []`),
+keeping them reachable only from other containers on the Compose
+network. LeafSense is only ever called by InsightAI-RAG's own backend
+(`http://leafsense:8001`, wired via `docker-compose.yml`'s
+`VISION_SERVICE_URL` override — no manual `.env` edit needed for the
+Compose path), never directly by a client, so it has no reason to be
+internet-facing at all.
 
 ### Secrets
 

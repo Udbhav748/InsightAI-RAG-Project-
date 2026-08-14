@@ -19,6 +19,22 @@ services:
       timeout: 5s
       retries: 10
 
+  leafsense:
+    build:
+      context: ../LeafSense
+      dockerfile: backend/Dockerfile
+    ports:
+      # Published so a backend running natively on the host (not through
+      # this compose file) can still reach it at localhost:8001, same
+      # rationale as postgres's port mapping above.
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   backend:
     build:
       context: ./backend
@@ -33,9 +49,18 @@ services:
       # the natively-run case above — would not (a container's own
       # localhost isn't this network's postgres service).
       DATABASE_URL: postgresql+psycopg2://insightai:insightai-dev-password@postgres:5432/insightai
+      # Same reasoning as DATABASE_URL above: "leafsense" (the service
+      # name) resolves inside the compose network, "localhost" (backend/.env's
+      # value, for native/dev use) would not. Not a hard dependency —
+      # vision_client.py already degrades to a Gemini-vision fallback if
+      # this is ever unreachable, so backend doesn't block startup on it
+      # (see depends_on below: ordering only, not health-gated).
+      VISION_SERVICE_URL: http://leafsense:8001
     depends_on:
       postgres:
         condition: service_healthy
+      leafsense:
+        condition: service_started
     volumes:
       - backend_uploads:/app/uploads
       - backend_vector_store:/app/vector_store

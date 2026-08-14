@@ -95,7 +95,7 @@ class BM25Index:
             candidate_positions = [
                 i
                 for i in candidate_positions
-                if self._records[i]["metadata"].get("tenant_id") in (None, tenant_id)
+                if self._records[i]["metadata"].get("tenant_id") == tenant_id
             ]
         if document_ids is not None:
             allowed = set(document_ids)

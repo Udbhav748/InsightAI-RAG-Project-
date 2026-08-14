@@ -199,29 +199,20 @@ class TestRolePermissionParityAcrossAuthMethods:
         monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
         monkeypatch.setattr("app.core.auth.get_user_by_id", lambda user_id: ("admin@example.com", 10, "admin"))
 
-        response = client.delete(
-            "/documents/does-not-exist",
-            params={"confirm": "true"},
+        response = client.get(
+            "/admin/usage-summary",
             headers={"Authorization": "Bearer fake-jwt-token"},
         )
 
-        # 404 (unknown document), not 403 (permission denied) — proves
-        # the role check passed and the route moved on to look the
-        # document up, the same outcome an API-key admin gets (see
-        # test_main.py::TestDeleteDocument::test_unknown_document_returns_404).
-        assert response.status_code == 404
+        assert response.status_code == 200
 
     def test_jwt_member_is_denied_the_same_way_api_key_member_is(self, client, monkeypatch):
         monkeypatch.setattr("app.core.auth.decode_access_token", lambda token: 1)
         monkeypatch.setattr("app.core.auth.get_user_by_id", lambda user_id: ("member@example.com", 10, "member"))
 
-        response = client.delete(
-            "/documents/does-not-exist",
-            params={"confirm": "true"},
+        response = client.get(
+            "/admin/usage-summary",
             headers={"Authorization": "Bearer fake-jwt-token"},
         )
 
-        # 403, matching test_main.py::TestRoleBasedAccessControl::
-        # test_member_role_cannot_delete_document's API-key equivalent
-        # exactly — same denial, same status code, different auth path in.
         assert response.status_code == 403
