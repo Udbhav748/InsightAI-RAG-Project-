@@ -3,10 +3,17 @@ and the semantic+BM25 fusion logic — no real FAISS index or embedding
 model involved (embed_query is monkeypatched; the "semantic" side of
 fusion tests is a fake vector_store).
 """
+import pytest
 
 from app.core.config import settings
 from app.models.document import RetrievedChunk
-from app.services.hybrid_search import BM25Index, _min_max_normalize, hybrid_search
+from app.services.hybrid_search import (
+    BM25Index,
+    BM25Okapi,
+    _min_max_normalize,
+    hybrid_search,
+    reciprocal_rank_fusion,
+)
 
 
 def make_chunk(chunk_id, text="chunk text", score=0.5):
@@ -34,6 +41,7 @@ class TestMinMaxNormalize:
         assert _min_max_normalize([7.0]) == [1.0]
 
 
+@pytest.mark.skipif(BM25Okapi is None, reason="rank_bm25 not installed")
 class TestBM25Index:
     def _records(self):
         return [
@@ -85,11 +93,33 @@ class FakeVectorStore:
         self._semantic_results = semantic_results
         self._bm25_results = bm25_results
 
-    def search(self, query_vector, top_k, tenant_id=None):
+    def search(self, query_vector, top_k, tenant_id=None, **kwargs):
         return self._semantic_results[:top_k]
 
-    def search_bm25(self, query, top_k, tenant_id=None):
+    def search_bm25(self, query, top_k, tenant_id=None, **kwargs):
         return self._bm25_results[:top_k]
+
+
+class TestReciprocalRankFusion:
+    def test_rrf_formula_calculation(self):
+        list1 = [make_chunk("c1"), make_chunk("c2")]
+        list2 = [make_chunk("c2"), make_chunk("c3")]
+        # weights 0.6, 0.4 with k=60
+        # c1: 0.6 / (60 + 1) = 0.6 / 61
+        # c2: 0.6 / (60 + 2) + 0.4 / (60 + 1) = 0.6/62 + 0.4/61
+        # c3: 0.4 / (60 + 2) = 0.4 / 62
+        fused = reciprocal_rank_fusion([(list1, 0.6), (list2, 0.4)], k=60, top_k=10)
+        by_id = {c.chunk_id: c.score for c in fused}
+
+        expected_c1 = 0.6 / 61.0
+        expected_c2 = (0.6 / 62.0) + (0.4 / 61.0)
+        expected_c3 = 0.4 / 62.0
+
+        assert by_id["c1"] == pytest.approx(expected_c1)
+        assert by_id["c2"] == pytest.approx(expected_c2)
+        assert by_id["c3"] == pytest.approx(expected_c3)
+        # c2 appears in both, so it has the highest score
+        assert fused[0].chunk_id == "c2"
 
 
 class TestHybridSearch:
@@ -107,49 +137,49 @@ class TestHybridSearch:
 
         assert {chunk.chunk_id for chunk in results} == {"c1", "c2", "c3"}
 
-    def test_fused_score_combines_normalized_scores_with_configured_weight(self, monkeypatch):
+    def test_fused_score_uses_rrf_with_configured_weights_and_k(self, monkeypatch):
         monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: [0.1, 0.2])
         monkeypatch.setattr(settings, "hybrid_semantic_weight", 0.6)
+        monkeypatch.setattr(settings, "hybrid_rrf_k", 60)
 
-        # Two semantic candidates (min-max -> 0.0, 1.0), two bm25 candidates
-        # (min-max -> 0.0, 1.0), sharing chunk_id "hi" as the top of both.
         store = FakeVectorStore(
             semantic_results=[make_chunk("hi", score=1.0), make_chunk("lo", score=0.0)],
             bm25_results=[make_chunk("hi", score=10.0), make_chunk("other", score=0.0)],
         )
 
-        results = hybrid_search("query", store, top_k=10)
+        results = hybrid_search("query", store, top_k=10, rrf_k=60)
         by_id = {chunk.chunk_id: chunk.score for chunk in results}
 
-        # "hi": semantic_norm=1.0, bm25_norm=1.0 -> 0.6*1 + 0.4*1 = 1.0
-        assert by_id["hi"] == 1.0
-        # "lo": semantic_norm=0.0, bm25 absent (0.0) -> 0.0
-        assert by_id["lo"] == 0.0
-        # "other": semantic absent (0.0), bm25_norm=0.0 -> 0.0
-        assert by_id["other"] == 0.0
+        # "hi": rank 1 in semantic (w=0.6) and rank 1 in bm25 (w=0.4) -> 0.6/61 + 0.4/61 = 1.0/61
+        assert by_id["hi"] == pytest.approx(1.0 / 61.0)
+        # "lo": rank 2 in semantic -> 0.6 / 62
+        assert by_id["lo"] == pytest.approx(0.6 / 62.0)
+        # "other": rank 2 in bm25 -> 0.4 / 62
+        assert by_id["other"] == pytest.approx(0.4 / 62.0)
 
     def test_returns_top_k_only(self, monkeypatch):
         monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: [0.1, 0.2])
 
         store = FakeVectorStore(
-            semantic_results=[make_chunk(f"s{i}", score=float(i)) for i in range(5)],
+            semantic_results=[make_chunk(f"s{i}", score=float(5 - i)) for i in range(5)],
             bm25_results=[],
         )
 
         results = hybrid_search("query", store, top_k=2)
 
         assert len(results) == 2
-        # Highest semantic scores (s4, s3) should win after fusion.
-        assert {chunk.chunk_id for chunk in results} == {"s4", "s3"}
+        # Highest semantic ranks (s0, s1) should win after fusion.
+        assert {chunk.chunk_id for chunk in results} == {"s0", "s1"}
 
     def test_result_ordering_is_by_fused_score_descending(self, monkeypatch):
         monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: [0.1, 0.2])
 
         store = FakeVectorStore(
-            semantic_results=[make_chunk("low", score=0.1), make_chunk("high", score=0.9)],
+            semantic_results=[make_chunk("high", score=0.9), make_chunk("low", score=0.1)],
             bm25_results=[],
         )
 
         results = hybrid_search("query", store, top_k=10)
 
         assert [chunk.chunk_id for chunk in results] == ["high", "low"]
+        assert results[0].score > results[1].score

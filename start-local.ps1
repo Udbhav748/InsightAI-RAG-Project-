@@ -1,26 +1,14 @@
 <#
-One-command local dev launcher: starts the backend, the frontend, and
-LeafSense (the separate vision service the Diagnose page depends on) —
-each in its own visible console window, so their logs stay readable
-instead of interleaved in one stream.
+.SYNOPSIS
+One-command local dev launcher: starts the backend, frontend, and LeafSense vision service in parallel.
 
-Why this exists: the recurring failure mode was "Diagnose says the plant
-service isn't running" because LeafSense is a separate sibling repo/process
-that's easy to forget to start on its own (see
-app/services/vision_client.py's docstring for why it's kept separate:
-InsightAI never imports TensorFlow or any LeafSense code). This script
-makes "start everything for local dev" one command instead of three.
-
-LeafSense is optional: if the sibling ../LeafSense checkout isn't present
-(e.g. a portfolio visitor who only cloned InsightAI-RAG), this script
-starts backend + frontend anyway and just skips it with a note — Diagnose
-will show its existing friendly "service isn't running" message, same as
-today, nothing new breaks.
+Services:
+- Backend:          FastAPI on http://localhost:8000
+- Frontend:         Vite React app on http://localhost:5173
+- LeafSense Vision: FastAPI on http://localhost:8001 (plant leaf disease diagnosis)
 
 Usage (from the InsightAI-RAG repo root):
     .\start-local.ps1
-
-Each window is independent — closing/Ctrl+C one doesn't stop the others.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -31,31 +19,40 @@ $frontendDir = Join-Path $repoRoot "frontend"
 $leafSenseStart = Join-Path $repoRoot "..\LeafSense\backend\start.ps1"
 $devRestart = Join-Path $backendDir "scripts\dev_restart.ps1"
 
-Write-Host "[start-local] Launching backend (port 8000)..." -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  InsightAI-RAG & LeafSense Unified Local Launcher" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+
+# 1. Launch Backend (FastAPI on http://localhost:8000)
+Write-Host "[1/3] Launching Backend (FastAPI on http://localhost:8000)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList @(
     "-NoExit", "-Command",
     "& '$devRestart'"
 )
 
-Write-Host "[start-local] Launching frontend (Vite, port 5173 or next free)..." -ForegroundColor Cyan
+# 2. Launch Frontend (Vite on http://localhost:5173)
+Write-Host "[2/3] Launching Frontend (Vite on http://localhost:5173)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList @(
     "-NoExit", "-Command",
     "Set-Location '$frontendDir'; npm run dev"
 )
 
+# 3. Launch LeafSense Vision Service (FastAPI on http://localhost:8001)
 if (Test-Path $leafSenseStart) {
-    Write-Host "[start-local] Launching LeafSense (port 8001)..." -ForegroundColor Cyan
+    Write-Host "[3/3] Launching LeafSense Vision Service (FastAPI on http://localhost:8001)..." -ForegroundColor Cyan
     Start-Process powershell -ArgumentList @(
         "-NoExit", "-Command",
         "& '$leafSenseStart'"
     )
 } else {
-    Write-Host "[start-local] Skipping LeafSense - no checkout found at $leafSenseStart" -ForegroundColor Yellow
-    Write-Host "[start-local] The Diagnose page will show its normal 'service isn't running' message until LeafSense is cloned alongside this repo." -ForegroundColor Yellow
+    Write-Host "[3/3] Skipping LeafSense - no checkout found at $leafSenseStart" -ForegroundColor Yellow
+    Write-Host "      (Diagnose page will show fallback status until LeafSense is available)" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "[start-local] All available services are starting in their own windows." -ForegroundColor Green
-Write-Host "[start-local] Backend health:  http://localhost:8000/health"
-Write-Host "[start-local] Frontend:        check the frontend window for its actual port (5173, or the next free one)"
-Write-Host "[start-local] LeafSense:       http://localhost:8001/model-info"
+Write-Host "------------------------------------------------------------" -ForegroundColor Green
+Write-Host "All services launched in parallel console windows!" -ForegroundColor Green
+Write-Host "  • Backend API:        http://localhost:8000 (Health: http://localhost:8000/health, Docs: http://localhost:8000/docs)" -ForegroundColor White
+Write-Host "  • Frontend UI:        http://localhost:5173" -ForegroundColor White
+Write-Host "  • LeafSense Vision:   http://localhost:8001 (Model Info: http://localhost:8001/model-info)" -ForegroundColor White
+Write-Host "------------------------------------------------------------" -ForegroundColor Green

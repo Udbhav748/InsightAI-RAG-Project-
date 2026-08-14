@@ -265,6 +265,56 @@ def is_ungrounded(
     return not answer.strip() or answer.strip() == FALLBACK_REPLY
 
 
+# Patterns for identifying chemical active ingredients and safety warnings
+_CHEMICAL_INGREDIENT_PATTERN = re.compile(
+    r"\b("
+    r"chlorothalonil|mancozeb|azoxystrobin|copper hydroxide|copper sulfate|bordeaux mixture|"
+    r"propiconazole|myclobutanil|captan|thiophanate-methyl|thiophanate|metalaxyl|mefenoxam|"
+    r"boscalid|pyraclostrobin|tebuconazole|difenoconazole|fludioxonil|cyprodinil|iprodione|"
+    r"trifloxystrobin|streptomycin|oxytetracycline|kasugamycin|fluxapyroxad|penthiopyrad|"
+    r"cyflufenamid|quinoxyfen|fluopicolide|dimethomorph|mandipropamid|zoxamide|cymoxanil|"
+    r"glyphosate|imidacloprid|malathion|permethrin|spirotetramat|abamectin|bifenthrin|"
+    r"chemical fungicide|chemical bactericide|synthetic fungicide|synthetic bactericide|"
+    r"chemical pesticide|chemical spray|fungicide spray|bactericide spray"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SAFETY_CAUTION_PATTERN = re.compile(
+    r"\b("
+    r"ppe|personal protective equipment|protective equipment|protective gear|protective clothing|"
+    r"gloves|respirator|respirators|eye protection|goggles|safety glasses|face shield|"
+    r"re-entry interval|rei|pre-harvest interval|phi|safety caution|safety warning|precaution|"
+    r"precautions|safe handling|label instructions|follow the label|read the label|epa registration|"
+    r"drift caution|toxicity|toxic to bees|waterway buffer|wear protective|caution:"
+    r")\b",
+    re.IGNORECASE,
+)
+
+CHEMICAL_SAFETY_INSTRUCTION = (
+    "Chemical Safety Warning Missing: You recommended chemical active ingredients or pesticides "
+    "without including required safety precautions. You must explicitly include chemical safety cautions "
+    "(such as Personal Protective Equipment / PPE, Re-Entry Interval / REI, Pre-Harvest Interval / PHI, "
+    "or following manufacturer/EPA label safety instructions) alongside your treatment recommendations."
+)
+
+
+def verify_chemical_safety(answer: str) -> bool:
+    """Verify that if chemical active ingredients or synthetic treatments are mentioned,
+    standard safety cautions (PPE, REI, PHI, label directions) are also present.
+    Returns True if safe (either no chemicals mentioned, or cautions are present).
+    Returns False if chemicals are mentioned without safety cautions.
+    """
+    if not answer or not answer.strip():
+        return True
+
+    has_chemicals = bool(_CHEMICAL_INGREDIENT_PATTERN.search(answer))
+    if not has_chemicals:
+        return True
+
+    return bool(_SAFETY_CAUTION_PATTERN.search(answer))
+
+
 def contextualize_query(
     llm_client: LLMClient, query: str, history: list[dict[str, str]] | None
 ) -> str:
@@ -518,9 +568,15 @@ def correct_answer(
     generate_fn: Callable[..., str] | None = None,
 ) -> tuple[str, int, int, list[WebSearchResult], bool]:
     """Corrective RAG loop regeneration stage (blocking)."""
-    ungrounded = is_ungrounded(answer, chunks, web_results) or (
-        settings.citation_verification_enabled and not verify_citations(llm_client, answer, chunks)
+    chemical_safe = (
+        not getattr(settings, "chemical_safety_verification_enabled", True)
+        or verify_chemical_safety(answer)
     )
+    citation_safe = (
+        not settings.citation_verification_enabled
+        or verify_citations(llm_client, answer, chunks)
+    )
+    ungrounded = is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     if not ungrounded:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -532,9 +588,16 @@ def correct_answer(
         )
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
+    extra_instruction = CHEMICAL_SAFETY_INSTRUCTION if not chemical_safe else REFLECTION_INSTRUCTION
     logger.info(
         "reflection_triggered",
-        extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
+        extra={
+            "extra_fields": {
+                "query_length": len(query),
+                "chunk_count": len(chunks),
+                "reason": "chemical_safety" if not chemical_safe else "ungrounded",
+            }
+        },
     )
     gen = generate_fn or (
         lambda q, c, h, **kw: generate_answer(llm_client, q, c, h, **kw)
@@ -543,14 +606,18 @@ def correct_answer(
         query,
         chunks,
         history,
-        extra_instruction=REFLECTION_INSTRUCTION,
+        extra_instruction=extra_instruction,
         web_results=web_results,
         persona=persona,
     )
     llm_calls += 1
     steps_taken += 1  # regeneration
 
-    if not is_ungrounded(answer, chunks, web_results):
+    chemical_safe_after = (
+        not getattr(settings, "chemical_safety_verification_enabled", True)
+        or verify_chemical_safety(answer)
+    )
+    if not is_ungrounded(answer, chunks, web_results) and chemical_safe_after:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
     if web_search_attempted or not settings.web_search_enabled:
@@ -606,9 +673,15 @@ def correct_answer_streamed(
     generate_streamed_fn: Callable[..., Iterator[tuple[bool, str]]] | None = None,
 ) -> Generator[dict[str, Any], None, tuple[str, int, int, list[WebSearchResult], bool]]:
     """Streamed counterpart to correct_answer."""
-    ungrounded = is_ungrounded(answer, chunks, web_results) or (
-        settings.citation_verification_enabled and not verify_citations(llm_client, answer, chunks)
+    chemical_safe = (
+        not getattr(settings, "chemical_safety_verification_enabled", True)
+        or verify_chemical_safety(answer)
     )
+    citation_safe = (
+        not settings.citation_verification_enabled
+        or verify_citations(llm_client, answer, chunks)
+    )
+    ungrounded = is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     if not ungrounded:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -620,11 +693,18 @@ def correct_answer_streamed(
         )
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
+    extra_instruction = CHEMICAL_SAFETY_INSTRUCTION if not chemical_safe else REFLECTION_INSTRUCTION
     logger.info(
         "reflection_triggered",
-        extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
+        extra={
+            "extra_fields": {
+                "query_length": len(query),
+                "chunk_count": len(chunks),
+                "reason": "chemical_safety" if not chemical_safe else "ungrounded",
+            }
+        },
     )
-    yield trace_event("reflecting", {"reason": "ungrounded_answer"})
+    yield trace_event("reflecting", {"reason": "chemical_safety" if not chemical_safe else "ungrounded_answer"})
     gen_stream = generate_streamed_fn or (
         lambda q, c, h, **kw: generate_answer_streamed(llm_client, q, c, h, **kw)
     )
@@ -633,7 +713,7 @@ def correct_answer_streamed(
         query,
         chunks,
         history,
-        extra_instruction=REFLECTION_INSTRUCTION,
+        extra_instruction=extra_instruction,
         web_results=web_results,
         persona=persona,
     ):
@@ -644,7 +724,11 @@ def correct_answer_streamed(
     llm_calls += 1
     steps_taken += 1  # regeneration
 
-    if not is_ungrounded(answer, chunks, web_results):
+    chemical_safe_after = (
+        not getattr(settings, "chemical_safety_verification_enabled", True)
+        or verify_chemical_safety(answer)
+    )
+    if not is_ungrounded(answer, chunks, web_results) and chemical_safe_after:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
     if web_search_attempted or not settings.web_search_enabled:
@@ -821,6 +905,9 @@ class ReflectionEngine:
 
     def verify_citations(self, answer: str, chunks: list[RetrievedChunk]) -> bool:
         return verify_citations(self._llm_client, answer, chunks)
+
+    def verify_chemical_safety(self, answer: str) -> bool:
+        return verify_chemical_safety(answer)
 
     def suggest_follow_ups(self, query: str, answer: str) -> list[str]:
         return suggest_follow_ups(self._llm_client, query, answer)

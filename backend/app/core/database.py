@@ -33,18 +33,67 @@ class Base(DeclarativeBase):
 engine: Engine | None = None
 SessionLocal: sessionmaker[Session] | None = None
 
-if settings.database_url:
-    # Bounded first-connect: with an unbounded connect attempt, a down
-    # Postgres (Docker Desktop stopped, container not running) hangs the
-    # whole startup on an OS-level socket connect instead of failing fast.
-    # pool_pre_ping only protects *already-pooled* connections on reuse; it
-    # does nothing for the very first connect, which is the case that hung.
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,
-        connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
+def _probe_tcp(host: str, port: int, timeout_sec: float = 1.0) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            return True
+    except Exception:
+        return False
+
+
+def _setup_sqlite_engine() -> tuple[Engine, sessionmaker[Session]]:
+    backend_dir = Path(__file__).resolve().parents[2]
+    sqlite_path = backend_dir / "db.sqlite3"
+    sqlite_url = f"sqlite:///{sqlite_path.as_posix()}"
+    sq_engine = create_engine(
+        sqlite_url,
+        connect_args={"check_same_thread": False},
     )
-    SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    sq_session = sessionmaker(bind=sq_engine, autocommit=False, autoflush=False)
+    return sq_engine, sq_session
+
+
+if settings.database_url:
+    if settings.database_url.startswith("sqlite"):
+        try:
+            engine = create_engine(
+                settings.database_url,
+                connect_args={"check_same_thread": False},
+            )
+            SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+        except Exception:
+            engine, SessionLocal = _setup_sqlite_engine()
+    elif settings.database_url.startswith("postgresql"):
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.database_url)
+        pg_host = parsed.hostname or "localhost"
+        pg_port = parsed.port or 5432
+        if _probe_tcp(pg_host, pg_port, timeout_sec=0.8):
+            try:
+                engine = create_engine(
+                    settings.database_url,
+                    pool_pre_ping=True,
+                    connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
+                )
+                SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+            except Exception:
+                engine, SessionLocal = _setup_sqlite_engine()
+        else:
+            logger.info(
+                "db_postgres_offline_using_sqlite",
+                extra={
+                    "extra_fields": {
+                        "host": f"{pg_host}:{pg_port}",
+                        "hint": "PostgreSQL is offline. Seamlessly utilizing local SQLite persistence.",
+                    }
+                },
+            )
+            engine, SessionLocal = _setup_sqlite_engine()
+    else:
+        engine, SessionLocal = _setup_sqlite_engine()
+else:
+    engine, SessionLocal = _setup_sqlite_engine()
 
 
 def db_enabled() -> bool:
@@ -100,38 +149,38 @@ def run_migrations() -> None:
 def init_db() -> None:
     """Bring the schema up to date on every startup, then create tables.
 
-    Preferred path: run pending Alembic migrations (run_migrations) so ALTERs
-    and new tables reach the live DB automatically. Fallback for a database
-    with no Alembic history yet (no alembic_version table — a genuinely fresh
-    DB, or one previously built by the old create_all-only path, which is
-    exactly how the documents.collection bug was able to slip through):
-    Base.metadata.create_all() mirrors the legacy graceful behavior, then the
-    DB is stamped at head so it enters Alembic's history and every FUTURE
-    migration applies automatically instead of being skipped again.
-
-    A database that is unreachable (Docker Desktop / insightai-postgres
-    container down) fails fast after database_connect_timeout_seconds instead
-    of hanging, logging one actionable line before re-raising.
+    If PostgreSQL is unreachable, seamlessly activates local SQLite (db.sqlite3)
+    so authentication, user accounts, and sessions work out-of-the-box with $0 cost
+    and zero external database requirements.
     """
-    if not db_enabled():
-        logger.info("db_disabled", extra={"extra_fields": {"reason": "no DATABASE_URL"}})
-        return
+    global engine, SessionLocal
     import app.models.db_models  # noqa: F401  ensure models are registered on Base
+
+    if engine is None or SessionLocal is None or engine.dialect.name == "sqlite":
+        if engine is None or SessionLocal is None:
+            engine, SessionLocal = _setup_sqlite_engine()
+        Base.metadata.create_all(bind=engine)
+        logger.info("db_ready_sqlite", extra={"extra_fields": {"database": str(engine.url)}})
+        return
 
     try:
         run_migrations()
-    except OperationalError:
+    except OperationalError as exc:
         host = _database_host_for_log()
-        logger.error(
-            "db_unreachable",
+        logger.warning(
+            "db_postgres_unreachable_switching_to_sqlite",
             extra={
                 "extra_fields": {
                     "host": host,
-                    "hint": f"Postgres unreachable at {host} - is Docker Desktop / the insightai-postgres container running?",
+                    "hint": f"Postgres unreachable at {host}. Seamlessly operating with local SQLite database (db.sqlite3).",
+                    "error": str(exc),
                 }
             },
         )
-        raise
+        engine, SessionLocal = _setup_sqlite_engine()
+        Base.metadata.create_all(bind=engine)
+        logger.info("db_ready_sqlite", extra={"extra_fields": {"database": str(engine.url)}})
+        return
     except Exception as exc:
         if _has_alembic_history():
             # Not a no-history fallback: a real migration failure on a DB

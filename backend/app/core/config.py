@@ -482,6 +482,12 @@ class Settings(BaseSettings):
     # to [0, 1] before combining, so these weights are directly comparable.
     hybrid_semantic_weight: float = 0.6
 
+    # Reciprocal Rank Fusion (RRF) smoothing parameter k. Default is 60.
+    hybrid_rrf_k: int = 60
+
+    # Checks for chemical safety cautions when chemical active ingredients are mentioned.
+    chemical_safety_verification_enabled: bool = True
+
     # Enables cross-encoder re-ranking (services/reranking_service.py) of
     # retrieval's candidate pool. Off by default — unlike hybrid search,
     # this stays opt-in: the ablation showed a real Precision@5 gain

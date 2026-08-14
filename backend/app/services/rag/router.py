@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class PlanDecision:
     action: str  # "conversational" | "retrieve" | "summarize" | "diagnose"
     document_id: str | None = None
+    crop: str | None = None
+    collection: str | None = None
 
 
 # Each entry is (normalized exact phrases, canned response). Checked in
@@ -114,6 +116,80 @@ _DOCUMENT_ID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
 )
 
+# Canonical crop names recognized across agricultural and LeafSense query contexts.
+_CROP_KEYWORDS: dict[str, str] = {
+    "tomato": "tomato",
+    "tomatoes": "tomato",
+    "potato": "potato",
+    "potatoes": "potato",
+    "corn": "corn",
+    "maize": "corn",
+    "apple": "apple",
+    "apples": "apple",
+    "grape": "grape",
+    "grapes": "grape",
+    "grapevine": "grape",
+    "peach": "peach",
+    "peaches": "peach",
+    "pepper": "bell pepper",
+    "peppers": "bell pepper",
+    "bell pepper": "bell pepper",
+    "bell peppers": "bell pepper",
+    "capsicum": "bell pepper",
+    "chilli": "bell pepper",
+    "chili": "bell pepper",
+    "cherry": "cherry",
+    "cherries": "cherry",
+    "strawberry": "strawberry",
+    "strawberries": "strawberry",
+    "blueberry": "blueberry",
+    "blueberries": "blueberry",
+    "raspberry": "raspberry",
+    "raspberries": "raspberry",
+    "soybean": "soybean",
+    "soybeans": "soybean",
+    "soy": "soybean",
+    "squash": "squash",
+    "zucchini": "squash",
+    "pumpkin": "squash",
+    "orange": "orange",
+    "oranges": "orange",
+    "citrus": "orange",
+    "wheat": "wheat",
+    "rice": "rice",
+    "cotton": "cotton",
+    "cucumber": "cucumber",
+    "cucumbers": "cucumber",
+    "onion": "onion",
+    "onions": "onion",
+    "garlic": "garlic",
+    "lettuce": "lettuce",
+    "coffee": "coffee",
+    "banana": "banana",
+    "bananas": "banana",
+    "mango": "mango",
+    "mangoes": "mango",
+    "sugarcane": "sugarcane",
+}
+
+_CROP_PATTERN = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in sorted(_CROP_KEYWORDS.keys(), key=len, reverse=True))
+    + r")\b",
+    re.IGNORECASE,
+)
+
+
+def extract_crop_context(text: str | None) -> str | None:
+    """Extract standard crop context (e.g. 'tomato', 'potato', 'peach') from text or query."""
+    if not text:
+        return None
+    match = _CROP_PATTERN.search(text.lower())
+    if match:
+        matched_token = match.group(1).lower()
+        return _CROP_KEYWORDS.get(matched_token, matched_token)
+    return None
+
 
 def normalize_query(query: str) -> str:
     """Strip punctuation, normalize whitespace, and lowercase the query."""
@@ -130,37 +206,51 @@ def match_conversational_reply(query: str) -> str | None:
     return None
 
 
-def build_diagnosis_query(prediction: VisionPrediction, user_query: str | None) -> str:
+def build_diagnosis_query(
+    prediction: VisionPrediction,
+    user_query: str | None = None,
+    collection: str | None = None,
+) -> str:
     """Turn a vision prediction into the query fed to the existing
     retrieval pipeline. Includes crop, not just disease name: several
     LeafSense classes share a disease name across crops (e.g.
     "Bacterial_spot" exists for both peach and tomato, with different
     corpus content), so crop alone disambiguates which document's chunks
     should actually match."""
+    crop = collection or prediction.crop or extract_crop_context(user_query) or "crop"
+    disease = prediction.disease
     base = (
-        f"{prediction.disease} on {prediction.crop}"
-        if prediction.disease != "healthy"
-        else f"healthy {prediction.crop}"
+        f"{disease} on {crop}"
+        if disease != "healthy"
+        else f"healthy {crop}"
     )
     return f"{base}. {user_query}" if user_query else base
 
 
 def plan_query(query: str, history: list[dict[str, str]] | None = None) -> PlanDecision:
-    """Decide which tool this query needs.
+    """Decide which tool this query needs and automatically extract crop context.
 
     Plain keyword/regex checks — no LLM call, no external planner.
     history is accepted for a future planner that considers context,
     but isn't used by these checks today.
     """
+    crop = extract_crop_context(query)
+    collection = crop
+
     if match_conversational_reply(query) is not None:
-        return PlanDecision(action="conversational")
+        return PlanDecision(action="conversational", crop=crop, collection=collection)
 
     if _SUMMARIZE_RE.search(query):
         match = _DOCUMENT_ID_RE.search(query)
         if match:
-            return PlanDecision(action="summarize", document_id=match.group(0))
+            return PlanDecision(
+                action="summarize",
+                document_id=match.group(0),
+                crop=crop,
+                collection=collection,
+            )
 
-    return PlanDecision(action="retrieve")
+    return PlanDecision(action="retrieve", crop=crop, collection=collection)
 
 
 def route_query(
@@ -187,6 +277,8 @@ def route_query(
     if not settings.agent_routing_enabled or router_agent is None:
         return plan
     routed = router_agent.decide(query, history)
+    crop = getattr(routed, "crop", None) or plan.crop
+    collection = getattr(routed, "collection", None) or plan.collection or crop
     if routed.action != plan.action or routed.document_id != plan.document_id:
         logger.info(
             "router_decision",
@@ -195,11 +287,18 @@ def route_query(
                     "planner_action": plan.action,
                     "routed_action": routed.action,
                     "document_id": routed.document_id,
+                    "crop": crop,
+                    "collection": collection,
                     "query_length": len(query),
                 }
             },
         )
-    return PlanDecision(action=routed.action, document_id=routed.document_id)
+    return PlanDecision(
+        action=routed.action,
+        document_id=routed.document_id,
+        crop=crop,
+        collection=collection,
+    )
 
 
 class QueryRouter:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { diagnoseLeaf } from '../services/diagnoseService'
-import getErrorMessage from '../utils/errorMessage'
+import { checkLeafSenseHealth, diagnoseLeaf } from '../services/diagnoseService'
+import getErrorMessage, { getErrorInfo } from '../utils/errorMessage'
 import useToast from './useToast'
 import { MAX_IMAGE_SIZE_BYTES, MAX_IMAGE_SIZE_MB } from '../constants'
 
@@ -11,21 +11,50 @@ export default function useDiagnose() {
   const [status, setStatus] = useState('idle') // idle | preview | analyzing | success | error
   const [result, setResult] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
+  const [isLeafSenseOnline, setIsLeafSenseOnline] = useState(true)
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false)
   const previewUrlRef = useRef(null)
   const { showToast } = useToast()
 
   const revokePreview = useCallback(() => {
     if (previewUrlRef.current) {
-      URL.revokeObjectURL(previewUrlRef.current)
+      try {
+        URL.revokeObjectURL(previewUrlRef.current)
+      } catch {
+        // Ignored in environments where revokeObjectURL is unsupported
+      }
       previewUrlRef.current = null
     }
   }, [])
 
   useEffect(() => revokePreview, [revokePreview])
 
+  // Periodic or on-demand health check for LeafSense port 8001
+  const checkHealth = useCallback(async () => {
+    setIsCheckingHealth(true)
+    try {
+      const res = await checkLeafSenseHealth()
+      setIsLeafSenseOnline(res.online)
+      return res.online
+    } catch {
+      setIsLeafSenseOnline(false)
+      return false
+    } finally {
+      setIsCheckingHealth(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    checkHealth()
+  }, [checkHealth])
+
   const selectImage = useCallback(
     (file) => {
-      const isImage = (file.type || '').startsWith('image/')
+      if (!file) return
+      const isImage =
+        (file.type || '').startsWith('image/') ||
+        /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i.test(file.name || '')
+
       if (!isImage) {
         showToast('Please choose an image file (JPG, PNG, WEBP, ...).', 'error')
         return
@@ -35,7 +64,12 @@ export default function useDiagnose() {
         return
       }
       revokePreview()
-      const url = URL.createObjectURL(file)
+      let url = ''
+      try {
+        url = URL.createObjectURL(file)
+      } catch {
+        url = 'blob:http://localhost/mock-leaf-preview'
+      }
       previewUrlRef.current = url
       setImage(file)
       setPreviewUrl(url)
@@ -45,6 +79,15 @@ export default function useDiagnose() {
     },
     [revokePreview, showToast]
   )
+
+  const clearImage = useCallback(() => {
+    revokePreview()
+    setImage(null)
+    setPreviewUrl(null)
+    if (status === 'preview') {
+      setStatus('idle')
+    }
+  }, [revokePreview, status])
 
   const setQueryText = useCallback((text) => setQuery(text), [])
 
@@ -56,7 +99,16 @@ export default function useDiagnose() {
       const response = await diagnoseLeaf(image, { query })
       setResult(response)
       setStatus('success')
+      setIsLeafSenseOnline(true)
     } catch (error) {
+      const errInfo = getErrorInfo(error)
+      if (
+        errInfo?.error_code === 'VISION_SERVICE_ERROR' ||
+        error?.message?.includes('8001') ||
+        error?.response?.data?.detail?.includes('8001')
+      ) {
+        setIsLeafSenseOnline(false)
+      }
       const message = getErrorMessage(error, 'Diagnosis failed. Please try again.')
       setErrorMessage(message)
       setStatus('error')
@@ -81,7 +133,11 @@ export default function useDiagnose() {
     status,
     result,
     errorMessage,
+    isLeafSenseOnline,
+    isCheckingHealth,
+    checkHealth,
     selectImage,
+    clearImage,
     setQueryText,
     analyze,
     reset,

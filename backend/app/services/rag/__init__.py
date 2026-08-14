@@ -9,6 +9,7 @@ Provides:
 
 from app.services.rag.reflection_engine import (
     _MAX_LLM_CALLS,
+    CHEMICAL_SAFETY_INSTRUCTION,
     ReflectionEngine,
     answer_source,
     capture_prompt,
@@ -26,6 +27,7 @@ from app.services.rag.reflection_engine import (
     search_web_fallback,
     source_references,
     suggest_follow_ups,
+    verify_chemical_safety,
     verify_citations,
     web_source_references,
 )
@@ -34,6 +36,7 @@ from app.services.rag.router import (
     PlanDecision,
     QueryRouter,
     build_diagnosis_query,
+    extract_crop_context,
     match_conversational_reply,
     normalize_query,
     plan_query,
@@ -56,12 +59,14 @@ __all__ = [
     "route_query",
     "match_conversational_reply",
     "build_diagnosis_query",
+    "extract_crop_context",
     "normalize_query",
     # Grader
     "RetrievalGrader",
     "grade_retrieval",
     # Reflection Engine
     "_MAX_LLM_CALLS",
+    "CHEMICAL_SAFETY_INSTRUCTION",
     "ReflectionEngine",
     "correct_answer",
     "correct_answer_streamed",
@@ -74,6 +79,7 @@ __all__ = [
     "is_ungrounded",
     "contextualize_query",
     "verify_citations",
+    "verify_chemical_safety",
     "suggest_follow_ups",
     "source_references",
     "web_source_references",

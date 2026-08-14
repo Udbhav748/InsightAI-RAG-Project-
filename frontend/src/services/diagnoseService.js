@@ -24,3 +24,26 @@ export async function diagnoseLeaf(image, options = {}) {
   const { data } = await api.post('/chat/diagnose', formData, { timeout: 60000 })
   return data
 }
+
+/**
+ * Check if the LeafSense vision service (port 8001) / backend diagnosis pipeline is reachable.
+ * @returns {Promise<{online: boolean, port: number, url: string, message?: string}>}
+ */
+export async function checkLeafSenseHealth() {
+  try {
+    const { data } = await api.get('/health', { timeout: 4000 })
+    return {
+      online: true,
+      port: 8001,
+      url: 'http://localhost:8001',
+      status: data?.status || 'ok',
+    }
+  } catch (error) {
+    return {
+      online: false,
+      port: 8001,
+      url: 'http://localhost:8001',
+      message: error?.message || 'Connection refused',
+    }
+  }
+}

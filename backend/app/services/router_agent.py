@@ -93,6 +93,8 @@ _FENCE_END_RE = re.compile(r"\s*```$")
 class RouterDecision:
     action: str
     document_id: str | None = None
+    crop: str | None = None
+    collection: str | None = None
 
 
 def _parse_router_json(raw: str) -> dict[str, Any] | None:
@@ -142,11 +144,18 @@ class RouterAgent:
         """
         start = time.perf_counter()
         fast = self._fallback_planner(query, history)
+        fast_crop = getattr(fast, "crop", None)
+        fast_collection = getattr(fast, "collection", None)
         log_agent_started("router", query, decision=fast.action)
 
         if fast.action in _FAST_ACTIONS:
             log_agent_completed("router", query, start, outcome="fast_path", action=fast.action)
-            return RouterDecision(action=fast.action, document_id=fast.document_id)
+            return RouterDecision(
+                action=fast.action,
+                document_id=fast.document_id,
+                crop=fast_crop,
+                collection=fast_collection,
+            )
 
         decision = self._classify(query, history)
         if decision is None:
@@ -159,7 +168,18 @@ class RouterAgent:
                 },
             )
             log_agent_completed("router", query, start, outcome="fallback", action=fast.action)
-            return RouterDecision(action=fast.action, document_id=fast.document_id)
+            return RouterDecision(
+                action=fast.action,
+                document_id=fast.document_id,
+                crop=fast_crop,
+                collection=fast_collection,
+            )
+
+        # Preserve extracted crop context if classification didn't provide one
+        if decision.crop is None:
+            decision.crop = fast_crop
+        if decision.collection is None:
+            decision.collection = fast_collection or fast_crop
 
         log_agent_completed("router", query, start, outcome="llm", action=decision.action)
         return decision

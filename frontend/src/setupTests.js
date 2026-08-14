@@ -14,4 +14,11 @@ if (typeof globalThis.DOMMatrix === 'undefined') {
 if (typeof window !== 'undefined') {
   window.DOMMatrix = globalThis.DOMMatrix
   Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || vi.fn()
+
+  const mockCreateObjectURL = vi.fn(() => 'blob:http://localhost/mock-leaf-preview')
+  const mockRevokeObjectURL = vi.fn()
+  window.URL.createObjectURL = mockCreateObjectURL
+  window.URL.revokeObjectURL = mockRevokeObjectURL
+  globalThis.URL.createObjectURL = mockCreateObjectURL
+  globalThis.URL.revokeObjectURL = mockRevokeObjectURL
 }

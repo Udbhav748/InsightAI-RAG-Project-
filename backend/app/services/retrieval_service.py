@@ -14,6 +14,8 @@ for how to A/B them against each other):
   cross-encoder (reranking_service.py) before narrowing to top_k.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -124,38 +126,26 @@ def _retrieve_core(
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
     image_vector_store: VectorStore | None = None,
+    collection: str | None = None,
 ) -> list[RetrievedChunk]:
-    """Core retrieval logic: retrieve (optionally hybrid + reranked), then
-    drop results below min_score. Split out of the @track_tool-wrapped
-    public retrieve() below so the dynamic tool registry
-    (services/tools/) can invoke retrieval without double-instrumenting
-    it: the registry is the single instrumentation point on the agent
-    path, @track_tool is the single one on the inline path, and both call
-    this same code so the two can't drift.
-
-    top_k and min_score default to Settings when not given explicitly.
-    tenant_id (not part of RetrievalInput's user-facing schema — it's
-    system-injected auth context, same treatment as the vector_store
-    param) restricts results to that tenant's own chunks; see
-    FAISSVectorStore.search's docstring for exact filtering semantics.
-    document_ids restricts results to chunks belonging to those
-    documents (Agent 3.1 "chat with a collection") — applied as an exact
-    post-filter so it composes with any VectorStore implementation and
-    any retrieval path (semantic, hybrid, reranked).
-    image_vector_store feeds the Phase 4 CLIP cross-modal signal inside
-    hybrid_search; see hybrid_search's docstring for the fusion math.
+    """Inner retrieval implementation shared by retrieve() and the dynamic
+    tool registry.
     """
     resolved_top_k = top_k if top_k is not None else settings.retrieval_top_k
     resolved_min_score = min_score if min_score is not None else settings.retrieval_min_score
 
     start = time.perf_counter()
 
-    # If reranking will run afterward, fetch a wider candidate pool for it
-    # to actually have something to re-order; otherwise fetch exactly what
-    # the caller asked for. Either way, this is the "top-k" handed to
-    # whichever retrieval path runs below — hybrid_search separately always
-    # pulls its own (typically wider) candidate_k from each retriever
-    # before fusing down to this number.
+    resolved_doc_ids = list(document_ids) if document_ids is not None else None
+    if collection is not None and resolved_doc_ids is None:
+        try:
+            from app.services.document_repository import list_documents
+            docs = list_documents(tenant_id=tenant_id, collection=collection)
+            if docs:
+                resolved_doc_ids = [doc["document_id"] for doc in docs]
+        except Exception:
+            resolved_doc_ids = None
+
     fetch_k = settings.retrieval_candidate_k if settings.reranking_enabled else resolved_top_k
 
     results = _search_with_timeout(
@@ -164,7 +154,7 @@ def _retrieve_core(
         fetch_k,
         resolved_top_k,
         tenant_id=tenant_id,
-        document_ids=document_ids,
+        document_ids=resolved_doc_ids,
         image_vector_store=image_vector_store,
     )
 
@@ -177,25 +167,27 @@ def _retrieve_core(
             logger.warning("reranking_failed", extra={"extra_fields": {"error": str(exc)}})
             results = results[:resolved_top_k]
 
-    # min_score is calibrated against raw cosine similarity. rerank() keeps
-    # each chunk's pre-rerank score (see its docstring) since cross-encoder
-    # scores aren't on that same scale either — but that means when hybrid
-    # search is also on, this filter would compare min_score against a
-    # per-query min-max-normalized fused score, not cosine similarity: a
-    # different scale the threshold was never calibrated for. Once
-    # reranking has actually run, its own top_k selection is the intended
-    # relevance gate, so skip re-filtering by that incompatible scale.
     if reranked:
         filtered = results
     else:
         filtered = [chunk for chunk in results if chunk.score >= resolved_min_score]
 
-    if document_ids:
-        allowed = set(document_ids)
+    if resolved_doc_ids:
+        allowed = set(resolved_doc_ids)
         filtered = [chunk for chunk in filtered if chunk.document_id in allowed]
+    elif collection:
+        # Fallback: if collection couldn't be resolved via DB, filter by chunk metadata when present
+        collection_filtered = [
+            chunk for chunk in filtered
+            if chunk.metadata.get("collection") == collection or chunk.metadata.get("crop") == collection
+        ]
+        if collection_filtered:
+            filtered = collection_filtered
 
-    if document_ids:
-        log_extra = {"document_id_count": len(allowed), "results_after_doc_filter": len(filtered)}
+    if resolved_doc_ids:
+        log_extra = {"document_id_count": len(resolved_doc_ids), "results_after_doc_filter": len(filtered)}
+    elif collection:
+        log_extra = {"collection": collection, "results_after_collection_filter": len(filtered)}
     else:
         log_extra = {}
 
@@ -218,11 +210,6 @@ def _retrieve_core(
         },
     )
 
-    # Detection only, same flag-and-continue policy as the query-side check
-    # in rag_service.ChatService._route — text embedded in an uploaded
-    # document reaching the LLM via retrieval is failure mode #4 in
-    # docs/DESIGN_REVIEW.md, and this is what makes an attempt visible in
-    # production logs instead of only the offline eval harness.
     flagged = [
         {"chunk_id": chunk.chunk_id, "document_id": chunk.document_id, "categories": categories}
         for chunk in filtered
@@ -246,6 +233,7 @@ def retrieve(
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
     image_vector_store: VectorStore | None = None,
+    collection: str | None = None,
 ) -> list[RetrievedChunk]:
     """Public, instrumented retrieval entry point — the inline ChatService
     path. Validates args, runs _retrieve_core, and logs one
@@ -261,4 +249,5 @@ def retrieve(
         tenant_id=tenant_id,
         document_ids=document_ids,
         image_vector_store=image_vector_store,
+        collection=collection,
     )

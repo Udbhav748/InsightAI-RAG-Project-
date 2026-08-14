@@ -482,17 +482,26 @@ def _match_conversational_reply(query: str) -> str | None:
     return None
 
 
-def _build_diagnosis_query(prediction: VisionPrediction, user_query: str | None) -> str:
+from app.services.rag.router import extract_crop_context as _extract_crop_context
+
+
+def _build_diagnosis_query(
+    prediction: VisionPrediction,
+    user_query: str | None = None,
+    collection: str | None = None,
+) -> str:
     """Turn a vision prediction into the query fed to the existing
     retrieval pipeline. Includes crop, not just disease name: several
     LeafSense classes share a disease name across crops (e.g.
     "Bacterial_spot" exists for both peach and tomato, with different
     corpus content), so crop alone disambiguates which document's chunks
     should actually match."""
+    crop = collection or prediction.crop or _extract_crop_context(user_query) or "crop"
+    disease = prediction.disease
     base = (
-        f"{prediction.disease} on {prediction.crop}"
-        if prediction.disease != "healthy"
-        else f"healthy {prediction.crop}"
+        f"{disease} on {crop}"
+        if disease != "healthy"
+        else f"healthy {crop}"
     )
     return f"{base}. {user_query}" if user_query else base
 
@@ -501,6 +510,8 @@ def _build_diagnosis_query(prediction: VisionPrediction, user_query: str | None)
 class PlanDecision:
     action: str  # "conversational" | "retrieve" | "summarize" | "diagnose"
     document_id: str | None = None
+    crop: str | None = None
+    collection: str | None = None
 
 
 class ChatService:
@@ -622,15 +633,23 @@ class ChatService:
         history is accepted for a future planner that considers context,
         but isn't used by these checks today.
         """
+        crop = _extract_crop_context(query)
+        collection = crop
+
         if _match_conversational_reply(query) is not None:
-            return PlanDecision(action="conversational")
+            return PlanDecision(action="conversational", crop=crop, collection=collection)
 
         if _SUMMARIZE_RE.search(query):
             match = _DOCUMENT_ID_RE.search(query)
             if match:
-                return PlanDecision(action="summarize", document_id=match.group(0))
+                return PlanDecision(
+                    action="summarize",
+                    document_id=match.group(0),
+                    crop=crop,
+                    collection=collection,
+                )
 
-        return PlanDecision(action="retrieve")
+        return PlanDecision(action="retrieve", crop=crop, collection=collection)
 
     def _agent_executor_instance(self) -> AgentExecutor:
         """Lazily construct the AgentExecutor (services/agent_executor.py)
@@ -856,7 +875,8 @@ class ChatService:
         plan = self._plan(query, history)
         if not settings.agent_routing_enabled:
             return plan
-        routed = self._router_agent.decide(query, history)
+        crop = getattr(routed, "crop", None) or plan.crop
+        collection = getattr(routed, "collection", None) or plan.collection or crop
         if routed.action != plan.action or routed.document_id != plan.document_id:
             logger.info(
                 "router_decision",
@@ -865,11 +885,18 @@ class ChatService:
                         "planner_action": plan.action,
                         "routed_action": routed.action,
                         "document_id": routed.document_id,
+                        "crop": crop,
+                        "collection": collection,
                         "query_length": len(query),
                     }
                 },
             )
-        return PlanDecision(action=routed.action, document_id=routed.document_id)
+        return PlanDecision(
+            action=routed.action,
+            document_id=routed.document_id,
+            crop=crop,
+            collection=collection,
+        )
 
     def _research_handoff(
         self, query: str, confirm_web_search: bool, *, reason: str
@@ -1526,6 +1553,8 @@ class ChatService:
             }
             if document_ids is not None:
                 retrieve_kwargs["document_ids"] = document_ids
+            elif plan.collection:
+                retrieve_kwargs["collection"] = plan.collection
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
 
             steps_taken += 1  # grading
@@ -1838,6 +1867,8 @@ class ChatService:
             }
             if document_ids is not None:
                 retrieve_kwargs["document_ids"] = document_ids
+            elif plan.collection:
+                retrieve_kwargs["collection"] = plan.collection
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
             yield _trace_event("retrieval", {"chunk_count": len(chunks)})
 
@@ -2078,7 +2109,8 @@ class ChatService:
             steps_taken += 1  # vision inference
             prediction = diagnose_image(image_bytes, filename, content_type)
 
-            diagnosis_query = _build_diagnosis_query(prediction, query)
+            crop_context = prediction.crop if prediction.crop and prediction.crop != "unknown" else None
+            diagnosis_query = _build_diagnosis_query(prediction, query, collection=crop_context)
 
             steps_taken += 1  # retrieval
             chunks = retrieve(
@@ -2086,6 +2118,7 @@ class ChatService:
                 self._vector_store,
                 tenant_id=tenant_id,
                 image_vector_store=self._image_vector_store,
+                collection=crop_context,
             )
 
             steps_taken += 1  # grading

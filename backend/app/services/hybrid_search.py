@@ -122,6 +122,41 @@ def _min_max_normalize(scores: list[float]) -> list[float]:
     return [(score - lo) / (hi - lo) for score in scores]
 
 
+def reciprocal_rank_fusion(
+    ranked_lists: list[tuple[list[RetrievedChunk], float]],
+    k: int = 60,
+    top_k: int = 10,
+) -> list[RetrievedChunk]:
+    """Fuse multiple ranked lists of RetrievedChunk using Reciprocal Rank Fusion (RRF):
+
+    RRF(d) = sum_{m in M} (w_m / (k + rank_m(d)))
+
+    where:
+    - ranked_lists: list of (candidate_chunks, weight) tuples for each retrieval modality m in M
+    - rank_m(d): 1-based rank position of chunk d in list m (1, 2, ...)
+    - k: RRF smoothing constant (default 60)
+    - w_m: weight assigned to modality m
+    """
+    scores: dict[str, float] = {}
+    chunk_map: dict[str, RetrievedChunk] = {}
+
+    for results, weight in ranked_lists:
+        if weight <= 0.0 or not results:
+            continue
+        for rank, chunk in enumerate(results, start=1):
+            chunk_id = chunk.chunk_id
+            rrf_score = weight / (k + rank)
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + rrf_score
+            if chunk_id not in chunk_map:
+                chunk_map[chunk_id] = chunk
+
+    sorted_chunk_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
+    return [
+        chunk_map[cid].model_copy(update={"score": scores[cid]})
+        for cid in sorted_chunk_ids[:top_k]
+    ]
+
+
 def hybrid_search(
     query: str,
     vector_store: FAISSVectorStore,
@@ -130,44 +165,36 @@ def hybrid_search(
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
     image_vector_store: VectorStore | None = None,
+    rrf_k: int | None = None,
 ) -> list[RetrievedChunk]:
     """Fuse FAISS semantic search with BM25 lexical search, and (when CLIP
-    cross-modal retrieval is enabled) a third CLIP image-similarity signal.
+    cross-modal retrieval is enabled) a third CLIP image-similarity signal
+    using Reciprocal Rank Fusion (RRF).
 
     vector_store must be a FAISSVectorStore (or anything exposing the same
     .search()/.search_bm25() pair) — see the module docstring on why this
     isn't typed against the VectorStore ABC.
 
     Pulls candidate_k results from each retriever (Settings.retrieval_candidate_k
-    by default), min-max normalizes each set's scores independently, fuses
-    as a weighted sum (0 contribution from whichever side didn't return a
-    given chunk), dedupes by chunk_id, and returns the top_k fused results.
-    The returned RetrievedChunk.score is the fused score (roughly 0-1, the
-    same rough scale as cosine similarity) — not any input score directly,
-    so it stays meaningful to retrieval_min_score filtering and
-    ChatService._grade_retrieval downstream.
+    by default), calculates RRF rank scores per modality with smoothing constant
+    k (Settings.hybrid_rrf_k or rrf_k parameter, defaulting to 60), fuses
+    scores weighted by configured modality weights, dedupes by chunk_id, and
+    returns the top_k fused results.
 
-    Two-signal fusion (CLIP off / image_vector_store absent): score =
-    Settings.hybrid_semantic_weight * semantic + (1 - that) * bm25.
+    Two-signal fusion (CLIP off / image_vector_store absent):
+    w_sem = Settings.hybrid_semantic_weight, w_bm25 = 1 - w_sem.
+    RRF(d) = w_sem / (k + rank_sem(d)) + w_bm25 / (k + rank_bm25(d))
 
     Three-signal fusion (Settings.clip_embedding_enabled and
-    image_vector_store given): the query is embedded *in CLIP space*
-    (embed_text via clip_client), run against the image store, and fused as
-    score = w_clip * clip + (1 - w_clip) * (w_sem * semantic + (1 - w_sem)
-    * bm25), where w_clip = Settings.hybrid_clip_weight and w_sem =
-    Settings.hybrid_semantic_weight. What comes back from the image side
-    are image-derived chunks (source="clip_image", text = the figure's
-    caption or a placeholder) — so a query that matches an image purely by
-    visual semantics can surface that figure's content even when no text
-    chunk overlaps lexically. clip_weight=0 or an unreachable CLIP service
-    reproduces the two-signal behavior exactly (degrade, not fail).
-
-    tenant_id is passed through to all retrievers unchanged — see
-    FAISSVectorStore.search's docstring for its filtering semantics.
+    image_vector_store given):
+    w_clip = Settings.hybrid_clip_weight, w_sem = (1 - w_clip) * hybrid_semantic_weight,
+    w_bm25 = (1 - w_clip) * (1 - hybrid_semantic_weight).
+    RRF(d) = w_clip / (k + rank_clip(d)) + w_sem / (k + rank_sem(d)) + w_bm25 / (k + rank_bm25(d))
     """
     resolved_candidate_k = (
         candidate_k if candidate_k is not None else settings.retrieval_candidate_k
     )
+    resolved_rrf_k = rrf_k if rrf_k is not None else getattr(settings, "hybrid_rrf_k", 60)
     semantic_weight = settings.hybrid_semantic_weight
 
     start = time.perf_counter()
@@ -200,54 +227,24 @@ def hybrid_search(
             )
             clip_results = []
 
-    semantic_norm = _min_max_normalize([chunk.score for chunk in semantic_results])
-    bm25_norm = _min_max_normalize([chunk.score for chunk in bm25_results])
-    clip_norm = _min_max_normalize([chunk.score for chunk in clip_results])
+    if clip_weight > 0.0:
+        w_clip = clip_weight
+        w_sem = (1.0 - clip_weight) * semantic_weight
+        w_bm25 = (1.0 - clip_weight) * (1.0 - semantic_weight)
+        ranked_lists: list[tuple[list[RetrievedChunk], float]] = [
+            (semantic_results, w_sem),
+            (bm25_results, w_bm25),
+            (clip_results, w_clip),
+        ]
+    else:
+        w_sem = semantic_weight
+        w_bm25 = 1.0 - semantic_weight
+        ranked_lists = [
+            (semantic_results, w_sem),
+            (bm25_results, w_bm25),
+        ]
 
-    fused: dict[str, dict[str, Any]] = {}
-    for chunk, norm_score in zip(semantic_results, semantic_norm, strict=False):
-        fused[chunk.chunk_id] = {
-            "chunk": chunk,
-            "semantic": norm_score,
-            "bm25": 0.0,
-            "clip": 0.0,
-        }
-    for chunk, norm_score in zip(bm25_results, bm25_norm, strict=False):
-        entry = fused.get(chunk.chunk_id)
-        if entry is None:
-            fused[chunk.chunk_id] = {
-                "chunk": chunk,
-                "semantic": 0.0,
-                "bm25": norm_score,
-                "clip": 0.0,
-            }
-        else:
-            entry["bm25"] = norm_score
-    for chunk, norm_score in zip(clip_results, clip_norm, strict=False):
-        entry = fused.get(chunk.chunk_id)
-        if entry is None:
-            fused[chunk.chunk_id] = {
-                "chunk": chunk,
-                "semantic": 0.0,
-                "bm25": 0.0,
-                "clip": norm_score,
-            }
-        else:
-            entry["clip"] = norm_score
-
-    def _blend(entry: dict[str, Any]) -> float:
-        text_blend: float = (
-            semantic_weight * entry["semantic"] + (1.0 - semantic_weight) * entry["bm25"]
-        )
-        if clip_weight > 0.0:
-            # Scale the text blend down so three-way weights sum to 1.
-            return float(clip_weight * entry["clip"] + (1.0 - clip_weight) * text_blend)
-        return text_blend
-
-    scored = [(entry["chunk"], _blend(entry)) for entry in fused.values()]
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-
-    results = [chunk.model_copy(update={"score": score}) for chunk, score in scored[:top_k]]
+    results = reciprocal_rank_fusion(ranked_lists, k=resolved_rrf_k, top_k=top_k)
 
     processing_duration = time.perf_counter() - start
     logger.info(
@@ -256,6 +253,7 @@ def hybrid_search(
             "extra_fields": {
                 "query_length": len(query),
                 "candidate_k": resolved_candidate_k,
+                "rrf_k": resolved_rrf_k,
                 "top_k": top_k,
                 "semantic_candidate_count": len(semantic_results),
                 "bm25_candidate_count": len(bm25_results),

@@ -1,211 +1,173 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Leaf, RefreshCw, ScanLine } from 'lucide-react'
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  Calculator,
+  Camera,
+  CheckCircle2,
+  FileText,
+  FlaskConical,
+  Info,
+  Leaf,
+  RefreshCw,
+  ScanLine,
+  Sparkles,
+  Sprout,
+  UploadCloud,
+} from 'lucide-react'
 import Button from '../components/ui/Button'
-import CameraCapture from '../components/diagnose/CameraCapture'
+import ServiceHealthBanner from '../components/diagnose/ServiceHealthBanner'
+import UploadCameraArea from '../components/diagnose/UploadCameraArea'
 import DiagnosisResult from '../components/diagnose/DiagnosisResult'
+import SprayDosageCalculator from '../components/diagnose/SprayDosageCalculator'
 import useDiagnose from '../hooks/useDiagnose'
 
-const QUERY_MAX_HEIGHT = 200
-
 export default function Diagnose() {
-  const { previewUrl, query, status, result, errorMessage, selectImage, setQueryText, analyze, reset } =
-    useDiagnose()
-  const [showCamera, setShowCamera] = useState(true)
-  const queryRef = useRef(null)
+  const {
+    image,
+    previewUrl,
+    query,
+    status,
+    result,
+    errorMessage,
+    isLeafSenseOnline,
+    isCheckingHealth,
+    checkHealth,
+    selectImage,
+    clearImage,
+    setQueryText,
+    analyze,
+    reset,
+  } = useDiagnose()
 
-  useEffect(() => {
-    const el = queryRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, QUERY_MAX_HEIGHT)}px`
-  }, [query])
-
-  const handleSelect = (file) => {
-    selectImage(file)
-    setShowCamera(false)
-  }
+  const [showStandaloneCalculator, setShowStandaloneCalculator] = useState(false)
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 py-4">
-      <div className="text-center">
-        <h2 className="font-display text-2xl font-bold">Diagnose a plant leaf</h2>
-        <p className="mt-1.5 text-sm text-slate-500 dark:text-ink-muted">
-          Point the camera at a leaf, snap a photo, and the vision model will spot signs of disease —
-          then the RAG engine explains it using your uploaded documents.
+    <div className="mx-auto max-w-4xl space-y-6 py-4">
+      {/* Header */}
+      <div className="text-center space-y-2">
+        <div className="inline-flex items-center gap-2 rounded-full border border-accent-500/20 bg-accent-500/10 px-3 py-1 text-xs font-semibold text-accent-700 dark:text-accent-300">
+          <Sprout size={14} className="text-accent-600 dark:text-accent-400" />
+          <span>Agricultural Pathology & RAG Treatment Hub</span>
+        </div>
+        <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-ink-primary">
+          Plant Leaf Disease Diagnostic & Treatment Hub
+        </h1>
+        <p className="mx-auto max-w-2xl text-xs sm:text-sm text-slate-600 dark:text-ink-secondary">
+          Upload or capture a high-resolution leaf photo. The LeafSense deep vision network classifies the disease, and our agronomic RAG engine constructs an actionable, multi-stage treatment plan.
         </p>
       </div>
 
+      {/* 1. Service Health Warning Indicator (Port 8001) */}
+      <ServiceHealthBanner
+        isOnline={isLeafSenseOnline}
+        isChecking={isCheckingHealth}
+        onRecheck={checkHealth}
+      />
+
+      {/* Main Workflow Area */}
       <AnimatePresence mode="wait">
-        {status === 'idle' && (
+        {/* State: Idle / Preview / Analyzing */}
+        {(status === 'idle' || status === 'preview' || status === 'analyzing') && (
           <motion.div
-            key="idle"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="space-y-4"
+            key="upload-section"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.25 }}
+            className="space-y-6"
           >
-            <div className="flex justify-center gap-2">
-              <Button
-                variant={showCamera ? 'primary' : 'secondary'}
-                icon={ScanLine}
-                onClick={() => setShowCamera(true)}
-              >
-                Camera
-              </Button>
-              <Button
-                variant={!showCamera ? 'primary' : 'secondary'}
-                icon={Leaf}
-                onClick={() => setShowCamera(false)}
-              >
-                Upload a photo
-              </Button>
-            </div>
+            <UploadCameraArea
+              image={image}
+              previewUrl={previewUrl}
+              query={query}
+              status={status}
+              onSelectImage={selectImage}
+              onClearImage={clearImage}
+              onQueryChange={setQueryText}
+              onAnalyze={analyze}
+            />
 
-            {showCamera ? (
-              <CameraCapture onCapture={handleSelect} />
-            ) : (
-              <div className="panel flex flex-col items-center gap-4 rounded-panel px-6 py-12 text-center">
-                <span className="flex h-14 w-14 items-center justify-center rounded-xl border border-border-light bg-slate-900/5 text-slate-500 dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary">
-                  <Leaf size={26} strokeWidth={1.5} />
-                </span>
-                <div>
-                  <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
-                    Choose a leaf photo
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">
-                    JPG, PNG, or WEBP — a clear, well-lit close-up works best.
-                  </p>
+            {/* Standalone Spray Calculator Toggle when not diagnosing */}
+            {status === 'idle' && (
+              <div className="pt-2">
+                <div className="flex items-center justify-between border-t border-border-light pt-4 dark:border-border">
+                  <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-ink-secondary">
+                    <Calculator size={15} className="text-accent-500" />
+                    <span>Need to calculate chemical tank mix dosages without a photo?</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setShowStandaloneCalculator((prev) => !prev)}
+                  >
+                    {showStandaloneCalculator ? 'Hide Calculator' : 'Open Spray Calculator'}
+                  </Button>
                 </div>
-                <label className="btn-primary inline-flex h-10 cursor-pointer items-center gap-2 px-4.5 text-sm">
-                  <Leaf size={16} strokeWidth={2.25} />
-                  Browse files
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0]
-                      if (file) handleSelect(file)
-                      event.target.value = ''
-                    }}
-                  />
-                </label>
+
+                {showStandaloneCalculator && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-4"
+                  >
+                    <SprayDosageCalculator />
+                  </motion.div>
+                )}
               </div>
             )}
           </motion.div>
         )}
 
-        {status === 'preview' && (
+        {/* State: Error */}
+        {status === 'error' && (
           <motion.div
-            key="preview"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            key="error-section"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
             className="space-y-4"
           >
-            <div className="panel overflow-hidden rounded-panel">
-              <img
-                src={previewUrl}
-                alt="Leaf to diagnose"
-                className="max-h-80 w-full object-contain"
-              />
-            </div>
+            <div className="panel rounded-panel border border-rose-500/30 bg-rose-500/5 p-6 text-center shadow-soft dark:border-rose-500/30 dark:bg-rose-500/10">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-600 dark:text-rose-400">
+                <AlertCircle size={24} />
+              </div>
+              <h3 className="mt-3 font-display text-base font-bold text-slate-900 dark:text-ink-primary">
+                Diagnosis Request Could Not Be Completed
+              </h3>
+              <p className="mx-auto mt-1.5 max-w-md text-xs sm:text-sm text-slate-600 dark:text-ink-secondary">
+                {errorMessage}
+              </p>
 
-            <div className="panel rounded-panel p-4">
-              <label
-                htmlFor="diagnose-query"
-                className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-ink-muted"
-              >
-                Optional: add context (e.g. &quot;Is this tomato leaf safe to eat the fruit?&quot;)
-              </label>
-              <textarea
-                ref={queryRef}
-                id="diagnose-query"
-                rows={3}
-                value={query}
-                onChange={(event) => setQueryText(event.target.value)}
-                placeholder="Optional follow-up question..."
-                className="max-h-[200px] w-full resize-none rounded-lg border border-border-light bg-white/60 px-3 py-2.5 text-sm leading-relaxed text-slate-800 placeholder-slate-400 outline-none transition-colors focus:border-accent-500 focus:ring-2 focus:ring-accent-500/30 dark:border-border dark:bg-white/[0.03] dark:text-ink-primary dark:placeholder-ink-muted"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Button variant="ghost" icon={RefreshCw} onClick={reset}>
-                Retake
-              </Button>
-              <Button variant="primary" icon={ScanLine} onClick={analyze}>
-                Analyze leaf
-              </Button>
-            </div>
-          </motion.div>
-        )}
-
-        {status === 'analyzing' && (
-          <motion.div
-            key="analyzing"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="space-y-4"
-          >
-            <div className="panel overflow-hidden rounded-panel">
-              <img
-                src={previewUrl}
-                alt="Leaf being analyzed"
-                className="max-h-80 w-full object-contain opacity-60"
-              />
-            </div>
-
-            <div className="panel flex flex-col items-center gap-3 rounded-panel px-6 py-10 text-center">
-              <motion.span
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
-                className="flex h-14 w-14 items-center justify-center rounded-xl border border-accent-500/30 bg-accent-500/10 text-accent-500 dark:text-accent-400"
-              >
-                <ScanLine size={26} strokeWidth={1.75} />
-              </motion.span>
-              <div>
-                <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
-                  Analyzing your leaf photo...
-                </p>
-                <p className="mt-1 text-sm text-slate-500 dark:text-ink-muted">
-                  The vision model is examining the image — this can take a few seconds.
-                </p>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                <Button variant="primary" icon={RefreshCw} onClick={analyze}>
+                  Try Again
+                </Button>
+                <Button variant="ghost" onClick={reset}>
+                  Select Another Leaf Photo
+                </Button>
               </div>
             </div>
           </motion.div>
         )}
 
-        {(status === 'success' || status === 'error') && (
+        {/* State: Success -> Hero Card, 5-Tab Treatment Plan, and Calculator */}
+        {status === 'success' && result && (
           <motion.div
-            key="result"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="space-y-4"
+            key="result-section"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="space-y-6"
           >
-            {status === 'error' && (
-              <div className="panel rounded-panel p-5 text-center">
-                <p className="text-sm text-slate-600 dark:text-ink-secondary">{errorMessage}</p>
-                <div className="mt-4 flex justify-center gap-3">
-                  <Button variant="secondary" icon={RefreshCw} onClick={analyze}>
-                    Try again
-                  </Button>
-                  <Button variant="ghost" onClick={reset}>
-                    Choose another photo
-                  </Button>
-                </div>
-              </div>
-            )}
-            {status === 'success' && <DiagnosisResult result={result} onReset={reset} />}
+            <DiagnosisResult result={result} onReset={reset} query={query} />
           </motion.div>
         )}
       </AnimatePresence>
-
-      <p className="text-center text-[11px] text-slate-400 dark:text-ink-muted">
-        Photos are analyzed by the LeafSense vision model running alongside the RAG backend.
-      </p>
     </div>
   )
 }
