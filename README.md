@@ -199,41 +199,35 @@ frontend in another), then start LeafSense in a **third terminal** with
 its one-command launcher:
 
 ```powershell
-# in the LeafSense repo
+# in the LeafSense repo (Windows)
 backend/start.ps1
+
+# in the LeafSense repo (Linux / macOS)
+backend/start.sh
 ```
 
 Or start all three together in one command: from this repo's root (on
 Windows), `.\start-local.ps1` opens backend, frontend, and (if `../LeafSense`
 is checked out alongside this repo) LeafSense each in their own console
-window. This exists specifically because a forgotten third terminal was
-the recurring cause of Diagnose showing "the plant diagnosis service
-isn't running right now" — LeafSense is optional and easy to forget to
-start on its own.
+window.
 
-`start.ps1` creates a dedicated venv (`LeafSense/backend/.venv`) on first
-run, installs its requirements into it, and serves on port **8001** —
-LeafSense's own default of 8000 would collide with this backend's default
-port, and InsightAI's config already points at 8001. There's no
-docker-compose entry for LeafSense, by design: TensorFlow's install
-footprint is several hundred MB, which conflicts with this project's
-low-local-storage constraint — a native two-terminal workflow gets the
-same result without baking that into a container image everyone pulls.
+`start.ps1` and `start.sh` create a dedicated venv (`LeafSense/backend/.venv`) on first
+run, install requirements, warm up the Keras graph, and serve on port **8001** —
+LeafSense's own standalone default of 8000 would collide with this backend's default
+port, and InsightAI's config already points at 8001.
 
-InsightAI already expects the vision service at that default port, so no
-`backend/.env` change is needed unless you run LeafSense elsewhere:
+InsightAI connects to the vision service at:
 
 ```bash
-VISION_SERVICE_URL=http://localhost:8001
+VISION_SERVICE_URL=http://127.0.0.1:8001
 ```
 
 `VISION_SERVICE_TIMEOUT_SECONDS` (default `15`) and
 `VISION_CONFIDENCE_THRESHOLD` (default `0.5`) are also configurable — see
-Configuration below. InsightAI's corpus currently only covers apple,
-corn, potato, tomato, and peach; a diagnosis for a crop outside that set
-(LeafSense recognizes 38 classes across 14 crops) will still classify
-correctly but fall through to the normal "couldn't find that in the
-uploaded documents" reply once retrieval comes up empty.
+Configuration below. The knowledge base covers all **38 PlantVillage disease classes**
+across 12 crop collections with detailed extension guides and dosage matrices
+indexed into the vector store. Real-time diagnosis results and treatment plans
+stream via Server-Sent Events on `POST /chat/diagnose/stream`.
 
 ## Configuration
 
@@ -269,7 +263,7 @@ All backend configuration lives in `backend/.env` (see `backend/.env.example`), 
 | `GROQ_MODEL_NAME` | `llama-3.3-70b-versatile` | Groq model used for text generation. |
 | `GROQ_TIMEOUT_SECONDS` | `30` | Timeout for Groq API calls. |
 | `GROQ_COST_PER_1K_TOKENS` | `0.0006` | Estimated USD cost per 1,000 tokens for Groq. |
-| `VISION_SERVICE_URL` | `http://localhost:8001` | Base URL of the LeafSense vision service (separate repo/process). Not LeafSense's own default of `8000` — that collides with this backend's own default port. |
+| `VISION_SERVICE_URL` | `http://127.0.0.1:8001` | Base URL of the LeafSense vision service (separate repo/process). Not LeafSense's own default of `8000` — that collides with this backend's own default port. |
 | `VISION_SERVICE_TIMEOUT_SECONDS` | `15` | Timeout for calls to the vision service. |
 | `VISION_CONFIDENCE_THRESHOLD` | `0.5` | Below this confidence, a diagnosis is flagged `low_confidence: true` rather than presented as certain. |
 | `IMAGE_EXTRACTION_ENABLED` | `false` | Extracts embedded figures (and full-page rasters of low-text pages) from uploaded PDFs and persists the bytes under `IMAGE_STORAGE_DIR_NAME`. |

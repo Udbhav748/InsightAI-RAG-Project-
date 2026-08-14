@@ -104,17 +104,18 @@ its documented `{class, confidence}` shape — this propagates as a normal
 handler wiring needed. A prediction below `Settings.vision_confidence_threshold`
 is *not* an error — it still flows through to retrieval/generation, just
 flagged `low_confidence=True` on the response's `diagnosis` field so the
-caller can decide how much to trust it. A crop LeafSense recognizes but
-the corpus has no documents for (e.g. grape, cherry — InsightAI's corpus
-currently covers apple, corn, potato, tomato, peach) isn't special-cased
-either: it runs through the same retrieval-then-generate path as any
-off-topic text query and lands on the same fixed fallback reply, since
-`_build_diagnosis_query`'s output is just another string to `retrieve()`.
+caller can decide how much to trust it. The agricultural knowledge base
+covers all 38 PlantVillage disease classes across 12 crop collections
+(apple, bell pepper, blueberry, cherry, corn, grape, orange, peach,
+potato, raspberry, soybean, squash, strawberry, tomato) with full fact
+sheets and a treatment dosage reference matrix indexed into FAISS (749
+vectors).
 
-Ports: LeafSense's own default (`uvicorn main:app`, no `--port` flag) is
-**8000** — the same default this backend uses. `Settings.vision_service_url`
-defaults to `http://localhost:8001` specifically to avoid that collision;
-see the README for running both services together locally.
+Ports & Networking: LeafSense's default standalone port is **8001** to
+prevent collision with InsightAI's port 8000. `Settings.vision_service_url`
+defaults to `http://127.0.0.1:8001` (direct IPv4 binding avoiding IPv6
+resolution delays). Real-time progress is streamed via Server-Sent Events
+on `POST /chat/diagnose/stream`.
 
 ## Components
 

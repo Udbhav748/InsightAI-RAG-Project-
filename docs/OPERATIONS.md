@@ -759,3 +759,91 @@ above) + ~$1-2/month for a small EBS volume (20-30GB) + ~$3.60/month for an
 unattached-safe Elastic IP (free while attached to a running instance).
 Stated plainly, the same way the 512MB OOM incident above is stated
 plainly — in exchange for no cold starts and real persistent storage.
+
+## LeafSense Vision Service Deployment & Operations
+
+InsightAI-RAG integrates with **LeafSense** (a dedicated deep learning service
+serving a Hybrid CBAM + ViT + EfficientNetB0 plant pathology model across 38
+disease classes).
+
+### Architecture & Service Isolation
+
+- **Microservice Separation**: LeafSense runs in its own dedicated Python virtual
+  environment (`LeafSense/backend/.venv`) on **port 8001** to prevent TensorFlow /
+  PyTorch / CUDA dependency and port collisions with InsightAI-RAG (port 8000).
+- **Communication Protocol**: InsightAI-RAG communicates with LeafSense over
+  HTTP via `app/services/vision_client.py`.
+- **Health & Diagnostic Probes**: `GET /health/vision` on InsightAI-RAG actively
+  monitors LeafSense availability with a 5-second TTL cache, surfacing real-time
+  service status to the `/diagnose` frontend UI.
+
+### Key Performance Optimizations
+
+1. **Sub-Second Vision Inference**:
+   - LeafSense's `backend/main.py` uses direct tensor graph execution
+     `MODEL(img_batch, training=False).numpy()` rather than `MODEL.predict()`,
+     eliminating dataset iterator and tracing overhead (~0.3s vs 3.5s+).
+   - Startup dummy tensor execution warms up the Keras graph during service
+     boot, guaranteeing zero cold-start delay for the first diagnosis query.
+2. **Direct IPv4 Binding**:
+   - `Settings.vision_service_url` defaults to `http://127.0.0.1:8001` (avoiding
+     Windows / Linux IPv6 `::1` socket timeout delays).
+3. **HTTP Keep-Alive & Connection Pooling**:
+   - `vision_client.py` uses a persistent `httpx.Client` session pool with
+     keep-alive enabled, eliminating TCP/TLS handshake latency on repeated scans.
+
+### Local Startup
+
+Run all services together from the repository root:
+```powershell
+.\start-local.ps1
+```
+Or start LeafSense independently:
+- **Windows**: `cd LeafSense/backend && .\start.ps1`
+- **Linux / macOS**: `cd LeafSense/backend && ./start.sh`
+
+### Production Deployment & Systemd Service
+
+When deploying LeafSense on a production VM / EC2 instance alongside InsightAI-RAG:
+
+1. **Systemd Service (`/etc/systemd/system/leafsense.service`)**:
+   ```ini
+   [Unit]
+   Description=LeafSense Vision Service
+   After=network.target
+
+   [Service]
+   User=ubuntu
+   WorkingDirectory=/home/ubuntu/LeafSense/backend
+   ExecStart=/home/ubuntu/LeafSense/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1
+   Restart=always
+   RestartSec=5
+   Environment="PYTHONUNBUFFERED=1"
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+   Enable and start:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now leafsense
+   ```
+
+2. **Configure InsightAI-RAG Environment**:
+   In `backend/.env`:
+   ```ini
+   VISION_SERVICE_URL=http://127.0.0.1:8001
+   VISION_SERVICE_TIMEOUT_SECONDS=15
+   VISION_CONFIDENCE_THRESHOLD=0.5
+   ```
+   *(For multi-container Docker deployments, set `VISION_SERVICE_URL=http://leafsense:8001`)*.
+
+3. **Verify Deployment Health**:
+   ```bash
+   # 1. Check LeafSense directly
+   curl http://127.0.0.1:8001/model-info
+
+   # 2. Check Vision connectivity through InsightAI-RAG
+   curl http://127.0.0.1:8000/health/vision
+   ```
+
