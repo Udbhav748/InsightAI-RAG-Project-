@@ -44,9 +44,13 @@ export default function useDiagnose() {
     }
   }, [])
 
+  // Auto-poll health: every 3s if offline (to catch startup instantly), every 20s if online
   useEffect(() => {
     checkHealth()
-  }, [checkHealth])
+    const intervalMs = isLeafSenseOnline ? 20000 : 3000
+    const interval = setInterval(checkHealth, intervalMs)
+    return () => clearInterval(interval)
+  }, [checkHealth, isLeafSenseOnline])
 
   const selectImage = useCallback(
     (file) => {

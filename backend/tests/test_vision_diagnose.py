@@ -386,7 +386,7 @@ class TestDiagnoseEndpointE2E:
         )
 
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("leaf.jpg", b"fake-jpeg-image-bytes", "image/jpeg")},
             data={"query": "What treatment is needed?"},
@@ -413,7 +413,7 @@ class TestDiagnoseEndpointE2E:
         )
 
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("potato.png", b"fake-png-image-bytes", "image/png")},
         )
@@ -427,7 +427,7 @@ class TestDiagnoseEndpointE2E:
     def test_post_diagnose_invalid_mime_type_rejected(self, diagnose_api_client):
         """Uploading a non-image file (e.g. text/plain) is rejected with 415 or 400."""
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("notes.txt", b"plain text data", "text/plain")},
         )
@@ -438,7 +438,7 @@ class TestDiagnoseEndpointE2E:
     def test_post_diagnose_empty_image_rejected(self, diagnose_api_client):
         """Uploading an empty file is rejected with 400."""
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("empty.jpg", b"", "image/jpeg")},
         )
@@ -456,7 +456,7 @@ class TestDiagnoseEndpointE2E:
         monkeypatch.setattr(vision_client_module.httpx, "post", _raise_connect_error)
 
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("leaf.jpg", b"fake-jpeg-image-bytes", "image/jpeg")},
         )
@@ -477,7 +477,7 @@ class TestDiagnoseEndpointE2E:
         monkeypatch.setattr(vision_client_module.httpx, "post", _raise_timeout)
 
         response = diagnose_api_client.post(
-            "/api/v1/chat/diagnose",
+            "/chat/diagnose",
             headers=VALID_HEADERS,
             files={"image": ("leaf.jpg", b"fake-jpeg-image-bytes", "image/jpeg")},
         )

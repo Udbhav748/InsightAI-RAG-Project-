@@ -15,6 +15,7 @@ from fastapi import APIRouter
 from app.core.config import settings
 from app.core.database import db_enabled
 from app.services.document_service import is_tesseract_available
+from app.services.vision_client import is_leafsense_online
 
 router = APIRouter()
 
@@ -53,7 +54,24 @@ def health_check() -> dict[str, Any]:
             "vision_qa_enabled": settings.vision_qa_enabled,
             "ocr_available": is_tesseract_available(),
         },
+        "vision_service": {
+            "url": settings.vision_service_url,
+            "online": is_leafsense_online(),
+            "has_gemini_fallback": bool(settings.gemini_api_key),
+        },
     }
     if db_enabled():
         body["database"] = "connected"
     return body
+
+
+@router.get("/health/vision", tags=["Health"])
+def vision_health_check() -> dict[str, Any]:
+    """Dedicated health check for the LeafSense deep vision network."""
+    online = is_leafsense_online()
+    return {
+        "online": online,
+        "url": settings.vision_service_url,
+        "has_gemini_fallback": bool(settings.gemini_api_key),
+        "status": "online" if online else "offline",
+    }

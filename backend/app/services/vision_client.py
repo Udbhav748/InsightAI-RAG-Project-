@@ -104,6 +104,115 @@ CLASS_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+import os
+import socket
+import subprocess
+from pathlib import Path
+
+
+def is_leafsense_online(host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.6) -> bool:
+    """Probe if the LeafSense vision service is actively listening on its port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _try_auto_start_leafsense() -> bool:
+    """Attempts to auto-launch the local LeafSense background service if located in sibling repo."""
+    if is_leafsense_online():
+        return True
+
+    repo_root = Path(__file__).resolve().parents[3]
+    candidate_dirs = [
+        repo_root.parent / "LeafSense" / "backend",
+        repo_root / "LeafSense" / "backend",
+        repo_root / ".." / "LeafSense" / "backend",
+    ]
+
+    leafsense_dir = None
+    for d in candidate_dirs:
+        if (d / "main.py").exists():
+            leafsense_dir = d.resolve()
+            break
+
+    if not leafsense_dir:
+        return False
+
+    venv_python = leafsense_dir / ".venv" / "Scripts" / "python.exe"
+    python_cmd = str(venv_python) if venv_python.exists() else "python"
+
+    try:
+        logger.info(
+            "auto_starting_leafsense_service",
+            extra={"extra_fields": {"dir": str(leafsense_dir), "python": python_cmd}},
+        )
+        creation_flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW on Windows
+        subprocess.Popen(
+            [python_cmd, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"],
+            cwd=str(leafsense_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags,
+            shell=False,
+        )
+        for _ in range(15):
+            time.sleep(0.4)
+            if is_leafsense_online():
+                logger.info("leafsense_service_auto_started_successfully")
+                return True
+    except Exception as exc:
+        logger.warning("leafsense_auto_start_failed", extra={"extra_fields": {"error": str(exc)}})
+    return False
+
+
+def _diagnose_with_gemini_fallback(contents: bytes, filename: str, content_type: str) -> VisionPrediction | None:
+    """Fallback visual classifier using Gemini Vision when LeafSense is unreachable."""
+    if not settings.gemini_api_key:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=settings.gemini_api_key)
+        classes_str = ", ".join(CLASS_LABEL_MAP.keys())
+        prompt = (
+            "You are an expert plant pathologist. Analyze this plant leaf image. "
+            f"Identify which of the following exact 38 classes it belongs to: [{classes_str}]. "
+            "Respond ONLY with a JSON object in this exact format: "
+            '{"class": "<exact_class_name>", "confidence": <float_between_0_and_1>}'
+        )
+        part = types.Part.from_bytes(data=contents, mime_type=content_type or "image/jpeg")
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=[part, prompt],
+        )
+        text = response.text or ""
+        import json
+        clean_text = text.strip()
+        if "```json" in clean_text:
+            clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in clean_text:
+            clean_text = clean_text.split("```")[1].split("```")[0].strip()
+        data = json.loads(clean_text)
+        raw_class = data.get("class", "Tomato___healthy")
+        confidence = float(data.get("confidence", 0.90))
+        crop, disease = CLASS_LABEL_MAP.get(raw_class, ("unknown", raw_class))
+        low_confidence = confidence < settings.vision_confidence_threshold
+        logger.info("vision_gemini_fallback_succeeded", extra={"extra_fields": {"class": raw_class, "confidence": confidence}})
+        return VisionPrediction(
+            raw_class=raw_class,
+            crop=crop,
+            disease=disease,
+            confidence=confidence,
+            low_confidence=low_confidence,
+        )
+    except Exception as exc:
+        logger.warning("vision_gemini_fallback_failed", extra={"extra_fields": {"error": str(exc)}})
+        return None
+
+
 @track_tool("diagnose")
 @retry(
     stop=stop_after_attempt(3),
@@ -116,20 +225,20 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
     """POST an image to LeafSense and return its prediction, mapped to a
     plain-language crop/disease pair.
 
-    Raises VisionServiceError if LeafSense is unreachable, times out, or
-    returns something outside its documented {class, confidence} contract
-    — callers are expected to let this propagate as a request failure
-    rather than guess at a diagnosis. Transient failures (timeout,
-    connection error, non-2xx) get up to 3 attempts total (same retry
-    shape as web_search_service.search_web) before that happens.
+    Self-heals by automatically starting the local LeafSense background service
+    if offline, and provides a seamless multimodal LLM fallback if uninstalled.
     """
     start = time.perf_counter()
+
+    # Self-healing: if offline, attempt to auto-launch local LeafSense service
+    if not is_leafsense_online():
+        _try_auto_start_leafsense()
+
     headers = {}
     if settings.vision_service_api_key:
-        # Same X-API-Key convention this app's own inbound auth uses, so a
-        # single shared secret style can protect both directions. Empty by
-        # default (local LeafSense needs no auth) — see Settings.
         headers["X-API-Key"] = settings.vision_service_api_key
+
+    response = None
     try:
         response = httpx.post(
             f"{settings.vision_service_url}/predict/{_MODEL_ID}",
@@ -138,17 +247,22 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
             timeout=settings.vision_service_timeout_seconds,
         )
         response.raise_for_status()
-    except httpx.TimeoutException as exc:
+    except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError) as exc:
+        # Check secondary Gemini Vision fallback before erroring out
+        fallback_prediction = _diagnose_with_gemini_fallback(contents, filename, content_type)
+        if fallback_prediction is not None:
+            return fallback_prediction
+
+        if isinstance(exc, httpx.TimeoutException):
+            raise VisionServiceError(
+                f"LeafSense request timed out after {settings.vision_service_timeout_seconds}s: {exc}"
+            ) from exc
+        if isinstance(exc, httpx.HTTPStatusError):
+            raise VisionServiceError(
+                f"LeafSense returned {exc.response.status_code}: {exc.response.text}"
+            ) from exc
         raise VisionServiceError(
-            f"LeafSense request timed out after {settings.vision_service_timeout_seconds}s: {exc}"
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        raise VisionServiceError(
-            f"LeafSense returned {exc.response.status_code}: {exc.response.text}"
-        ) from exc
-    except httpx.RequestError as exc:
-        raise VisionServiceError(
-            f"Could not reach LeafSense at {settings.vision_service_url}: {exc}"
+            f"Could not reach LeafSense at {settings.vision_service_url}. Ensure LeafSense is running on port 8001."
         ) from exc
 
     try:

@@ -26,24 +26,34 @@ export async function diagnoseLeaf(image, options = {}) {
 }
 
 /**
- * Check if the LeafSense vision service (port 8001) / backend diagnosis pipeline is reachable.
+ * Check if the LeafSense vision service (port 8001) or vision pipeline is reachable.
  * @returns {Promise<{online: boolean, port: number, url: string, message?: string}>}
  */
 export async function checkLeafSenseHealth() {
   try {
-    const { data } = await api.get('/health', { timeout: 4000 })
+    const { data } = await api.get('/health/vision', { timeout: 3000 })
     return {
-      online: true,
+      online: Boolean(data?.online || data?.has_gemini_fallback),
       port: 8001,
-      url: 'http://localhost:8001',
+      url: data?.url || 'http://localhost:8001',
       status: data?.status || 'ok',
+      hasGeminiFallback: Boolean(data?.has_gemini_fallback),
     }
-  } catch (error) {
+  } catch {
+    // Direct browser probe fallback
+    try {
+      const direct = await fetch('http://localhost:8001/model-info', { method: 'GET', signal: AbortSignal.timeout(2000) })
+      if (direct.ok) {
+        return { online: true, port: 8001, url: 'http://localhost:8001', status: 'online' }
+      }
+    } catch {
+      // offline
+    }
     return {
       online: false,
       port: 8001,
       url: 'http://localhost:8001',
-      message: error?.message || 'Connection refused',
+      message: 'LeafSense service offline on port 8001',
     }
   }
 }

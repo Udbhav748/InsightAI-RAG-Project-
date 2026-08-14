@@ -24,6 +24,9 @@ import os
 # thing pytest loads in this directory, before test collection), since
 # Settings() and database.py's engine are both built once at import time.
 os.environ["DATABASE_URL"] = ""
+os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
+os.environ.setdefault("API_KEY", "test-secret-key")
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-key-for-testing-only-1234567890")
 
 import pytest
 
