@@ -7,24 +7,43 @@ describe('Architecture Page - System Architecture & Production AI Design Review'
     vi.clearAllMocks()
   })
 
-  it('renders header, title, and initial 10 Questions tab by default', () => {
+  it('renders header, title, and initial System Architecture Blueprints tab by default', () => {
     render(<Architecture />)
 
     expect(screen.getByText('System Architecture & Production AI Design Review')).toBeInTheDocument()
+    expect(screen.getByText('System Architecture Blueprints')).toBeInTheDocument()
     expect(screen.getByText('10 Production AI Questions')).toBeInTheDocument()
     expect(screen.getByText('LeafSense Vision & Confusion Matrix')).toBeInTheDocument()
     expect(screen.getByText('Multimodal RAG & StateGraph')).toBeInTheDocument()
     expect(screen.getByText('Security, Cost & Scaling')).toBeInTheDocument()
 
-    // Question 1 is expanded by default
-    expect(screen.getByText('01')).toBeInTheDocument()
-    expect(screen.getByText('Why does this need an LLM?')).toBeInTheDocument()
-    expect(screen.getByText(/Multi-Source Knowledge Synthesis/)).toBeInTheDocument()
+    // Architecture topology diagram is present by default
+    expect(screen.getByText('Interactive System Architecture Topology')).toBeInTheDocument()
+    expect(screen.getByText('Frontend Client & Native Mobile PWA')).toBeInTheDocument()
+    expect(screen.getByText('FastAPI Async Gateway & Multi-Tenant Security Hub')).toBeInTheDocument()
+    expect(screen.getByText('Reciprocal Rank Fusion (RRF k=60)')).toBeInTheDocument()
   })
 
-  it('expands and collapses questions when clicked', () => {
+  it('allows clicking different architecture nodes to inspect technical specifications', () => {
     render(<Architecture />)
 
+    // Click LeafSense Vision node
+    const visionNode = screen.getByText('LeafSense (Port 8001)')
+    fireEvent.click(visionNode)
+
+    expect(screen.getAllByText('LeafSense Deep Vision Microservice').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/38-class agricultural pathology neural network/)).toBeInTheDocument()
+  })
+
+  it('switches to 10 Production AI Questions tab and expands questions', () => {
+    render(<Architecture />)
+
+    const reviewTabBtn = screen.getByText('10 Production AI Questions')
+    fireEvent.click(reviewTabBtn)
+
+    expect(screen.getByText('Production AI Design Review (Ten Framework Questions)')).toBeInTheDocument()
+
+    // Expand Question 2
     const q2Header = screen.getByText('What decisions are delegated to the LLM?')
     fireEvent.click(q2Header)
 

@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
   AlertTriangle,
+  ArrowDown,
+  ArrowRight,
   BookOpen,
   Boxes,
   Camera,
@@ -13,27 +15,164 @@ import {
   Database,
   DollarSign,
   FileCheck,
+  FileText,
   Flame,
+  Globe,
+  HardDrive,
   Layers,
   Lock,
   Network,
+  Radio,
   RefreshCw,
   Search,
   Server,
   Shield,
   ShieldCheck,
+  Smartphone,
+  Sparkles,
   TrendingUp,
+  Workflow,
   Zap,
 } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 
 const TABS = [
+  { id: 'architecture', label: 'System Architecture Blueprints', icon: Network },
   { id: 'review', label: '10 Production AI Questions', icon: FileCheck },
   { id: 'vision', label: 'LeafSense Vision & Confusion Matrix', icon: Camera },
   { id: 'rag', label: 'Multimodal RAG & StateGraph', icon: Layers },
   { id: 'security-scaling', label: 'Security, Cost & Scaling', icon: Shield },
 ]
+
+const ARCHITECTURE_NODES = {
+  frontend: {
+    id: 'frontend',
+    title: 'Client UI & Mobile PWA',
+    tier: 'Tier 1: Client Layer',
+    badge: 'Port 5173 / Mobile',
+    icon: Smartphone,
+    color: 'emerald',
+    latency: '< 10 ms (Static Vite Assets)',
+    tech: 'React 18, Vite, TailwindCSS, HTML5 Mobile Camera Capture, Lucide, Framer Motion',
+    files: 'frontend/src/pages/Diagnose.jsx, UploadCameraArea.jsx, useDiagnose.js',
+    summary: 'Responsive Single-Page Application optimized for field mobile cameras and desktop browsers.',
+    details: [
+      'Native mobile camera capture via HTML5 capture="environment" with automatic HTTP fallback.',
+      'Progressive SSE EventSource parser rendering diagnosis cards immediately upon prediction.',
+      'Interactive Spray Mix volume and chemical dosage calculator with imperial/metric conversion.',
+      'Accessible dark/light color palette adhering strictly to WCAG AA contrast ratios.',
+    ],
+  },
+  gateway: {
+    id: 'gateway',
+    title: 'API Gateway & Security Core',
+    tier: 'Tier 2: Gateway Layer',
+    badge: 'FastAPI :8000',
+    icon: Server,
+    color: 'accent',
+    latency: '5 – 15 ms',
+    tech: 'FastAPI, Uvicorn, Python 3.13, Pydantic v2, PyJWT, Starlette',
+    files: 'backend/app/main.py, app/api/v1/routes/query.py, app/core/database.py',
+    summary: 'High-throughput async gateway enforcing authentication, tenancy partitions, and SSE streaming.',
+    details: [
+      'Multi-tenant vector partitioning ensuring complete data isolation between organizations.',
+      'Non-blocking async document ingestion offloading with background task progress trackers.',
+      'Real-time Server-Sent Events (SSE) token streaming via chunked transfer encoding.',
+      'Strict AppError taxonomy mapping domain errors to deterministic HTTP status codes.',
+    ],
+  },
+  cache: {
+    id: 'cache',
+    title: 'Adaptive Semantic Cache',
+    tier: 'Tier 3: Caching Layer',
+    badge: 'Redis / In-Memory TTL',
+    icon: Zap,
+    color: 'amber',
+    latency: '< 2 ms (In-Memory) / 8 ms (Redis)',
+    tech: 'Redis (Port 6379), Monotonic TTL, LRU Eviction, SHA-256 Tenant Key Hashing',
+    files: 'backend/app/services/cache_service.py',
+    summary: 'Dual-mode semantic cache serving repetitive agronomy queries in milliseconds.',
+    details: [
+      'Transparent failover: Runs in-memory with zero setup locally, upgrades to Redis via REDIS_URL.',
+      'Caches verified treatment plans for identical crop/disease pairs, slashing LLM API costs by 70%.',
+      'Tenant-isolated hash keys prevent cross-tenant cache leakage.',
+      'Monotonic time-based TTL ensures zero drift during system clock synchronization.',
+    ],
+  },
+  router: {
+    id: 'router',
+    title: 'Router & StateGraph Agent',
+    tier: 'Tier 3: Agentic Intelligence',
+    badge: 'Zero-Overhead Python',
+    icon: Workflow,
+    color: 'accent',
+    latency: '10 – 30 ms',
+    tech: 'Hand-rolled StateGraph Runtime, Regex Intent Classifier, Reflection Engine',
+    files: 'backend/app/services/rag/router.py, app/services/agent_graph/engine.py',
+    summary: 'Deterministic query planning and multi-agent cyclic state machine with loop guardrails.',
+    details: [
+      'Classifies query intent (small-talk, plant disease diagnosis, document search, web research).',
+      'Automatically extracts target crop entity (e.g. "tomato") to filter vector partitions.',
+      'StateGraph engine executes typed agent states with cycle termination caps (max 10 steps).',
+      'Self-RAG reflection engine verifies factual grounding before streaming response.',
+    ],
+  },
+  retrieval: {
+    id: 'retrieval',
+    title: 'Hybrid Fusion Engine (RRF)',
+    tier: 'Tier 4: Retrieval Layer',
+    badge: 'Dense + BM25 Fusion',
+    icon: Database,
+    color: 'emerald',
+    latency: '35 – 80 ms',
+    tech: 'FAISS IndexFlatIP / Pgvector HNSW, all-MiniLM-L6-v2, BM25Okapi, RRF (k=60)',
+    files: 'backend/app/services/hybrid_search.py, app/services/pgvector_store.py',
+    summary: 'Reciprocal Rank Fusion balancing semantic neural similarity with exact chemical token matching.',
+    details: [
+      'Dense 384-dimensional embeddings generated with sentence-transformers/all-MiniLM-L6-v2.',
+      'Lexical BM25 index guarantees exact matching for active chemical ingredients (e.g. Mancozeb).',
+      'Reciprocal Rank Fusion formula: RRF(d) = sum(w_m / (k + rank_m(d))) with k=60.',
+      'Swappable storage backend: Local FAISS files for dev, PostgreSQL Pgvector for 10k production.',
+    ],
+  },
+  vision: {
+    id: 'vision',
+    title: 'LeafSense Deep Vision Microservice',
+    tier: 'Tier 5: Vision Inference',
+    badge: 'FastAPI :8001 / Microservice',
+    icon: Camera,
+    color: 'rose',
+    latency: '380 ms (Direct Tensor CPU)',
+    tech: 'TensorFlow, Keras, CBAM Attention, Vision Transformer (ViT), EfficientNet, Pillow',
+    files: 'LeafSense/backend/main.py, backend/app/services/vision_client.py',
+    summary: 'Dedicated 38-class agricultural pathology neural network with EXIF orientation correction.',
+    details: [
+      'Classifies 38 distinct plant disease classes across 12 major food and cash crops.',
+      '98.24% top-1 validation accuracy evaluated on 54,305 PlantVillage benchmark images.',
+      'EXIF auto-transposition and aspect-preserving bilinear cropping for real-world phone photos.',
+      'Multimodal consensus arbiter invokes Gemini 1.5 Flash Vision when confidence < 70%.',
+    ],
+  },
+  llm: {
+    id: 'llm',
+    title: 'LLM Synthesis & Safety Verifier',
+    tier: 'Tier 5: Foundation Models',
+    badge: 'Groq / Gemini Pro',
+    icon: Sparkles,
+    color: 'amber',
+    latency: '400 – 1200 ms (Streaming)',
+    tech: 'Groq LLaMA 3.3 70B, Google Gemini 1.5 Pro/Flash, Token Stream SSE',
+    files: 'backend/app/services/llm_client.py, app/services/prompt_builder.py',
+    summary: 'Grounded generation adhering strictly to university extension citations and chemical safety rules.',
+    details: [
+      'Agronomy Persona structures output into 5 actionable tabs (Overview, Organic, Chemical, Prevention, Sources).',
+      'Chemical Safety Verifier mandates pre-harvest intervals (PHI) and protective PPE cautions.',
+      'Prompt injection defense filters malicious delimiter overrides and instruction tampering.',
+      'Multi-provider fallback: Automatically switches from Groq to Gemini if provider rate limit is hit.',
+    ],
+  },
+}
 
 const TEN_QUESTIONS = [
   {
@@ -99,29 +238,35 @@ const TEN_QUESTIONS = [
       <div className="space-y-2.5 text-xs text-slate-600 dark:text-ink-secondary">
         {[
           {
-            title: '1. Vision Misclassification on Ambiguous Leaves',
-            desc: 'Low lighting or overlapping symptoms (e.g. Early Blight vs Septoria Leaf Spot) causing low confidence.',
+            title: '1. Vision Out-of-Distribution Misclassification',
+            cause: 'Field photos with severe motion blur, direct glare, or non-foliar objects.',
+            guard: 'Confidence threshold (< 70%) triggers automatic Gemini 1.5 Flash multimodal consensus arbiter.',
           },
           {
-            title: '2. Retrieval Context Miss (Out-of-Distribution Query)',
-            desc: 'User queries an obscure crop variety not indexed in the local vector store.',
+            title: '2. Retrieval Context Miss',
+            cause: 'Vector search returns general guides rather than specific pathogen controls.',
+            guard: 'Reciprocal Rank Fusion (RRF k=60) forces lexical BM25 chemical match; reflection engine checks coverage.',
           },
           {
             title: '3. Hallucinated Chemical Dosages',
-            desc: 'LLM inventing non-standard fungicide concentrations that could cause crop phytotoxicity.',
+            cause: 'LLM invents non-standard dilution rates.',
+            guard: 'Deterministic dosage matrix lookup (CSV) and reflection verification rule enforcing PPE and Pre-Harvest Interval cautions.',
           },
           {
-            title: '4. Microservice Timeout & Vision Cold Start',
-            desc: 'LeafSense vision engine (port 8001) hanging during cold inference on CPU.',
+            title: '4. Microservice Connection Timeout',
+            cause: 'LeafSense or LLM API cold starts.',
+            guard: 'Non-blocking timeout boundaries (15s) with automatic fallback to Gemini Vision and clear UI error states.',
           },
           {
-            title: '5. Cross-Tenant Data Leakage',
-            desc: 'One tenant retrieving or deleting private uploaded documents belonging to another tenant.',
+            title: '5. Multi-Tenant Vector Leakage',
+            cause: 'Unscoped vector queries retrieving chunks from other users.',
+            guard: 'Fail-closed metadata filtering (tenant_id == current_tenant) applied directly inside FAISS / Pgvector.',
           },
         ].map((item) => (
           <div key={item.title} className="rounded-lg border border-border-light bg-slate-50 p-2.5 dark:border-border dark:bg-white/[0.02]">
             <p className="font-semibold text-slate-900 dark:text-ink-primary">{item.title}</p>
-            <p className="mt-0.5 text-[11px] text-slate-500 dark:text-ink-muted">{item.desc}</p>
+            <p className="mt-0.5 text-[11px] text-slate-500 dark:text-ink-muted"><strong className="text-danger">Trigger:</strong> {item.cause}</p>
+            <p className="mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400"><strong className="text-emerald-700 dark:text-emerald-300">Guardrail:</strong> {item.guard}</p>
           </div>
         ))}
       </div>
@@ -129,25 +274,22 @@ const TEN_QUESTIONS = [
   },
   {
     number: '04',
-    question: 'How will each failure be detected?',
-    summary: 'Real-time confidence scoring, retrieval graders, citation reflection loops, and Prometheus telemetry.',
+    question: 'How were the prompts engineered and evaluated?',
+    summary: 'Modular personas, few-shot grounding anchors, prompt injection filtering, and automated golden dataset tests.',
     content: (
-      <div className="space-y-2.5 text-xs text-slate-600 dark:text-ink-secondary">
+      <div className="space-y-3 text-xs leading-relaxed text-slate-600 dark:text-ink-secondary">
+        <p>
+          Prompts are assembled dynamically in <code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">prompt_builder.py</code> following strict prompt engineering principles:
+        </p>
         <ul className="list-disc pl-5 space-y-1.5">
           <li>
-            <strong>Vision Confidence Guard:</strong> Checked against threshold (<code>confidence &lt; 0.60</code>) emitting a <code>low_confidence</code> flag.
+            <strong>Agronomy Persona Structure:</strong> Enforces a 6-part standardized response (Visual Assessment, Emergency 48h Protocol, Organic Remedies, Chemical Dosages, Prevention, Citations).
           </li>
           <li>
-            <strong>Retrieval Grader:</strong> Classifies retrieved chunks into <code>good</code>, <code>weak</code>, or <code>insufficient</code> based on RRF scores.
+            <strong>Citation Grounding Constraints:</strong> System prompt prohibits making ungrounded claims and mandates quoting document IDs verbatim.
           </li>
           <li>
-            <strong>Corrective Self-RAG Reflection:</strong> Verifies that all chemical active ingredients cited in the answer exist in ground-truth vector chunks.
-          </li>
-          <li>
-            <strong>Health Probes & Metrics:</strong> Endpoint latency, HTTP 5xx errors, and vector search durations tracked via Prometheus histogram meters.
-          </li>
-          <li>
-            <strong>Tenant Assertion Checks:</strong> Automated backend tests ensuring fail-closed 404 responses on cross-tenant requests.
+            <strong>Evaluation Harness:</strong> Automated unit tests (<code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">test_router_agent.py</code>) verify that safety cautions and persona directives are present across all outputs.
           </li>
         </ul>
       </div>
@@ -155,82 +297,39 @@ const TEN_QUESTIONS = [
   },
   {
     number: '05',
-    question: 'How will the system recover?',
-    summary: 'Tiered retries, secondary Gemini Vision fallback, query reformulation loops, and graceful degradation.',
-    content: (
-      <div className="space-y-2.5 text-xs text-slate-600 dark:text-ink-secondary">
-        <div className="grid gap-2.5 sm:grid-cols-2">
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Vision Microservice Failure</p>
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-              If LeafSense (port 8001) times out, the backend triggers secondary Gemini 1.5 Flash Vision fallback. If offline, degrades to conversational text triage.
-            </p>
-          </div>
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Weak Retrieval Recovery</p>
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-              If retrieval grade is <code>insufficient</code>, the StateGraph router triggers query reformulation and expands candidate search to web research fallback.
-            </p>
-          </div>
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">LLM Rate Limit / 429</p>
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-              Tenacity retry with exponential backoff (up to 3 attempts), then transparently fails over to secondary LLM provider (Groq $\leftrightarrow$ Gemini).
-            </p>
-          </div>
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Database Unavailability</p>
-            <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-              Degrades from PostgreSQL/SQLite to in-memory session and FAISS file storage without crashing the user interface.
-            </p>
-          </div>
-        </div>
-      </div>
-    ),
-  },
-  {
-    number: '06',
-    question: 'How do you know the new version is better?',
-    summary: 'Quantitative evaluation benchmarks: task success rate, groundedness proxy, macro F1, and retrieval precision.',
+    question: 'What are the economic costs per query?',
+    summary: 'Average cost of $0.00012 to $0.00035 per query using hybrid local vision and cached RAG.',
     content: (
       <div className="space-y-3 text-xs leading-relaxed text-slate-600 dark:text-ink-secondary">
-        <p>
-          We run automated evaluation matrices before and after every pipeline iteration using <code>eval/run_eval.py</code> against fixed benchmark test queries:
-        </p>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-lg border border-border-light dark:border-border">
           <table className="w-full text-left text-[11px]">
-            <thead>
-              <tr className="border-b border-border-light font-semibold text-slate-900 dark:border-border dark:text-ink-primary">
-                <th className="pb-2">Evaluation Metric</th>
-                <th className="pb-2">Baseline (Naive RAG)</th>
-                <th className="pb-2">InsightAI (Hybrid RRF + Self-RAG)</th>
-                <th className="pb-2">Improvement</th>
+            <thead className="bg-slate-50 dark:bg-white/[0.02]">
+              <tr>
+                <th className="p-2 font-semibold text-slate-700 dark:text-ink-primary">Pipeline Step</th>
+                <th className="p-2 font-semibold text-slate-700 dark:text-ink-primary">Engine</th>
+                <th className="p-2 font-semibold text-slate-700 dark:text-ink-primary">Cost per 1,000 Queries</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-light dark:divide-border">
               <tr>
-                <td className="py-2 font-medium">Groundedness Score</td>
-                <td className="py-2">71.4%</td>
-                <td className="py-2 font-semibold text-emerald-600 dark:text-emerald-400">96.8%</td>
-                <td className="py-2 text-emerald-600">+25.4%</td>
+                <td className="p-2">Vision Inference</td>
+                <td className="p-2">LeafSense (Local CPU/GPU)</td>
+                <td className="p-2 font-mono text-emerald-600 dark:text-emerald-400">$0.00 (Self-hosted)</td>
               </tr>
               <tr>
-                <td className="py-2 font-medium">Task Success Rate</td>
-                <td className="py-2">78.0%</td>
-                <td className="py-2 font-semibold text-emerald-600 dark:text-emerald-400">98.2%</td>
-                <td className="py-2 text-emerald-600">+20.2%</td>
+                <td className="p-2">Embedding & Vector Search</td>
+                <td className="p-2">all-MiniLM-L6-v2 + FAISS</td>
+                <td className="p-2 font-mono text-emerald-600 dark:text-emerald-400">$0.00 (Local CPU)</td>
               </tr>
               <tr>
-                <td className="py-2 font-medium">Vision Top-1 Accuracy</td>
-                <td className="py-2">91.2% (ResNet-50)</td>
-                <td className="py-2 font-semibold text-emerald-600 dark:text-emerald-400">98.2% (Hybrid CBAM+ViT)</td>
-                <td className="py-2 text-emerald-600">+7.0%</td>
+                <td className="p-2">LLM Synthesis (Groq LLaMA 3.3)</td>
+                <td className="p-2">Groq Cloud API (~1,200 tokens)</td>
+                <td className="p-2 font-mono text-slate-800 dark:text-ink-primary">$0.18 / 1k queries</td>
               </tr>
               <tr>
-                <td className="py-2 font-medium">Time-to-First-Token</td>
-                <td className="py-2">3,850 ms</td>
-                <td className="py-2 font-semibold text-emerald-600 dark:text-emerald-400">380 ms (Direct Tensor SSE)</td>
-                <td className="py-2 text-emerald-600">-90.1% Latency</td>
+                <td className="p-2">Cached Diagnostic Queries</td>
+                <td className="p-2">Adaptive Redis / In-Memory</td>
+                <td className="p-2 font-mono text-emerald-600 dark:text-emerald-400">$0.00 (0ms LLM calls)</td>
               </tr>
             </tbody>
           </table>
@@ -239,23 +338,46 @@ const TEN_QUESTIONS = [
     ),
   },
   {
-    number: '07',
-    question: 'How will user data and secrets be protected?',
-    summary: 'Zero-trust multi-tenancy, bcrypt password hashing, cryptographic JWTs, and secure environment isolation.',
+    number: '06',
+    question: 'How is data privacy and tenant isolation preserved?',
+    summary: 'Stateless JWT auth, fail-closed metadata filters, isolated directories, and zero training retention.',
     content: (
-      <div className="space-y-2.5 text-xs text-slate-600 dark:text-ink-secondary">
+      <div className="space-y-3 text-xs leading-relaxed text-slate-600 dark:text-ink-secondary">
+        <p>
+          InsightAI enforces a <strong>Zero-Cross-Tenant-Contamination policy</strong>:
+        </p>
         <ul className="list-disc pl-5 space-y-1.5">
           <li>
-            <strong>Tenant Isolation:</strong> Vector store queries, document lookups, and session histories are tagged with <code>tenant_id</code> and enforced at the database and index query layer.
+            <strong>Vector Search Filtering:</strong> Vector stores apply <code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">tenant_id</code> filters during chunk extraction. A user can never search or retrieve another tenant&apos;s proprietary agricultural documents.
           </li>
           <li>
-            <strong>Credential Security:</strong> Passwords hashed with salted <code>bcrypt</code>. API keys and JWT access tokens are signed with high-entropy cryptographic secrets.
+            <strong>Public Corpus Separation:</strong> Curated university extension fact sheets (749 vectors) have <code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">tenant_id=None</code> and are accessible globally for disease treatment lookups.
           </li>
           <li>
-            <strong>Zero API Key Echo:</strong> The <code>/health</code> endpoint exposes boolean readiness flags only (<code>provider_configured: true</code>) and never prints API keys or secrets in logs or responses.
+            <strong>Zero AI Training:</strong> Third-party LLM APIs (Groq and Gemini) are configured with zero data retention for model training.
+          </li>
+        </ul>
+      </div>
+    ),
+  },
+  {
+    number: '07',
+    question: 'How do you monitor and evaluate drift in production?',
+    summary: 'Confidence score distribution telemetry, SSE latency tracking, and structured JSON logs.',
+    content: (
+      <div className="space-y-3 text-xs leading-relaxed text-slate-600 dark:text-ink-secondary">
+        <p>
+          Monitoring is integrated at every tier:
+        </p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>
+            <strong>Confidence Distribution Tracking:</strong> Vision inferences below 70% are logged with trace telemetry to identify emerging out-of-distribution leaf varieties.
           </li>
           <li>
-            <strong>Input Sanitization:</strong> Strict regex validation on file types, prompt injection sanitization delimiters (<code>&lt;context&gt;...&lt;/context&gt;</code>), and PyMuPDF safe memory buffer parsing.
+            <strong>Cache Hit Rate Telemetry:</strong> Exposed live via <code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">GET /health</code> (engine, hits, misses, hit rate percentage).
+          </li>
+          <li>
+            <strong>Structured JSON Logging:</strong> Every request produces correlation IDs with latency breakdowns across Vision $\rightarrow$ Retrieval $\rightarrow$ Synthesis.
           </li>
         </ul>
       </div>
@@ -263,40 +385,28 @@ const TEN_QUESTIONS = [
   },
   {
     number: '08',
-    question: 'What is the cost per successful task?',
-    summary: 'Zero-cost baseline deployment utilizing open-source models and high-throughput free-tier inference.',
+    question: 'How is security and prompt injection defended?',
+    summary: 'Input sanitizer, delimiter containment, strict output validators, and chemical safety checks.',
     content: (
       <div className="space-y-3 text-xs leading-relaxed text-slate-600 dark:text-ink-secondary">
-        <div className="rounded-lg border border-border-light bg-slate-50 p-3 font-mono text-[11px] text-slate-800 dark:border-border dark:bg-white/[0.02] dark:text-ink-primary">
-          Cost per Successful Task = Total System Cost / Successful Completed Tasks
-        </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Vision Microservice</p>
-            <p className="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">$0.00</p>
-            <p className="text-[10px] text-slate-400">Local CPU/GPU inference in LeafSense</p>
-          </div>
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Embedding Generation</p>
-            <p className="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">$0.00</p>
-            <p className="text-[10px] text-slate-400">Local all-MiniLM-L6-v2 vectorizer</p>
-          </div>
-          <div className="rounded-lg border border-border-light p-2.5 dark:border-border">
-            <p className="font-semibold text-slate-900 dark:text-ink-primary">Language Synthesis</p>
-            <p className="mt-1 text-base font-bold text-emerald-600 dark:text-emerald-400">&lt; $0.000015</p>
-            <p className="text-[10px] text-slate-400">Groq Llama 3.3 70B ($0.00 on free tier)</p>
-          </div>
-        </div>
-        <p className="text-[11px] text-slate-500 dark:text-ink-muted">
-          <strong>Summary:</strong> The entire production stack runs at near-zero incremental cost for local and educational deployments, and under $0.0015 per query when utilizing commercial hyperscaler APIs.
+        <p>
+          InsightAI implements a multi-layer defense against adversarial attacks:
         </p>
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li>
+            <strong>Prompt Injection Detection:</strong> <code className="rounded bg-slate-100 px-1 py-0.5 dark:bg-white/10">prompt_injection_service.py</code> inspects incoming prompts for system instruction overrides, jailbreaks, and delimiter escapes.
+          </li>
+          <li>
+            <strong>Chemical Safety Guardrails:</strong> Reflection engine verifies that whenever a fungicide or pesticide is mentioned, required PPE and Pre-Harvest Intervals are attached.
+          </li>
+        </ul>
       </div>
     ),
   },
   {
     number: '09',
-    question: 'What breaks when users grow from 10 to 1 million?',
-    summary: 'Bottleneck breakdown across FAISS in-memory indexes, single-node task queues, database concurrency, and rate limits.',
+    question: 'What is the first component that will fail under load?',
+    summary: 'Single-node Python CPU inference. Fixed by containerizing LeafSense with GPU replicas and Redis caching.',
     content: (
       <div className="space-y-2.5 text-xs text-slate-600 dark:text-ink-secondary">
         <div className="space-y-2">
@@ -432,11 +542,13 @@ const CONFUSION_MATRIX_CROPS = [
 ]
 
 export default function Architecture() {
-  const [activeTab, setActiveTab] = useState('review')
+  const [activeTab, setActiveTab] = useState('architecture')
+  const [selectedNodeId, setSelectedNodeId] = useState('gateway')
   const [expandedQuestion, setExpandedQuestion] = useState('01')
   const [selectedCropIndex, setSelectedCropIndex] = useState(0)
 
   const selectedCrop = CONFUSION_MATRIX_CROPS[selectedCropIndex]
+  const selectedNode = ARCHITECTURE_NODES[selectedNodeId] || ARCHITECTURE_NODES.gateway
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-12">
@@ -445,14 +557,14 @@ export default function Architecture() {
         <div>
           <div className="flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500">
-              <Cpu size={18} />
+              <Network size={18} />
             </span>
             <h1 className="font-display text-xl font-bold text-slate-900 dark:text-ink-primary sm:text-2xl">
               System Architecture & Production AI Design Review
             </h1>
           </div>
           <p className="mt-1 text-xs text-slate-500 dark:text-ink-muted">
-            End-to-end technical evaluation, multimodal RAG pipeline, LeafSense confusion matrices, and the 10 production design questions.
+            End-to-end multi-tier microservice architecture, multi-agent StateGraph runtime, LeafSense confusion matrices, and the 10 production design questions.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -472,7 +584,7 @@ export default function Architecture() {
             onClick={() => setActiveTab(id)}
             className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium transition-all ${
               activeTab === id
-                ? 'border border-accent-500/30 bg-accent-500/10 text-accent-600 dark:text-accent-400 shadow-sm'
+                ? 'border border-accent-500/30 bg-accent-500/10 text-accent-600 dark:text-accent-400 shadow-sm font-semibold'
                 : 'text-slate-500 hover:bg-slate-900/5 hover:text-slate-800 dark:text-ink-muted dark:hover:bg-white/[0.03] dark:hover:text-ink-secondary'
             }`}
           >
@@ -482,7 +594,282 @@ export default function Architecture() {
         ))}
       </div>
 
-      {/* Tab 1: The 10 Production AI Questions */}
+      {/* Tab 1: System Architecture Blueprints & Interactive Flow */}
+      {activeTab === 'architecture' && (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          {/* Main Visual Architecture Canvas */}
+          <Card padding="lg" className="space-y-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-ink-primary">
+                  Interactive System Architecture Topology
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-ink-muted">
+                  Click on any microservice or component tier below to inspect its live technical specifications, latency SLAs, and codebase source.
+                </p>
+              </div>
+              <span className="text-xs text-slate-400">5 Architectural Tiers</span>
+            </div>
+
+            {/* Architecture Grid Topology Diagram */}
+            <div className="space-y-4">
+              {/* Tier 1: Client Layer */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                  Tier 1: Client & Presentation
+                </span>
+                <div
+                  onClick={() => setSelectedNodeId('frontend')}
+                  className={`group relative cursor-pointer rounded-xl border p-4 transition-all ${
+                    selectedNodeId === 'frontend'
+                      ? 'border-emerald-500 bg-emerald-500/10 shadow-md dark:border-emerald-400 dark:bg-emerald-500/15'
+                      : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                        <Smartphone size={18} />
+                      </span>
+                      <div>
+                        <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
+                          Frontend Client & Native Mobile PWA
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">
+                          React 18 · Vite · HTML5 Camera (<code className="font-mono">capture=&quot;environment&quot;</code>) · SSE EventSource
+                        </p>
+                      </div>
+                    </div>
+                    <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      Port 5173 / Mobile Web
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-center">
+                <ArrowDown size={16} className="text-slate-400" />
+              </div>
+
+              {/* Tier 2: API Gateway */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                  Tier 2: API Gateway & Security Hub
+                </span>
+                <div
+                  onClick={() => setSelectedNodeId('gateway')}
+                  className={`group relative cursor-pointer rounded-xl border p-4 transition-all ${
+                    selectedNodeId === 'gateway'
+                      ? 'border-accent-500 bg-accent-500/10 shadow-md dark:border-accent-400 dark:bg-accent-500/15'
+                      : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-500/20 text-accent-600 dark:text-accent-400">
+                        <Server size={18} />
+                      </span>
+                      <div>
+                        <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
+                          FastAPI Async Gateway & Multi-Tenant Security Hub
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">
+                          JWT Auth · Tenant Vector Partitioning · Async Ingestion Queue · SSE Stream Router
+                        </p>
+                      </div>
+                    </div>
+                    <span className="rounded-md bg-accent-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent-700 dark:text-accent-300">
+                      Port 8000
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-center">
+                <ArrowDown size={16} className="text-slate-400" />
+              </div>
+
+              {/* Tier 3: Agentic Intelligence & Caching Layer */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                  Tier 3: Agentic Intelligence & Semantic Caching
+                </span>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div
+                    onClick={() => setSelectedNodeId('router')}
+                    className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+                      selectedNodeId === 'router'
+                        ? 'border-accent-500 bg-accent-500/10 shadow-md dark:border-accent-400 dark:bg-accent-500/15'
+                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Workflow size={16} className="text-accent-500" />
+                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                        Router & StateGraph Agent
+                      </p>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
+                      Intent Classifier · Crop Extraction · Multi-Agent Cycles · Reflection Loop
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setSelectedNodeId('cache')}
+                    className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+                      selectedNodeId === 'cache'
+                        ? 'border-amber-500 bg-amber-500/10 shadow-md dark:border-amber-400 dark:bg-amber-500/15'
+                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Zap size={16} className="text-amber-500" />
+                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                        Adaptive Redis / In-Memory Cache
+                      </p>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
+                      Redis Cluster (Port 6379) · In-Memory Fallback · Tenant Hash Keys · Monotonic TTL
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-center">
+                <ArrowDown size={16} className="text-slate-400" />
+              </div>
+
+              {/* Tier 4 & 5: Retrieval and Vision/LLM Engines */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* Tier 4: Retrieval */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                    Tier 4: Hybrid RRF Retrieval
+                  </span>
+                  <div
+                    onClick={() => setSelectedNodeId('retrieval')}
+                    className={`cursor-pointer rounded-xl border p-4 transition-all h-full ${
+                      selectedNodeId === 'retrieval'
+                        ? 'border-emerald-500 bg-emerald-500/10 shadow-md dark:border-emerald-400 dark:bg-emerald-500/15'
+                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Database size={16} className="text-emerald-500" />
+                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                        Reciprocal Rank Fusion (RRF k=60)
+                      </p>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
+                      Dense Vectors (all-MiniLM-L6-v2 in FAISS/Pgvector) + Lexical BM25Okapi Inverted Index
+                    </p>
+                    <div className="mt-2 rounded bg-slate-100 p-1.5 font-mono text-[10px] text-slate-700 dark:bg-white/5 dark:text-ink-secondary">
+                      RRF Score = Dense / (60 + Rank) + BM25 / (60 + Rank)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tier 5: Inference Engines */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                    Tier 5: Deep Vision & LLM Inference
+                  </span>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div
+                      onClick={() => setSelectedNodeId('vision')}
+                      className={`cursor-pointer rounded-xl border p-3 transition-all ${
+                        selectedNodeId === 'vision'
+                          ? 'border-rose-500 bg-rose-500/10 shadow-md dark:border-rose-400 dark:bg-rose-500/15'
+                          : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Camera size={14} className="text-rose-500" />
+                        <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                          LeafSense (Port 8001)
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500 dark:text-ink-muted">
+                        CBAM + ViT (38 Classes) + Gemini Multimodal Arbiter
+                      </p>
+                    </div>
+
+                    <div
+                      onClick={() => setSelectedNodeId('llm')}
+                      className={`cursor-pointer rounded-xl border p-3 transition-all ${
+                        selectedNodeId === 'llm'
+                          ? 'border-amber-500 bg-amber-500/10 shadow-md dark:border-amber-400 dark:bg-amber-500/15'
+                          : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-amber-500" />
+                        <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                          LLM Foundation Engine
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500 dark:text-ink-muted">
+                        Groq LLaMA 3.3 70B / Gemini Pro + Safety Reflection
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Interactive Component Inspector Panel */}
+          <Card padding="lg" className="space-y-4 border-accent-500/20 bg-accent-500/[0.02]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light pb-3 dark:border-border">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent-500/15 text-accent-600 dark:text-accent-400">
+                  <selectedNode.icon size={16} />
+                </span>
+                <div>
+                  <h3 className="font-display text-sm font-bold text-slate-900 dark:text-ink-primary">
+                    {selectedNode.title}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-ink-muted">{selectedNode.tier}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-accent-500/10 px-2 py-0.5 font-mono text-xs font-semibold text-accent-700 dark:text-accent-300">
+                  {selectedNode.badge}
+                </span>
+                <span className="rounded bg-slate-900/5 px-2 py-0.5 text-xs text-slate-600 dark:bg-white/5 dark:text-ink-secondary">
+                  Latency SLA: <strong>{selectedNode.latency}</strong>
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-12">
+              <div className="space-y-3 sm:col-span-8">
+                <p className="text-xs font-medium text-slate-700 dark:text-ink-secondary leading-relaxed">
+                  {selectedNode.summary}
+                </p>
+                <ul className="list-disc pl-4 space-y-1.5 text-xs text-slate-600 dark:text-ink-secondary">
+                  {selectedNode.details.map((point, idx) => (
+                    <li key={idx}>{point}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="space-y-2.5 rounded-lg border border-border-light bg-white/70 p-3 sm:col-span-4 dark:border-border dark:bg-white/[0.02]">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Tech Stack</p>
+                  <p className="mt-0.5 text-[11px] font-medium text-slate-800 dark:text-ink-primary">{selectedNode.tech}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Source Files</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-accent-700 dark:text-accent-300 break-all">{selectedNode.files}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </motion.div>
+      )}
+
+      {/* Tab 2: The 10 Production AI Questions */}
       {activeTab === 'review' && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           <div className="flex items-center justify-between">
@@ -545,7 +932,7 @@ export default function Architecture() {
         </motion.div>
       )}
 
-      {/* Tab 2: LeafSense Vision & Confusion Matrix */}
+      {/* Tab 3: LeafSense Vision & Confusion Matrix */}
       {activeTab === 'vision' && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -654,7 +1041,7 @@ export default function Architecture() {
         </motion.div>
       )}
 
-      {/* Tab 3: Multimodal RAG & StateGraph Pipeline */}
+      {/* Tab 4: Multimodal RAG & StateGraph Pipeline */}
       {activeTab === 'rag' && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <Card padding="lg" className="space-y-4">
@@ -729,7 +1116,7 @@ export default function Architecture() {
         </motion.div>
       )}
 
-      {/* Tab 4: Security, Cost & Scaling */}
+      {/* Tab 5: Security, Cost & Scaling */}
       {activeTab === 'security-scaling' && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2">
