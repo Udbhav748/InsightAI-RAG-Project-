@@ -109,6 +109,10 @@ class VisionPrediction(BaseModel):
     low_confidence: bool = Field(
         ..., description="True if confidence is below Settings.vision_confidence_threshold."
     )
+    engine: str = Field(
+        default="leafsense",
+        description="Inference engine that produced the prediction ('leafsense', 'gemini_vision', 'hybrid_consensus').",
+    )
 
 
 class ExtractedImage(BaseModel):

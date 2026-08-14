@@ -296,12 +296,8 @@ async def diagnose(
     query: str | None = Form(None),
     session_id: str | None = Form(None),
     confirm_web_search: bool = Form(False),
+    engine: str = Form("hybrid"),
 ) -> ChatResponse:
-    # A separate multipart endpoint rather than an optional file param on
-    # /chat: FastAPI resolves a whole request as either a JSON body or
-    # multipart/form-data per the endpoint's declared parameters, not per
-    # request, so /chat's existing ChatRequest JSON body and a File() param
-    # can't coexist on one route without breaking every current JSON caller.
     chat_service = get_chat_service()
     session_store = get_session_store()
     tenant_id = getattr(request.state, "tenant_id", None)
@@ -310,13 +306,6 @@ async def diagnose(
     await image.seek(0)
     validate_image_upload(image, contents)
 
-    # Same session_store dance /chat and /chat/stream already do (see
-    # `chat()` above) — previously missing here entirely, so a diagnosis
-    # was never actually written to session history: the session_id in the
-    # response was just echoed back from whatever the client sent (or "" if
-    # nothing was sent), never created, read, or appended to. That meant a
-    # frontend "continue chatting in this session" flow would resume into
-    # an empty conversation with no memory of the diagnosis at all.
     session_id = session_store.get_or_create_session(session_id, tenant_id=tenant_id)
     set_session_title_if_unset(session_id, query or "Leaf diagnosis")
     history = session_store.get_history(session_id)
@@ -330,16 +319,11 @@ async def diagnose(
                 "has_accompanying_query": query is not None,
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
+                "engine": engine,
             }
         },
     )
 
-    # handle_diagnose is fully synchronous (vision inference, retrieval,
-    # LLM generation, and — with the research agent enabled — blocking
-    # HTTP page fetches). Unlike /chat and /chat/stream, this route is
-    # `async def` (required for the multipart file read above), so without
-    # run_in_threadpool that synchronous work would run directly on the
-    # event loop and stall every other in-flight request for its duration.
     response = await run_in_threadpool(
         chat_service.handle_diagnose,
         contents,
@@ -350,6 +334,7 @@ async def diagnose(
         session_id=session_id,
         confirm_web_search=confirm_web_search,
         tenant_id=tenant_id,
+        engine=engine,
     )
 
     # Append this turn to server-side history, same shape /chat uses. The
@@ -400,6 +385,7 @@ async def diagnose_stream(
     query: str | None = Form(None),
     session_id: str | None = Form(None),
     confirm_web_search: bool = Form(False),
+    engine: str = Form("hybrid"),
 ) -> StreamingResponse:
     """Streamed SSE endpoint for plant leaf photo diagnosis and treatment recommendations.
 
@@ -427,6 +413,7 @@ async def diagnose_stream(
                 "has_accompanying_query": query is not None,
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
+                "engine": engine,
             }
         },
     )
@@ -446,6 +433,7 @@ async def diagnose_stream(
             session_id=session_id,
             confirm_web_search=confirm_web_search,
             tenant_id=tenant_id,
+            engine=engine,
         ):
             if event.get("type") == "answer_chunk":
                 token = (

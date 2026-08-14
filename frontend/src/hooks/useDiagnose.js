@@ -8,6 +8,7 @@ export default function useDiagnose() {
   const [image, setImage] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [query, setQuery] = useState('')
+  const [engine, setEngine] = useState('hybrid') // hybrid | leafsense | gemini
   const [status, setStatus] = useState('idle') // idle | preview | analyzing | streaming | success | error
   const [result, setResult] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
@@ -115,7 +116,7 @@ export default function useDiagnose() {
     try {
       await diagnoseImageStream(
         image,
-        query,
+        { query, engine },
         (event) => {
           if (event.type === 'diagnosis') {
             const diagData = event.diagnosis || event.payload || event
@@ -174,7 +175,7 @@ export default function useDiagnose() {
       setStatus('error')
       showToast(message, 'error')
     }
-  }, [image, query, status, showToast])
+  }, [image, query, engine, status, showToast])
 
   const reset = useCallback(() => {
     revokePreview()
@@ -190,6 +191,8 @@ export default function useDiagnose() {
     image,
     previewUrl,
     query,
+    engine,
+    setEngine,
     status,
     isStreaming: status === 'streaming',
     result,

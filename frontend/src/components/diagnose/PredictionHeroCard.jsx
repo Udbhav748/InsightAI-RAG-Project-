@@ -72,7 +72,11 @@ export default function PredictionHeroCard({
               <Leaf size={15} strokeWidth={2} />
             </span>
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-ink-muted">
-              LeafSense Vision Diagnosis
+              {diagnosis?.engine === 'gemini_vision'
+                ? 'Multimodal Vision (Gemini 1.5 Flash)'
+                : diagnosis?.engine === 'hybrid_consensus'
+                ? 'Hybrid Consensus Arbiter (Verified)'
+                : 'LeafSense Hybrid CNN+ViT (Port 8001)'}
             </span>
           </div>
 

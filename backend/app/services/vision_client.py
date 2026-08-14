@@ -216,9 +216,9 @@ def _try_auto_start_leafsense() -> bool:
 
 
 def _diagnose_with_gemini_fallback(
-    contents: bytes, filename: str, content_type: str
+    contents: bytes, filename: str, content_type: str, engine_tag: str = "gemini_vision"
 ) -> VisionPrediction | None:
-    """Fallback visual classifier using Gemini Vision when LeafSense is unreachable."""
+    """Fallback visual classifier using Gemini Vision when LeafSense is unreachable or needs consensus."""
     if not settings.gemini_api_key:
         return None
     try:
@@ -228,15 +228,12 @@ def _diagnose_with_gemini_fallback(
         client = genai.Client(api_key=settings.gemini_api_key)
         classes_str = ", ".join(CLASS_LABEL_MAP.keys())
         prompt = (
-            "You are an expert plant pathologist. Analyze this plant leaf image. "
+            "You are an expert plant pathologist. Analyze this plant leaf image carefully, ignoring background clutter or hands. "
             f"Identify which of the following exact 38 classes it belongs to: [{classes_str}]. "
             "Respond ONLY with a JSON object in this exact format: "
             '{"class": "<exact_class_name>", "confidence": <float_between_0_and_1>}'
         )
         part = types.Part.from_bytes(data=contents, mime_type=content_type or "image/jpeg")
-        # list[Part | str] structurally matches genai's accepted element
-        # union (str | Image | File | FileDict | Part | PartDict), but
-        # list's invariance means mypy won't accept it as that exact type.
         response = client.models.generate_content(
             model=settings.gemini_model_name,
             contents=[part, prompt],  # type: ignore[arg-type]
@@ -255,8 +252,8 @@ def _diagnose_with_gemini_fallback(
         crop, disease = CLASS_LABEL_MAP.get(raw_class, ("unknown", raw_class))
         low_confidence = confidence < settings.vision_confidence_threshold
         logger.info(
-            "vision_gemini_fallback_succeeded",
-            extra={"extra_fields": {"class": raw_class, "confidence": confidence}},
+            "vision_gemini_diagnosis_succeeded",
+            extra={"extra_fields": {"class": raw_class, "confidence": confidence, "engine": engine_tag}},
         )
         return VisionPrediction(
             raw_class=raw_class,
@@ -264,6 +261,7 @@ def _diagnose_with_gemini_fallback(
             disease=disease,
             confidence=confidence,
             low_confidence=low_confidence,
+            engine=engine_tag,
         )
     except Exception as exc:
         logger.warning("vision_gemini_fallback_failed", extra={"extra_fields": {"error": str(exc)}})
@@ -278,15 +276,28 @@ def _diagnose_with_gemini_fallback(
     reraise=True,
     before_sleep=_log_retry,
 )
-def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionPrediction:
-    """POST an image to LeafSense and return its prediction, mapped to a
-    plain-language crop/disease pair.
+def diagnose_image(
+    contents: bytes, filename: str, content_type: str, engine: str = "hybrid"
+) -> VisionPrediction:
+    """POST an image to LeafSense or Gemini Vision and return its prediction,
+    mapped to a plain-language crop/disease pair.
 
-    Self-heals by automatically starting the local LeafSense background service
-    if offline, and provides a seamless multimodal LLM fallback if uninstalled.
+    Engines supported:
+    - 'hybrid' (default): Runs LeafSense first. If confidence < threshold or field noise,
+      transparently consults Gemini Vision as a consensus arbiter.
+    - 'leafsense': Directly uses the custom CBAM+ViT+EfficientNet model on port 8001.
+    - 'gemini': Directly uses Gemini 1.5 Flash Vision for zero-shot in-the-wild reasoning.
     """
     global _last_online_check, _last_online_status
     start = time.perf_counter()
+
+    # Direct Gemini engine route
+    if engine == "gemini":
+        gemini_pred = _diagnose_with_gemini_fallback(
+            contents, filename, content_type, engine_tag="gemini_vision"
+        )
+        if gemini_pred is not None:
+            return gemini_pred
 
     # Self-healing: if offline, attempt to auto-launch local LeafSense service
     if not is_leafsense_online():
@@ -323,7 +334,9 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
         _last_online_check = 0.0
 
         # Check secondary Gemini Vision fallback before erroring out
-        fallback_prediction = _diagnose_with_gemini_fallback(contents, filename, content_type)
+        fallback_prediction = _diagnose_with_gemini_fallback(
+            contents, filename, content_type, engine_tag="gemini_fallback"
+        )
         if fallback_prediction is not None:
             return fallback_prediction
 
@@ -348,16 +361,30 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
 
     crop, disease = CLASS_LABEL_MAP.get(raw_class, (None, None))
     if crop is None:
-        # LeafSense returned a class label this map doesn't recognize —
-        # most likely its CLASS_NAMES changed out from under us. Don't
-        # fail the request over it; fall through with the raw label so
-        # retrieval still has *something* to search on, but log loudly
-        # since this means the map is stale and needs updating.
         logger.warning("vision_unmapped_class", extra={"extra_fields": {"raw_class": raw_class}})
         crop, disease = "unknown", raw_class
 
     processing_duration = time.perf_counter() - start
     low_confidence = confidence < settings.vision_confidence_threshold
+
+    # In hybrid mode: if custom model confidence is low (noisy field photo), consult Gemini arbiter
+    if engine == "hybrid" and low_confidence:
+        arbiter_pred = _diagnose_with_gemini_fallback(
+            contents, filename, content_type, engine_tag="hybrid_consensus"
+        )
+        if arbiter_pred is not None and not arbiter_pred.low_confidence:
+            logger.info(
+                "vision_hybrid_consensus_arbitrated",
+                extra={
+                    "extra_fields": {
+                        "leafsense_class": raw_class,
+                        "leafsense_conf": confidence,
+                        "arbiter_class": arbiter_pred.raw_class,
+                        "arbiter_conf": arbiter_pred.confidence,
+                    }
+                },
+            )
+            return arbiter_pred
 
     logger.info(
         "vision_diagnosis_completed",
@@ -368,6 +395,7 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
                 "disease": disease,
                 "confidence": round(confidence, 4),
                 "low_confidence": low_confidence,
+                "engine": "leafsense",
                 "processing_duration": round(processing_duration, 4),
             }
         },
@@ -379,4 +407,5 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
         disease=disease,
         confidence=confidence,
         low_confidence=low_confidence,
+        engine="leafsense",
     )

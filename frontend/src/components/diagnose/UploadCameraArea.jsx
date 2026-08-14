@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, ImagePlus, Leaf, RefreshCw, ScanLine, UploadCloud, X, HelpCircle, Check } from 'lucide-react'
+import { Camera, Cpu, ImagePlus, Leaf, RefreshCw, ScanLine, UploadCloud, X, HelpCircle, Check, Sparkles } from 'lucide-react'
 import Button from '../ui/Button'
 import CameraCapture from './CameraCapture'
 import { MAX_IMAGE_SIZE_MB } from '../../constants'
@@ -9,16 +9,18 @@ const QUERY_MAX_HEIGHT = 160
 
 /**
  * Upload & Camera Capture Area with drag-and-drop, direct camera mode,
- * live leaf preview, image removal, and context input.
+ * live leaf preview, image removal, context input, and vision engine selector.
  */
 export default function UploadCameraArea({
   image,
   previewUrl,
   query,
+  engine = 'hybrid',
   status,
   onSelectImage,
   onClearImage,
   onQueryChange,
+  onEngineChange,
   onAnalyze,
   disabled = false,
 }) {
@@ -72,6 +74,52 @@ export default function UploadCameraArea({
 
   return (
     <div className="space-y-4">
+      {/* Vision Inference Engine Selector */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-border-light bg-slate-900/[0.02] p-3 dark:border-border dark:bg-white/[0.02]">
+        <div className="flex items-center gap-2">
+          <Cpu size={15} className="text-accent-500 shrink-0" />
+          <span className="text-xs font-semibold text-slate-700 dark:text-ink-secondary">Inference Engine:</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onEngineChange?.('hybrid')}
+            disabled={disabled || status === 'analyzing' || status === 'streaming'}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              engine === 'hybrid'
+                ? 'bg-accent-600 text-white shadow-sm'
+                : 'bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 dark:bg-white/5 dark:text-ink-muted dark:hover:bg-white/10'
+            }`}
+          >
+            Hybrid Arbiter (Recommended)
+          </button>
+          <button
+            type="button"
+            onClick={() => onEngineChange?.('leafsense')}
+            disabled={disabled || status === 'analyzing' || status === 'streaming'}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              engine === 'leafsense'
+                ? 'bg-accent-600 text-white shadow-sm'
+                : 'bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 dark:bg-white/5 dark:text-ink-muted dark:hover:bg-white/10'
+            }`}
+          >
+            Custom Model (LeafSense Port 8001)
+          </button>
+          <button
+            type="button"
+            onClick={() => onEngineChange?.('gemini')}
+            disabled={disabled || status === 'analyzing' || status === 'streaming'}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              engine === 'gemini'
+                ? 'bg-accent-600 text-white shadow-sm'
+                : 'bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 dark:bg-white/5 dark:text-ink-muted dark:hover:bg-white/10'
+            }`}
+          >
+            Multimodal Vision (Gemini)
+          </button>
+        </div>
+      </div>
+
       {/* Mode Selector Buttons when no preview exists */}
       {!previewUrl && status === 'idle' && (
         <div className="flex justify-center gap-2">

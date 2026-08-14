@@ -29,6 +29,8 @@ export default function Diagnose() {
     image,
     previewUrl,
     query,
+    engine,
+    setEngine,
     status,
     isStreaming,
     result,
@@ -57,7 +59,7 @@ export default function Diagnose() {
           Plant Leaf Disease Diagnostic & Treatment Hub
         </h1>
         <p className="mx-auto max-w-2xl text-xs sm:text-sm text-slate-600 dark:text-ink-secondary">
-          Upload or capture a high-resolution leaf photo. The LeafSense deep vision network classifies the disease, and our agronomic RAG engine constructs an actionable, multi-stage treatment plan.
+          Upload or capture a leaf photo. Switch between our custom LeafSense deep vision network (port 8001), multimodal zero-shot vision, or the cascaded hybrid arbiter.
         </p>
       </div>
 
@@ -84,10 +86,12 @@ export default function Diagnose() {
               image={image}
               previewUrl={previewUrl}
               query={query}
+              engine={engine}
               status={status}
               onSelectImage={selectImage}
               onClearImage={clearImage}
               onQueryChange={setQueryText}
+              onEngineChange={setEngine}
               onAnalyze={analyze}
             />
 

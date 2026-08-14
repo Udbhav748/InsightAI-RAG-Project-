@@ -2082,23 +2082,10 @@ class ChatService:
         confirm_web_search: bool = False,
         tenant_id: int | None = None,
         persona: str | None = "agronomist",
+        engine: str = "hybrid",
     ) -> ChatResponse:
-        """Diagnose a plant photo via LeafSense, then run the predicted
-        disease through the same corrective RAG loop handle_query uses —
-        the diagnose action doesn't get its own retrieval/grounding logic,
-        it just supplies a different query to the existing one.
-
-        Image presence is treated as an unambiguous routing signal (unlike
-        _plan's text classification, there's no ambiguity to resolve), so
-        this bypasses _plan() entirely rather than trying to teach it about
-        images; PlanDecision(action="diagnose") is still logged the same
-        way _plan's decisions are, for observability parity.
-
-        If the corpus has no content for the diagnosed crop, this falls
-        through to the same "couldn't find that in the uploaded documents"
-        fallback a normal text query would get for an off-topic question —
-        no special-casing, since it's the same retrieval-then-generate path.
-        """
+        """Diagnose a plant photo via LeafSense or Gemini, then run the predicted
+        disease through the same corrective RAG loop handle_query uses."""
         start = time.perf_counter()
         steps_taken = 1  # planning
 
@@ -2107,7 +2094,7 @@ class ChatService:
         logger.info(
             "plan_decided",
             extra={
-                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}
+                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0, "engine": engine}
             },
         )
 
@@ -2117,7 +2104,7 @@ class ChatService:
 
         try:
             steps_taken += 1  # vision inference
-            prediction = diagnose_image(image_bytes, filename, content_type)
+            prediction = diagnose_image(image_bytes, filename, content_type, engine=engine)
 
             crop_context = (
                 prediction.crop if prediction.crop and prediction.crop != "unknown" else None
@@ -2230,16 +2217,9 @@ class ChatService:
         confirm_web_search: bool = False,
         tenant_id: int | None = None,
         persona: str | None = "agronomist",
+        engine: str = "hybrid",
     ) -> Iterator[dict[str, Any]]:
-        """Streamed counterpart to handle_diagnose, for POST /chat/diagnose/stream.
-
-        Yields SSE event dicts in order:
-        1. vision_analyzing trace event: {"type": "trace", "event": "vision_analyzing", "payload": {"filename": filename}}
-        2. diagnosis prediction event: {"type": "diagnosis", "payload": prediction.model_dump()}
-        3. retrieval_completed trace event: {"type": "trace", "event": "retrieval_completed", "payload": {"chunks_count": len(chunks)}}
-        4. real-time answer_chunk tokens: {"type": "answer_chunk", "payload": {"token": chunk}}
-        5. final done event: {"type": "done", "payload": ChatResponse}
-        """
+        """Streamed counterpart to handle_diagnose, for POST /chat/diagnose/stream."""
         start = time.perf_counter()
         steps_taken = 1  # planning
 
@@ -2248,7 +2228,7 @@ class ChatService:
         logger.info(
             "plan_decided",
             extra={
-                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}
+                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0, "engine": engine}
             },
         )
 
@@ -2259,13 +2239,13 @@ class ChatService:
             "type": "trace",
             "event": "vision_analyzing",
             "stage": "vision_analyzing",
-            "payload": {"filename": filename},
-            "detail": {"filename": filename},
+            "payload": {"filename": filename, "engine": engine},
+            "detail": {"filename": filename, "engine": engine},
         }
 
         try:
             steps_taken += 1  # vision inference
-            prediction = diagnose_image(image_bytes, filename, content_type)
+            prediction = diagnose_image(image_bytes, filename, content_type, engine=engine)
 
             # Emitted immediately once vision classifier returns
             yield {

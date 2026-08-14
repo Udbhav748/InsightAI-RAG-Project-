@@ -88,7 +88,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
 
     expect(screen.getByText('Plant Leaf Disease Diagnostic & Treatment Hub')).toBeInTheDocument()
     expect(
-      screen.getByText(/Upload or capture a high-resolution leaf photo/i)
+      screen.getByText(/Upload or capture a leaf photo/i)
     ).toBeInTheDocument()
 
     // Service health indicator online
@@ -151,7 +151,10 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
 
     expect(diagnoseService.diagnoseImageStream).toHaveBeenCalledWith(
       file,
-      'Observed yellow halos on bottom leaves',
+      expect.objectContaining({
+        query: 'Observed yellow halos on bottom leaves',
+        engine: 'hybrid',
+      }),
       expect.any(Function),
       expect.any(Function)
     )
