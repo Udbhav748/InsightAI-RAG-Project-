@@ -14,6 +14,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.core.database import db_enabled
+from app.services.cache_service import cache_service
 from app.services.document_service import is_tesseract_available
 from app.services.vision_client import is_leafsense_online
 
@@ -65,6 +66,7 @@ def health_check() -> dict[str, Any]:
             "model": settings.embedding_model_name,
             "status": "ready",
         },
+        "cache": cache_service.get_stats(),
     }
     if db_enabled():
         body["database"] = "connected"

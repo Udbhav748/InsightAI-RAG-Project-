@@ -36,6 +36,7 @@ from app.core.metrics import get_metrics
 from app.core.usage_tracking import current_usage, reset_usage
 from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
 from app.services.agent_events import log_agent_handoff
+from app.services.cache_service import cache_service
 from app.services.local_research_agent import LocalResearchAgent
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
@@ -602,24 +603,21 @@ class ChatService:
         return hashlib.sha256(key_str.encode()).hexdigest()[:32]
 
     def _get_cached_response(self, cache_key: str) -> ChatResponse | None:
-        """Get cached response if exists, move to front (LRU)."""
-        if cache_key in self._response_cache:
-            # Move to front (most recently used)
-            self._cache_keys.remove(cache_key)
-            self._cache_keys.insert(0, cache_key)
-            return self._response_cache[cache_key]
+        """Get cached response from adaptive cache (Redis or In-Memory)."""
+        cached_data = cache_service.get(cache_key)
+        if cached_data is not None:
+            if isinstance(cached_data, ChatResponse):
+                return cached_data
+            if isinstance(cached_data, dict):
+                try:
+                    return ChatResponse.model_validate(cached_data)
+                except Exception:
+                    return None
         return None
 
     def _cache_response(self, cache_key: str, response: ChatResponse) -> None:
-        """Cache response with LRU eviction."""
-        if cache_key in self._response_cache:
-            self._cache_keys.remove(cache_key)
-        elif len(self._cache_keys) >= self._max_cache_size:
-            # Evict LRU
-            lru_key = self._cache_keys.pop()
-            self._response_cache.pop(lru_key, None)
-        self._cache_keys.insert(0, cache_key)
-        self._response_cache[cache_key] = response
+        """Cache response with adaptive TTL into Redis or In-Memory store."""
+        cache_service.set(cache_key, response, expire=3600)
 
     def _plan(self, query: str, history: list[dict[str, str]] | None = None) -> PlanDecision:
         """Decide which tool this query needs.
