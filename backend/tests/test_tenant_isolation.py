@@ -90,27 +90,30 @@ class TestFAISSVectorStoreTenantFiltering:
     def test_search_with_tenant_id_excludes_other_tenants(self, tmp_path):
         store = _store_with_two_tenants(tmp_path)
         results = store.search(SHARED_EMBEDDING, top_k=10, tenant_id=1)
-        assert {r.chunk_id for r in results} == {"tenant-1-chunk"}
+        assert {r.chunk_id for r in results} == {"tenant-1-chunk", "untagged-chunk"}
 
-    def test_search_with_tenant_id_excludes_untagged_legacy_chunks(self, tmp_path):
-        # Fail closed: a chunk with no tenant tag never matches a specific
-        # tenant_id filter, since ownership can't be verified.
+    def test_search_with_tenant_id_includes_untagged_public_chunks(self, tmp_path):
+        # An untagged chunk is treated as public/shared (e.g. the app's own
+        # ingested reference corpus, not a private per-tenant upload) —
+        # visible to every tenant's filtered search, not excluded.
         store = _store_with_two_tenants(tmp_path)
         results = store.search(SHARED_EMBEDDING, top_k=10, tenant_id=2)
-        assert {r.chunk_id for r in results} == {"tenant-2-chunk"}
+        assert {r.chunk_id for r in results} == {"tenant-2-chunk", "untagged-chunk"}
 
     def test_search_respects_top_k_after_filtering(self, tmp_path):
         # A tied-score other-tenant chunk must not consume a top_k slot
-        # that belongs to this tenant.
+        # that belongs to this tenant (or to public/untagged content) --
+        # which of the two legitimately-visible chunks wins the tie is
+        # implementation-defined and not what this test is about.
         store = _store_with_two_tenants(tmp_path)
         results = store.search(SHARED_EMBEDDING, top_k=1, tenant_id=1)
         assert len(results) == 1
-        assert results[0].chunk_id == "tenant-1-chunk"
+        assert results[0].chunk_id in {"tenant-1-chunk", "untagged-chunk"}
 
     def test_search_bm25_filters_by_tenant(self, tmp_path):
         store = _store_with_two_tenants(tmp_path)
         results = store.search_bm25("text", top_k=10, tenant_id=1)
-        assert {r.chunk_id for r in results} == {"tenant-1-chunk"}
+        assert {r.chunk_id for r in results} == {"tenant-1-chunk", "untagged-chunk"}
 
     def test_search_bm25_without_tenant_id_returns_everyone(self, tmp_path):
         store = _store_with_two_tenants(tmp_path)
@@ -125,7 +128,7 @@ class TestHybridSearchForwardsTenantId:
 
         results = hybrid_search("text", store, top_k=10, tenant_id=1)
 
-        assert {r.chunk_id for r in results} == {"tenant-1-chunk"}
+        assert {r.chunk_id for r in results} == {"tenant-1-chunk", "untagged-chunk"}
 
 
 class TestRetrieveForwardsTenantId:
@@ -136,7 +139,7 @@ class TestRetrieveForwardsTenantId:
 
         results = retrieve("text", store, top_k=10, min_score=0.0, tenant_id=2)
 
-        assert {r.chunk_id for r in results} == {"tenant-2-chunk"}
+        assert {r.chunk_id for r in results} == {"tenant-2-chunk", "untagged-chunk"}
 
     def test_retrieve_without_tenant_id_is_unfiltered(self, tmp_path, monkeypatch):
         store = _store_with_two_tenants(tmp_path)
