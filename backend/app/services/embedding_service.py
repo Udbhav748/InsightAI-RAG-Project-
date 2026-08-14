@@ -73,16 +73,22 @@ def get_embedding_model() -> SentenceTransformer:
     chunk/query), the same once-per-process lru_cache lifecycle as before.
     """
     from sentence_transformers import SentenceTransformer
+    from app.core.config import _sanitize_hf_cache_dirs
 
+    _sanitize_hf_cache_dirs()
     try:
-        # sentence_transformers ships no py.typed marker, so its constructor
-        # resolves to Any under mypy --strict; cast back to the declared
-        # return type rather than let Any leak into every caller.
-        return cast("SentenceTransformer", SentenceTransformer(settings.embedding_model_name))
-    except Exception as exc:
-        raise EmbeddingModelLoadError(
-            f"Failed to load embedding model '{settings.embedding_model_name}': {exc}"
-        ) from exc
+        # Fast path: load directly from local cache without HTTP network checks
+        return cast(
+            "SentenceTransformer",
+            SentenceTransformer(settings.embedding_model_name, local_files_only=True),
+        )
+    except Exception:
+        try:
+            return cast("SentenceTransformer", SentenceTransformer(settings.embedding_model_name))
+        except Exception as exc:
+            raise EmbeddingModelLoadError(
+                f"Failed to load embedding model '{settings.embedding_model_name}': {exc}"
+            ) from exc
 
 
 # Query embeddings are a pure function of (normalized query text, model

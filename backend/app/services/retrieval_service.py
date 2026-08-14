@@ -184,7 +184,7 @@ def _retrieve_core(
         collection_filtered = [
             chunk
             for chunk in filtered
-            if chunk.metadata.get("collection") == collection
+            if chunk.metadata.get("collection") in (collection, "plant_disease_docs", "general", None)
             or chunk.metadata.get("crop") == collection
         ]
         if collection_filtered:

@@ -15,7 +15,7 @@ const api = axios.create({
   // directly or deal with CORS — works from localhost and LAN IPs alike.
   // Production builds set VITE_API_BASE_URL to the real backend origin.
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 10000,
+  timeout: 45000,
 })
 
 api.interceptors.request.use((config) => {

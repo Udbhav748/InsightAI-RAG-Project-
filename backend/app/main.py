@@ -51,6 +51,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     seed_keys_from_settings()
     await seed_if_empty(query.get_vector_store())
+
+    # Pre-warm embedding model in background thread so first user queries are instantaneous
+    import threading
+    from app.services.embedding_service import get_embedding_model
+    threading.Thread(target=get_embedding_model, daemon=True).start()
+
     yield
 
 

@@ -44,7 +44,32 @@ def _load_secrets_from_ssm() -> None:
         os.environ[env_name] = response["Parameter"]["Value"]
 
 
+def _sanitize_hf_cache_dirs() -> None:
+    """Ensure HF_HOME, TRANSFORMERS_CACHE, and TORCH_HOME point to valid, existing local paths."""
+    safe_cache = Path.home() / ".cache" / "huggingface"
+    try:
+        safe_cache.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    for key in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "TORCH_HOME"):
+        val = os.environ.get(key)
+        if val:
+            try:
+                p = Path(val)
+                drive = p.drive
+                if drive and not Path(drive + "/").exists():
+                    os.environ[key] = str(safe_cache)
+                else:
+                    p.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                os.environ[key] = str(safe_cache)
+        else:
+            os.environ[key] = str(safe_cache)
+
+
 _load_secrets_from_ssm()
+_sanitize_hf_cache_dirs()
 
 
 class Settings(BaseSettings):
@@ -843,7 +868,10 @@ class Settings(BaseSettings):
     # workflow's manual default.
     nightly_eval_tolerance: float = 0.05
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", str(Path(__file__).resolve().parents[2] / ".env")),
+        extra="ignore",
+    )
 
     def data_dir(self, dir_name: str) -> Path:
         """Resolve a data directory (uploads/vector_store/feedback) under
