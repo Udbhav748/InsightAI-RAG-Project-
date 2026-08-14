@@ -39,7 +39,11 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             APPROVAL_RESOLVE,
         }
     ),
-    "member": frozenset(),
+    "member": frozenset(
+        {
+            DOCUMENT_DELETE,
+        }
+    ),
 }
 
 # Permissions that fall back to "allowed" when role is None (DB disabled

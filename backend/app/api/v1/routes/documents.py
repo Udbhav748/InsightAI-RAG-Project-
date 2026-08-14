@@ -357,14 +357,13 @@ def delete_document(
     # the DB is enabled (role has nowhere to live otherwise —
     # request.state.role is None, not "member", when the DB is disabled,
     # matching tenant_id's own None-when-disabled convention below).
-    # DOCUMENT_DELETE degrades to "allowed" when role is None, so a
-    # non-DB deployment keeps today's pre-RBAC behavior (delete always
-    # allowed) rather than silently locking everyone out because no role
-    # could be determined.
+    # Permission check (see app/core/permissions.py):
+    # Members and admins have DOCUMENT_DELETE permission. Non-DB deployment
+    # degrades to "allowed" when role is None.
     permissions.check_permission(
         request,
         permissions.DOCUMENT_DELETE,
-        message="Deleting documents requires the admin role.",
+        message="Deleting documents requires appropriate permissions.",
         document_id=document_id,
     )
 

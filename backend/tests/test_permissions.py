@@ -42,12 +42,13 @@ class TestHasPermission:
         assert has_permission("admin", DOCUMENT_DELETE) is True
         assert has_permission("admin", DOCUMENT_LIST_ALL_TENANTS) is True
 
-    def test_member_has_neither_permission(self):
-        assert has_permission("member", DOCUMENT_DELETE) is False
+    def test_member_has_document_delete_but_not_list_all_tenants(self):
+        assert has_permission("member", DOCUMENT_DELETE) is True
         assert has_permission("member", DOCUMENT_LIST_ALL_TENANTS) is False
 
     def test_unknown_role_has_no_permissions(self):
         assert has_permission("some-future-role", DOCUMENT_DELETE) is False
+        assert has_permission("some-future-role", DOCUMENT_LIST_ALL_TENANTS) is False
 
     def test_none_role_asymmetry(self):
         # DOCUMENT_DELETE degrades to allowed (pre-RBAC fallback, DB
@@ -63,11 +64,15 @@ class TestCheckPermission:
         request = _FakeRequest(role="admin")
         assert check_permission(request, DOCUMENT_DELETE, message="denied") is None
 
-    def test_denied_raises_forbidden_error(self):
+    def test_member_allowed_for_document_delete(self):
+        request = _FakeRequest(role="member")
+        assert check_permission(request, DOCUMENT_DELETE, message="denied") is None
+
+    def test_member_denied_raises_forbidden_error_for_list_all_tenants(self):
         request = _FakeRequest(role="member")
         with pytest.raises(ForbiddenError) as exc_info:
-            check_permission(request, DOCUMENT_DELETE, message="Deleting documents requires the admin role.")
-        assert exc_info.value.detail == "Deleting documents requires the admin role."
+            check_permission(request, DOCUMENT_LIST_ALL_TENANTS, message="Listing all tenants requires the admin role.")
+        assert exc_info.value.detail == "Listing all tenants requires the admin role."
         assert exc_info.value.status_code == 403
 
     def test_none_role_allowed_for_document_delete(self):

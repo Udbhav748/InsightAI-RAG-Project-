@@ -580,18 +580,27 @@ class TestDeleteDocument:
 
 class TestRoleBasedAccessControl:
     """The role gate on DELETE /documents/{id} — see documents.py's
-    delete_document. Distinct from TestDeleteDocument's tenant-ownership
-    tests above, which all pin role="admin" specifically to isolate
-    ownership behavior from this gate."""
+    delete_document."""
 
-    def test_member_role_cannot_delete_document(self, client, monkeypatch, seeded_vector_store):
+    def test_member_role_can_delete_own_document(self, client, monkeypatch):
         monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "member"))
+        monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 1)
 
         response = client.delete(
             f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 200
+
+    def test_member_role_cannot_delete_other_tenant_document(self, client, monkeypatch, seeded_vector_store):
+        monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "member"))
+        monkeypatch.setattr("app.api.v1.routes.documents.get_document_owner", lambda document_id: 2)
+
+        response = client.delete(
+            f"/documents/{SEEDED_DOCUMENT_ID}", params={"confirm": "true"}, headers=VALID_HEADERS
+        )
+
+        assert response.status_code == 404
         # A denied request must never have touched the vector store.
         assert seeded_vector_store.get_chunks_by_document(SEEDED_DOCUMENT_ID) != []
 
