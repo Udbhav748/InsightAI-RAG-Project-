@@ -17,16 +17,31 @@ import Logo from '../ui/Logo'
 import useAuth from '../../hooks/useAuth'
 import { listApprovals } from '../../services/adminService'
 
-const NAV_ITEMS = [
-  { to: '/chat', label: 'New Chat', icon: MessageSquarePlus },
-  { to: '/history', label: 'History', icon: History },
-  { to: '/diagnose', label: 'Leaf Diagnosis', icon: Camera },
-  { to: '/upload', label: 'Upload Document', icon: UploadCloud },
-  { to: '/documents', label: 'Documents', icon: FileText },
+const NAV_SECTIONS = [
+  {
+    title: 'Plant Pathology & Vision',
+    items: [
+      {
+        to: '/diagnose',
+        label: 'Leaf Diagnosis',
+        icon: Camera,
+        badge: 'Vision AI',
+      },
+    ],
+  },
+  {
+    title: 'Document Intelligence',
+    items: [
+      { to: '/chat', label: 'New Chat', icon: MessageSquarePlus },
+      { to: '/documents', label: 'Documents', icon: FileText },
+      { to: '/upload', label: 'Upload Document', icon: UploadCloud },
+      { to: '/history', label: 'History', icon: History },
+    ],
+  },
 ]
 
 const navItemClass = ({ isActive }) =>
-  `group flex items-center gap-3 rounded-lg border-l-2 py-2.5 pl-[10px] pr-3 text-sm font-medium transition-all duration-200 ${
+  `group flex items-center gap-3 rounded-lg border-l-2 py-2 pl-[10px] pr-3 text-sm font-medium transition-all duration-200 ${
     isActive
       ? 'border-accent-500 bg-slate-900/5 text-slate-900 dark:bg-white/[0.04] dark:text-ink-primary'
       : 'border-transparent text-slate-500 hover:bg-slate-900/5 hover:text-slate-800 dark:text-ink-muted dark:hover:bg-white/[0.03] dark:hover:text-ink-secondary'
@@ -60,23 +75,37 @@ function SidebarContent({ onNavigate }) {
       <Link
         to="/"
         onClick={onNavigate}
-        className="flex items-center gap-2.5 rounded-lg px-5 pb-6 pt-6 transition-opacity hover:opacity-80"
+        className="flex items-center gap-2.5 rounded-lg px-5 pb-5 pt-6 transition-opacity hover:opacity-80"
       >
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border-light bg-slate-900/5 text-accent-600 dark:border-border dark:bg-white/[0.03] dark:text-accent-500">
           <Logo size={17} />
         </span>
         <div className="leading-tight">
           <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">InsightAI</p>
-          <p className="text-[11px] text-slate-400 dark:text-ink-muted">Document Intelligence</p>
+          <p className="text-[11px] text-slate-400 dark:text-ink-muted">AI Agronomy & DocAI</p>
         </div>
       </Link>
 
-      <nav className="flex-1 space-y-0.5 px-3">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-          <NavLink key={to} to={to} onClick={onNavigate} className={navItemClass}>
-            <Icon size={17} strokeWidth={1.75} />
-            {label}
-          </NavLink>
+      <nav className="flex-1 space-y-4 px-3">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.title} className="space-y-1">
+            <p className="px-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+              {section.title}
+            </p>
+            <div className="space-y-0.5">
+              {section.items.map(({ to, label, icon: Icon, badge }) => (
+                <NavLink key={to} to={to} onClick={onNavigate} className={navItemClass}>
+                  <Icon size={16} strokeWidth={1.75} />
+                  <span className="flex-1">{label}</span>
+                  {badge && (
+                    <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-400">
+                      {badge}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 

@@ -47,11 +47,11 @@ export default function CommandPalette({ open, onClose }) {
 
   const staticItems = useMemo(
     () => [
+      { id: 'nav-diagnose', label: 'Leaf Diagnosis (Plant Vision)', icon: Camera, action: () => navigate('/diagnose') },
       { id: 'nav-chat', label: 'New Chat', icon: MessageSquarePlus, action: () => navigate('/chat') },
-      { id: 'nav-history', label: 'History', icon: History, action: () => navigate('/history') },
-      { id: 'nav-diagnose', label: 'Leaf Diagnosis', icon: Camera, action: () => navigate('/diagnose') },
-      { id: 'nav-upload', label: 'Upload Document', icon: UploadCloud, action: () => navigate('/upload') },
       { id: 'nav-documents', label: 'Documents', icon: FileText, action: () => navigate('/documents') },
+      { id: 'nav-upload', label: 'Upload Document', icon: UploadCloud, action: () => navigate('/upload') },
+      { id: 'nav-history', label: 'History', icon: History, action: () => navigate('/history') },
       { id: 'nav-settings', label: 'Settings', icon: Settings, action: () => navigate('/settings') },
       {
         id: 'toggle-theme',

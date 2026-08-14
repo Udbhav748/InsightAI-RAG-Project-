@@ -131,11 +131,11 @@ describe('CommandPalette', () => {
 
     const input = screen.getByPlaceholderText('Jump to a page, search conversations...')
 
-    // Arrow down moves to second item ('History')
+    // Arrow down moves to second item ('New Chat')
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    expect(mockNavigate).toHaveBeenCalledWith('/history')
+    expect(mockNavigate).toHaveBeenCalledWith('/chat')
     expect(onClose).toHaveBeenCalled()
   })
 })
