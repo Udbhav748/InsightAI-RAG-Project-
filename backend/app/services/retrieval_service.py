@@ -171,7 +171,7 @@ def _retrieve_core(
             logger.warning("reranking_failed", extra={"extra_fields": {"error": str(exc)}})
             results = results[:resolved_top_k]
 
-    if reranked:
+    if reranked or settings.hybrid_search_enabled:
         filtered = results
     else:
         filtered = [chunk for chunk in results if chunk.score >= resolved_min_score]

@@ -575,10 +575,12 @@ The current self-hosted path, alongside Render (historical) above: a
 single plain EC2 instance running the same `docker-compose.yml` already
 used for local dev, plus two additive overlay files —
 `docker-compose.prod.yml` (restart policies, Postgres no longer published
-publicly) and, optionally, `docker-compose.caddy.yml` (TLS reverse proxy,
-once a domain exists). No IaC for this path — deliberately manual, since a
-single long-lived instance doesn't carry the same case for it that a
-many-moving-pieces cloud deployment would.
+publicly) and `docker-compose.caddy.yml` (TLS reverse proxy — the
+recommended default once a domain is pointed at the instance; see
+"Security group" below for the no-domain fallback). No IaC for this
+path — deliberately manual, since a single long-lived instance doesn't
+carry the same case for it that a many-moving-pieces cloud deployment
+would.
 
 **Why this is genuinely simpler than the Render path, not just different:**
 EC2's root volume is real, persistent disk — the single constraint that
@@ -616,34 +618,89 @@ no asterisk" approach used elsewhere in this doc. `RERANKING_ENABLED=false`
 
 ### Security group
 
+**Recommended (a domain is pointed at the instance): TLS via the Caddy
+overlay.** Point an A record at the instance's Elastic IP before you
+start (DNS propagation can take a few minutes to a few hours, so do this
+first) — Let's Encrypt needs a real, publicly-resolvable hostname to
+issue a certificate, which is why this can't just be turned on
+unconditionally with no domain configured.
+
 | Port | Source | Purpose |
 |---|---|---|
 | 22 | Your IP only | SSH |
-| 8000 | 0.0.0.0/0 | Backend, direct IP access (skip if using the Caddy overlay) |
-| 8080 | 0.0.0.0/0 | Frontend, direct IP access (skip if using the Caddy overlay) |
-| 80, 443 | 0.0.0.0/0 | Only if using `docker-compose.caddy.yml` — Caddy terminates TLS here instead |
+| 80, 443 | 0.0.0.0/0 | Caddy — HTTP→HTTPS redirect and TLS termination, `docker-compose.caddy.yml` |
 
-Never open 5432 (Postgres) — `docker-compose.prod.yml` already stops
-publishing it (`!reset []`), keeping it reachable only from other
-containers on the Compose network.
+**Fallback (no domain yet, or genuinely don't want TLS): direct IP
+access.** Traffic is plaintext HTTP in this mode — fine for a quick demo
+or throwaway instance, not for anything handling real user data or
+credentials over the network.
+
+| Port | Source | Purpose |
+|---|---|---|
+| 22 | Your IP only | SSH |
+| 8000 | 0.0.0.0/0 | Backend, direct IP access |
+| 8080 | 0.0.0.0/0 | Frontend, direct IP access |
+
+Never open 5432 (Postgres) in either mode — `docker-compose.prod.yml`
+already stops publishing it (`!reset []`), keeping it reachable only from
+other containers on the Compose network.
 
 ### Secrets
 
-Plain `.env` files on the instance (`backend/.env`, root `.env`) — not a
-managed secrets store. This is a real, stated trade-off: simpler to
-operate (matches local dev exactly) at the cost of secrets living in
-plaintext on disk rather than encrypted at rest by default. Reasonable
-for this project's actual scale; if that trade-off stops being
-acceptable, `app/core/config.py`'s `_load_secrets_from_ssm()` already
-supports resolving secrets from AWS SSM Parameter Store at startup given
-a `SECRETS_SSM_PREFIX` — not attempted here to keep this path genuinely
-simple.
+**Recommended: AWS SSM Parameter Store**, not plain `.env` files. Standard
+`SecureString` parameters (the default AWS-managed KMS key, no custom CMK
+needed) cost nothing extra — same free tier as any other Standard
+parameter — so there's no cost trade-off for using it, only a few extra
+setup steps. `app/core/config.py`'s `_load_secrets_from_ssm()` already
+implements the resolution side: given `SECRETS_SSM_PREFIX`, it reads
+`GEMINI_API_KEY`/`API_KEY`/`GROQ_API_KEY`/`DATABASE_URL`/`JWT_SECRET_KEY`
+from `<prefix>/<lowercased-name>` as `SecureString` parameters into the
+process environment before `Settings()` reads it, and never overwrites a
+value that's already set directly — so this is purely additive to the
+`.env` path below, not a replacement that breaks anything.
+
+To use it:
+
+1. Create the parameters (once, from your local machine or the instance,
+   wherever you have AWS credentials configured):
+   ```
+   aws ssm put-parameter --name /insightai/prod/gemini_api_key --type SecureString --value "<your key>"
+   aws ssm put-parameter --name /insightai/prod/api_key --type SecureString --value "<your key>"
+   aws ssm put-parameter --name /insightai/prod/jwt_secret_key --type SecureString --value "<a long random value>"
+   # optional: groq_api_key, database_url, following the same pattern
+   ```
+2. On the instance, set `SECRETS_SSM_PREFIX=/insightai/prod` in
+   `backend/.env` (this one value is fine to keep in plaintext — it's a
+   path, not a credential) instead of the real secret values.
+3. Give the instance's IAM role (or its EC2 instance profile)
+   `ssm:GetParameter` on that prefix, plus `kms:Decrypt` on the KMS key
+   used to encrypt the parameters (`alias/aws/ssm`, the default, unless a
+   custom key was used) — `SecureString` needs both, not just the SSM
+   permission alone. Least-privilege, not the broad SSM/KMS access the
+   AWS CLI session used to create the parameters needed.
+4. Deploy as usual (step 6 below) — `_load_secrets_from_ssm()` runs
+   before `Settings()` is ever constructed, so this needs no application
+   code change, only the environment variable above.
+
+**Fallback: plain `.env` files** (`backend/.env`, root `.env`) — still
+fully supported, and the simpler choice if this isn't running on AWS or
+the extra setup isn't worth it at this project's scale. The trade-off is
+real either way it's used: secrets live in plaintext on disk unless SSM
+(or an equivalent) is wired up. Steps 4-5 below show the plain-`.env`
+version; swap in the SSM steps above wherever they diverge.
 
 ### First-time deploy
 
+0. **Before launching anything**: if you're going the recommended
+   TLS route, buy/choose a domain and point an A record at the Elastic IP
+   you're about to attach in step 1 (you can attach the IP first, then
+   update the DNS record — just start DNS propagating as early as
+   possible, since it's the slowest step here). Skip this if you're
+   deliberately using the no-domain fallback instead.
 1. Launch an Ubuntu 22.04/24.04 EC2 instance (t3.small recommended, see
    above), attach an Elastic IP so the address survives a stop/start, and
-   open the security group ports above.
+   open the security group ports above (TLS mode: 22/80/443; fallback
+   mode: 22/8000/8080).
 2. SSH in and install Docker: `curl -fsSL https://get.docker.com | sudo sh`,
    then `sudo usermod -aG docker $USER` and re-login for it to take effect.
    Add a 2GB swapfile to absorb memory bursts (see "Instance sizing"
@@ -651,23 +708,30 @@ simple.
    sudo mkswap /swapfile && sudo swapon /swapfile`, then append
    `/swapfile none swap sw 0 0` to `/etc/fstab` so it survives a reboot.
 3. `git clone <repo-url> insightai-rag && cd insightai-rag`.
-4. `cp backend/.env.example backend/.env` and fill in real values
-   (`GEMINI_API_KEY`/`API_KEY`/`GROQ_API_KEY`/`JWT_SECRET_KEY` at minimum
-   — same variables the Render deploy already needs, see
+4. `cp backend/.env.example backend/.env` and set the required values —
+   **recommended**: just `SECRETS_SSM_PREFIX` (see "Secrets" above, and
+   create the actual parameters before this step); **fallback**: the real
+   `GEMINI_API_KEY`/`API_KEY`/`GROQ_API_KEY`/`JWT_SECRET_KEY` values
+   directly (same variables the Render deploy already needs, see
    `backend/.env.example`'s own comments). Optionally set `DATABASE_URL`
    to the Compose-network Postgres
    (`postgresql+psycopg2://insightai:insightai-dev-password@postgres:5432/insightai`
    — change that dev password for anything beyond a throwaway demo) for
    persisted users/RBAC/sessions instead of the in-memory fallback.
 5. `cp .env.example .env` and set `VITE_API_BASE_URL` to
-   `http://<instance-public-ip>:8000` (or `https://api.yourdomain.com` if
-   using the Caddy overlay).
-6. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-   --build` (add `-f docker-compose.caddy.yml` too if a domain is already
-   pointed at the instance — otherwise add that overlay in a later,
-   separate run once DNS is ready).
-7. Verify: `curl http://<instance-public-ip>:8000/health`, then load the
-   frontend at `http://<instance-public-ip>:8080`.
+   `https://api.yourdomain.com` (TLS mode) or
+   `http://<instance-public-ip>:8000` (fallback mode).
+6. If using TLS: edit `Caddyfile`'s two placeholder hostnames to your
+   real subdomains first. Then:
+   `docker compose -f docker-compose.yml -f docker-compose.prod.yml -f
+   docker-compose.caddy.yml up -d --build` (TLS mode — the recommended
+   default), or
+   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+   --build` (fallback mode, no Caddy overlay).
+7. Verify: TLS mode — `curl https://api.yourdomain.com/health`, then load
+   the frontend at `https://yourdomain.com`. Fallback mode — `curl
+   http://<instance-public-ip>:8000/health`, then load the frontend at
+   `http://<instance-public-ip>:8080`.
 
 ### Ongoing deploys and rollback
 

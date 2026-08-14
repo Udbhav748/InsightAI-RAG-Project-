@@ -129,9 +129,9 @@ class TestAgronomyPromptPersona:
     def test_agronomy_persona_contains_all_six_sections(self):
         sections = [
             "1. **Visual Diagnosis & Severity Assessment**",
-            "2. **Emergency 24–48h Field Protocol**",
+            "2. **Field Protocol & Maintenance Schedule**",
             "3. **Organic & Biological Control Remedies (OMRI approved options)**",
-            "4. **Chemical Fungicide / Bactericide Treatments with exact dosages**",
+            "4. **Chemical Controls & Dosage Protocols**",
             "5. **Long-Term Cultural Practices & Field Sanitation**",
             "6. **Grounded University Extension Citations**",
         ]
@@ -160,7 +160,7 @@ class TestAgronomyPromptPersona:
             persona="agronomist",
         )
         assert "Plant Pathology & Agronomy Expert Persona" in prompt
-        assert "Emergency 24–48h Field Protocol" in prompt
+        assert "Field Protocol & Maintenance Schedule" in prompt
         assert "Chlorothalonil" in prompt
 
 

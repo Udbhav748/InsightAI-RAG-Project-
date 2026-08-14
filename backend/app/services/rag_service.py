@@ -1066,7 +1066,12 @@ class ChatService:
             grade, top_score = "insufficient", None
         else:
             top_score = max(chunk.score for chunk in chunks)
-            grade = "good" if top_score >= settings.retrieval_grade_threshold else "weak"
+            effective_thresh = (
+                (settings.retrieval_grade_threshold / (getattr(settings, "hybrid_rrf_k", 60) + 1))
+                if settings.hybrid_search_enabled and top_score < 0.1
+                else settings.retrieval_grade_threshold
+            )
+            grade = "good" if top_score >= effective_thresh else "weak"
 
         logger.info(
             "retrieval_graded",
