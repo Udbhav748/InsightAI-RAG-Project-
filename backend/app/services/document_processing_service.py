@@ -370,7 +370,6 @@ class DocumentProcessingService:
             possible_duplicate_of=possible_duplicate_of,
         )
 
-
     def _log_stage(self, stage: str, document_id: str, **fields: Any) -> None:
         logger.info(
             "pipeline_stage_completed",

@@ -203,9 +203,7 @@ class CompiledGraph:
     ) -> AgentState:
         """Execute the graph from entry point to END or max_steps."""
         current_state = (
-            initial_state
-            if isinstance(initial_state, AgentState)
-            else AgentState(**initial_state)
+            initial_state if isinstance(initial_state, AgentState) else AgentState(**initial_state)
         )
         self._history = []
         current_node = self.entry_point
@@ -256,9 +254,7 @@ class CompiledGraph:
     ) -> AsyncIterator[tuple[str, AgentState]]:
         """Stream each step's (node_name, state) as nodes finish execution."""
         current_state = (
-            initial_state
-            if isinstance(initial_state, AgentState)
-            else AgentState(**initial_state)
+            initial_state if isinstance(initial_state, AgentState) else AgentState(**initial_state)
         )
         self._history = []
         current_node = self.entry_point

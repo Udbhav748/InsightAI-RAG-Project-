@@ -152,8 +152,7 @@ def reciprocal_rank_fusion(
 
     sorted_chunk_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)
     return [
-        chunk_map[cid].model_copy(update={"score": scores[cid]})
-        for cid in sorted_chunk_ids[:top_k]
+        chunk_map[cid].model_copy(update={"score": scores[cid]}) for cid in sorted_chunk_ids[:top_k]
     ]
 
 

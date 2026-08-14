@@ -354,7 +354,11 @@ async def fact_checker_node(
 
     if not settings.citation_verification_enabled or not context or not context.llm_client:
         return state.copy_with(
-            fact_check_result={"verified": True, "skipped": True, "reason": "verification_disabled"},
+            fact_check_result={
+                "verified": True,
+                "skipped": True,
+                "reason": "verification_disabled",
+            },
             steps_taken=state.steps_taken + 1,
         )
 
@@ -379,7 +383,9 @@ async def fact_checker_node(
         score = sum(1 for n, _ in cited_pairs if verifications.get(str(n), True)) / len(cited_pairs)
         result = {"verified": verified, "score": score, "details": verifications}
     except Exception as exc:
-        logger.warning("fact_check_verification_failed", extra={"extra_fields": {"error": str(exc)}})
+        logger.warning(
+            "fact_check_verification_failed", extra={"extra_fields": {"error": str(exc)}}
+        )
         result = {"verified": True, "skipped": True, "reason": "parse_error"}
 
     return state.copy_with(

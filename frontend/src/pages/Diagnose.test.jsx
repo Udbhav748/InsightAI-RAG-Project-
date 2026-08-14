@@ -284,7 +284,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
   })
 
   it('displays LeafSense offline error banner with actionable instructions when service is down', async () => {
-    diagnoseService.checkLeafSenseHealth.mockResolvedValueOnce({
+    diagnoseService.checkLeafSenseHealth.mockResolvedValue({
       online: false,
       port: 8001,
       url: 'http://localhost:8001',
@@ -302,7 +302,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     expect(screen.getByText(/\.\/start-local\.ps1/i)).toBeInTheDocument()
 
     // Test Recheck button
-    diagnoseService.checkLeafSenseHealth.mockResolvedValueOnce({
+    diagnoseService.checkLeafSenseHealth.mockResolvedValue({
       online: true,
       port: 8001,
       url: 'http://localhost:8001',

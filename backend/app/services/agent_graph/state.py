@@ -7,13 +7,15 @@ intermediate drafts, fact-check outcomes, reflection counts, and final responses
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from app.models.document import RetrievedChunk, WebSearchResult
-    from app.models.schemas import ChatResponse, DiagnosisInfo
+# Real (not TYPE_CHECKING-only) imports: these are Pydantic field types below,
+# and Pydantic must resolve them to actual classes at model-build time, not
+# just at static-analysis time.
+from app.models.document import RetrievedChunk, WebSearchResult
+from app.models.schemas import ChatResponse, DiagnosisInfo
 
 
 class AgentState(BaseModel):

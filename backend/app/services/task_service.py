@@ -150,11 +150,7 @@ class TaskService:
             task = self._tasks.get(task_id)
             if task is None:
                 return None
-            if (
-                tenant_id is not None
-                and task.tenant_id is not None
-                and task.tenant_id != tenant_id
-            ):
+            if tenant_id is not None and task.tenant_id is not None and task.tenant_id != tenant_id:
                 return None
             return task
 

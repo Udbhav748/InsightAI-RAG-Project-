@@ -497,11 +497,7 @@ def _build_diagnosis_query(
     should actually match."""
     crop = collection or prediction.crop or _extract_crop_context(user_query) or "crop"
     disease = prediction.disease
-    base = (
-        f"{disease} on {crop}"
-        if disease != "healthy"
-        else f"healthy {crop}"
-    )
+    base = f"{disease} on {crop}" if disease != "healthy" else f"healthy {crop}"
     return f"{base}. {user_query}" if user_query else base
 
 
@@ -1525,7 +1521,11 @@ class ChatService:
             # corrective loop, and only for plain retrieve — a research
             # answer depends on live web state, so it's never cached).
             cache_key = self._make_cache_key(
-                query, session_id, self._vector_store, tenant_id=tenant_id, document_ids=document_ids
+                query,
+                session_id,
+                self._vector_store,
+                tenant_id=tenant_id,
+                document_ids=document_ids,
             )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
@@ -1845,7 +1845,11 @@ class ChatService:
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
             # Check cache first (only cache final responses after corrective loop)
             cache_key = self._make_cache_key(
-                query, session_id, self._vector_store, tenant_id=tenant_id, document_ids=document_ids
+                query,
+                session_id,
+                self._vector_store,
+                tenant_id=tenant_id,
+                document_ids=document_ids,
             )
             cached = self._get_cached_response(cache_key)
             if cached is not None:
@@ -2109,7 +2113,9 @@ class ChatService:
             steps_taken += 1  # vision inference
             prediction = diagnose_image(image_bytes, filename, content_type)
 
-            crop_context = prediction.crop if prediction.crop and prediction.crop != "unknown" else None
+            crop_context = (
+                prediction.crop if prediction.crop and prediction.crop != "unknown" else None
+            )
             diagnosis_query = _build_diagnosis_query(prediction, query, collection=crop_context)
 
             steps_taken += 1  # retrieval

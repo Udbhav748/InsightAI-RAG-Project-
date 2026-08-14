@@ -324,9 +324,7 @@ def contextualize_query(
         return query
     prompt = (
         "Conversation history:\n"
-        + "\n".join(
-            f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history
-        )
+        + "\n".join(f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history)
         + f"\n\nFollow-up question: {query}\n\n"
         "Rewrite the follow-up question as a standalone question that "
         "makes sense without the conversation history. Return ONLY the "
@@ -339,17 +337,13 @@ def contextualize_query(
         return query
 
 
-def verify_citations(
-    llm_client: LLMClient, answer: str, chunks: list[RetrievedChunk]
-) -> bool:
+def verify_citations(llm_client: LLMClient, answer: str, chunks: list[RetrievedChunk]) -> bool:
     """True if every [N] citation in answer is supported by chunk text."""
     citation_numbers = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)})
     if not citation_numbers:
         return True
     chunk_by_number = {i + 1: chunk for i, chunk in enumerate(chunks)}
-    cited_pairs = [
-        (n, chunk_by_number[n].text) for n in citation_numbers if n in chunk_by_number
-    ]
+    cited_pairs = [(n, chunk_by_number[n].text) for n in citation_numbers if n in chunk_by_number]
     if not cited_pairs:
         return True
     prompt = (
@@ -569,15 +563,15 @@ def correct_answer(
     generate_fn: Callable[..., str] | None = None,
 ) -> tuple[str, int, int, list[WebSearchResult], bool]:
     """Corrective RAG loop regeneration stage (blocking)."""
-    chemical_safe = (
-        not getattr(settings, "chemical_safety_verification_enabled", True)
-        or verify_chemical_safety(answer)
+    chemical_safe = not getattr(
+        settings, "chemical_safety_verification_enabled", True
+    ) or verify_chemical_safety(answer)
+    citation_safe = not settings.citation_verification_enabled or verify_citations(
+        llm_client, answer, chunks
     )
-    citation_safe = (
-        not settings.citation_verification_enabled
-        or verify_citations(llm_client, answer, chunks)
+    ungrounded = (
+        is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     )
-    ungrounded = is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     if not ungrounded:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -600,9 +594,7 @@ def correct_answer(
             }
         },
     )
-    gen = generate_fn or (
-        lambda q, c, h, **kw: generate_answer(llm_client, q, c, h, **kw)
-    )
+    gen = generate_fn or (lambda q, c, h, **kw: generate_answer(llm_client, q, c, h, **kw))
     answer = gen(
         query,
         chunks,
@@ -614,10 +606,9 @@ def correct_answer(
     llm_calls += 1
     steps_taken += 1  # regeneration
 
-    chemical_safe_after = (
-        not getattr(settings, "chemical_safety_verification_enabled", True)
-        or verify_chemical_safety(answer)
-    )
+    chemical_safe_after = not getattr(
+        settings, "chemical_safety_verification_enabled", True
+    ) or verify_chemical_safety(answer)
     if not is_ungrounded(answer, chunks, web_results) and chemical_safe_after:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -632,9 +623,7 @@ def correct_answer(
         )
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
-    search = search_fn or (
-        lambda q, conf: search_web_fallback(q, confirm_web_search=conf)
-    )
+    search = search_fn or (lambda q, conf: search_web_fallback(q, confirm_web_search=conf))
     web_results = search(query, confirm_web_search)
     web_search_attempted = True
     steps_taken += 1  # web search
@@ -674,15 +663,15 @@ def correct_answer_streamed(
     generate_streamed_fn: Callable[..., Iterator[tuple[bool, str]]] | None = None,
 ) -> Generator[dict[str, Any], None, tuple[str, int, int, list[WebSearchResult], bool]]:
     """Streamed counterpart to correct_answer."""
-    chemical_safe = (
-        not getattr(settings, "chemical_safety_verification_enabled", True)
-        or verify_chemical_safety(answer)
+    chemical_safe = not getattr(
+        settings, "chemical_safety_verification_enabled", True
+    ) or verify_chemical_safety(answer)
+    citation_safe = not settings.citation_verification_enabled or verify_citations(
+        llm_client, answer, chunks
     )
-    citation_safe = (
-        not settings.citation_verification_enabled
-        or verify_citations(llm_client, answer, chunks)
+    ungrounded = (
+        is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     )
-    ungrounded = is_ungrounded(answer, chunks, web_results) or not citation_safe or not chemical_safe
     if not ungrounded:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -705,7 +694,9 @@ def correct_answer_streamed(
             }
         },
     )
-    yield trace_event("reflecting", {"reason": "chemical_safety" if not chemical_safe else "ungrounded_answer"})
+    yield trace_event(
+        "reflecting", {"reason": "chemical_safety" if not chemical_safe else "ungrounded_answer"}
+    )
     gen_stream = generate_streamed_fn or (
         lambda q, c, h, **kw: generate_answer_streamed(llm_client, q, c, h, **kw)
     )
@@ -725,10 +716,9 @@ def correct_answer_streamed(
     llm_calls += 1
     steps_taken += 1  # regeneration
 
-    chemical_safe_after = (
-        not getattr(settings, "chemical_safety_verification_enabled", True)
-        or verify_chemical_safety(answer)
-    )
+    chemical_safe_after = not getattr(
+        settings, "chemical_safety_verification_enabled", True
+    ) or verify_chemical_safety(answer)
     if not is_ungrounded(answer, chunks, web_results) and chemical_safe_after:
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
@@ -743,9 +733,7 @@ def correct_answer_streamed(
         )
         return answer, llm_calls, steps_taken, web_results, web_search_attempted
 
-    search = search_fn or (
-        lambda q, conf: search_web_fallback(q, confirm_web_search=conf)
-    )
+    search = search_fn or (lambda q, conf: search_web_fallback(q, confirm_web_search=conf))
     web_results = search(query, confirm_web_search)
     web_search_attempted = True
     steps_taken += 1  # web search
@@ -899,9 +887,7 @@ class ReflectionEngine:
             )
         )
 
-    def contextualize(
-        self, query: str, history: list[dict[str, str]] | None
-    ) -> str:
+    def contextualize(self, query: str, history: list[dict[str, str]] | None) -> str:
         return contextualize_query(self._llm_client, query, history)
 
     def verify_citations(self, answer: str, chunks: list[RetrievedChunk]) -> bool:

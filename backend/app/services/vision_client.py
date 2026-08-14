@@ -165,7 +165,9 @@ def _try_auto_start_leafsense() -> bool:
     return False
 
 
-def _diagnose_with_gemini_fallback(contents: bytes, filename: str, content_type: str) -> VisionPrediction | None:
+def _diagnose_with_gemini_fallback(
+    contents: bytes, filename: str, content_type: str
+) -> VisionPrediction | None:
     """Fallback visual classifier using Gemini Vision when LeafSense is unreachable."""
     if not settings.gemini_api_key:
         return None
@@ -191,6 +193,7 @@ def _diagnose_with_gemini_fallback(contents: bytes, filename: str, content_type:
         )
         text = response.text or ""
         import json
+
         clean_text = text.strip()
         if "```json" in clean_text:
             clean_text = clean_text.split("```json")[1].split("```")[0].strip()
@@ -201,7 +204,10 @@ def _diagnose_with_gemini_fallback(contents: bytes, filename: str, content_type:
         confidence = float(data.get("confidence", 0.90))
         crop, disease = CLASS_LABEL_MAP.get(raw_class, ("unknown", raw_class))
         low_confidence = confidence < settings.vision_confidence_threshold
-        logger.info("vision_gemini_fallback_succeeded", extra={"extra_fields": {"class": raw_class, "confidence": confidence}})
+        logger.info(
+            "vision_gemini_fallback_succeeded",
+            extra={"extra_fields": {"class": raw_class, "confidence": confidence}},
+        )
         return VisionPrediction(
             raw_class=raw_class,
             crop=crop,

@@ -56,9 +56,7 @@ def has_permission(role: str | None, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, frozenset())
 
 
-def check_permission(
-    request: Request, permission: str, *, message: str, **log_fields: Any
-) -> None:
+def check_permission(request: Request, permission: str, *, message: str, **log_fields: Any) -> None:
     """Raise ForbiddenError (and log an audit_event) if the caller's role
     lacks `permission`. log_fields are merged into the audit log's
     extra_fields (e.g. document_id) — callers pass whatever's in scope."""

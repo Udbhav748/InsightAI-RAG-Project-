@@ -308,4 +308,3 @@ class TaskNotFoundError(AppError):
     status_code = 404
     taxonomy_category = "input"
     error_code = "TASK_NOT_FOUND"
-

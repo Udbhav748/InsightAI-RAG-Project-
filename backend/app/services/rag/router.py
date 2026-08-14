@@ -219,11 +219,7 @@ def build_diagnosis_query(
     should actually match."""
     crop = collection or prediction.crop or extract_crop_context(user_query) or "crop"
     disease = prediction.disease
-    base = (
-        f"{disease} on {crop}"
-        if disease != "healthy"
-        else f"healthy {crop}"
-    )
+    base = f"{disease} on {crop}" if disease != "healthy" else f"healthy {crop}"
     return f"{base}. {user_query}" if user_query else base
 
 

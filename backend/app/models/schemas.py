@@ -458,11 +458,12 @@ class TaskStatusResponse(BaseModel):
     progress: float = Field(
         ..., ge=0.0, le=100.0, description="Processing progress percentage (0-100)."
     )
-    current_step: str | None = Field(None, description="Human-readable description of current step.")
+    current_step: str | None = Field(
+        None, description="Human-readable description of current step."
+    )
     error: str | None = Field(None, description="Error message if status is 'failed'.")
     result: DocumentProcessingResponse | None = Field(
         None, description="Final document processing result once status is 'completed'."
     )
     created_at: float = Field(..., description="Epoch timestamp when the task was created.")
     updated_at: float = Field(..., description="Epoch timestamp when the task was last updated.")
-

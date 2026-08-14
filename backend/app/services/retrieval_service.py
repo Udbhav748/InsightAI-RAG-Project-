@@ -143,6 +143,7 @@ def _retrieve_core(
     if collection is not None and resolved_doc_ids is None:
         try:
             from app.services.document_repository import list_documents
+
             docs = list_documents(tenant_id=tenant_id, collection=collection)
             if docs:
                 resolved_doc_ids = [doc["document_id"] for doc in docs]
@@ -181,15 +182,20 @@ def _retrieve_core(
     elif collection:
         # Fallback: if collection couldn't be resolved via DB, filter by chunk metadata when present
         collection_filtered = [
-            chunk for chunk in filtered
-            if chunk.metadata.get("collection") == collection or chunk.metadata.get("crop") == collection
+            chunk
+            for chunk in filtered
+            if chunk.metadata.get("collection") == collection
+            or chunk.metadata.get("crop") == collection
         ]
         if collection_filtered:
             filtered = collection_filtered
 
     log_extra: dict[str, Any]
     if resolved_doc_ids:
-        log_extra = {"document_id_count": len(resolved_doc_ids), "results_after_doc_filter": len(filtered)}
+        log_extra = {
+            "document_id_count": len(resolved_doc_ids),
+            "results_after_doc_filter": len(filtered),
+        }
     elif collection:
         log_extra = {"collection": collection, "results_after_collection_filter": len(filtered)}
     else:

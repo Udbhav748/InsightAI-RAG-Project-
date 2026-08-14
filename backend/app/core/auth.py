@@ -98,9 +98,11 @@ def _check_rate_limit(client_name: str) -> bool:
                 # present; fall back to any key for the truly-stale corner.
                 oldest = min(
                     _rate_limit_store,
-                    key=lambda name: _rate_limit_store[name].requests[0]
-                    if _rate_limit_store[name].requests
-                    else 0.0,
+                    key=lambda name: (
+                        _rate_limit_store[name].requests[0]
+                        if _rate_limit_store[name].requests
+                        else 0.0
+                    ),
                     default=client_name,
                 )
                 _rate_limit_store.pop(oldest, None)

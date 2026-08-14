@@ -30,9 +30,7 @@ def log_agent_started(agent: str, task: str, **extra: Any) -> None:
     _emit("agent_started", agent=agent, task_length=len(task), **extra)
 
 
-def log_agent_completed(
-    agent: str, task: str, start: float, *, outcome: str, **extra: Any
-) -> None:
+def log_agent_completed(agent: str, task: str, start: float, *, outcome: str, **extra: Any) -> None:
     """Record that `agent` finished. start is a time.perf_counter() value
     captured at the matching log_agent_started; duration is computed here
     so the two events can't drift on clock source."""
