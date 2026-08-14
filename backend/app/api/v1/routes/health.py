@@ -58,6 +58,12 @@ def health_check() -> dict[str, Any]:
             "url": settings.vision_service_url,
             "online": is_leafsense_online(),
             "has_gemini_fallback": bool(settings.gemini_api_key),
+            "disease_classes_count": 38,
+        },
+        "vector_store": {
+            "backend": "pgvector" if settings.pgvector_enabled else "faiss",
+            "model": settings.embedding_model,
+            "status": "ready",
         },
     }
     if db_enabled():

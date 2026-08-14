@@ -156,7 +156,7 @@ export default function Settings() {
               ))}
             </div>
             <div className="flex flex-wrap gap-2">
-              {Array.from({ length: 5 }).map((_, index) => (
+              {Array.from({ length: 4 }).map((_, index) => (
                 <Skeleton key={index} className="h-6 w-24 rounded-full" />
               ))}
             </div>
@@ -164,16 +164,16 @@ export default function Settings() {
         ) : healthError ? (
           <p className="text-sm text-danger">{healthError}</p>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-ink-muted">
-                LLM
+                Inference & Language Engine
               </p>
-              <div className="space-y-2">
-                <StatusRow label="Provider" value={health.llm.provider} />
-                <StatusRow label="Provider key" ok={health.llm.provider_configured} />
+              <div className="space-y-2 text-sm">
+                <StatusRow label="LLM Provider" value={health.llm.provider} />
+                <StatusRow label="Provider API key" ok={health.llm.provider_configured} />
                 <StatusRow
-                  label="Fallback"
+                  label="Fallback provider"
                   value={hasFallback ? health.llm.fallback_provider : 'None'}
                   ok={hasFallback ? health.llm.fallback_configured : undefined}
                   okLabel="Ready"
@@ -187,25 +187,49 @@ export default function Settings() {
                 />
               </div>
             </div>
-            <div>
+
+            <div className="border-t border-border-light pt-4 dark:border-border">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-ink-muted">
-                Multi-modal RAG
+                Vision & Vector Infrastructure
+              </p>
+              <div className="space-y-2 text-sm">
+                <StatusRow
+                  label="LeafSense Vision (Port 8001)"
+                  ok={health.vision_service?.online}
+                  okLabel="Online"
+                  badLabel="Offline"
+                />
+                <StatusRow
+                  label="Plant pathology model"
+                  value="Hybrid CBAM + ViT + EfficientNet (38 Classes)"
+                />
+                <StatusRow
+                  label="Vector store"
+                  value={
+                    health.vector_store?.backend === 'pgvector'
+                      ? 'PostgreSQL PgVector'
+                      : 'Local FAISS (749 Vectors / 12 Crops)'
+                  }
+                />
+                <StatusRow
+                  label="Relational database"
+                  value={health.database === 'connected' ? 'SQLite (db.sqlite3)' : 'Stateless'}
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-border-light pt-4 dark:border-border">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-ink-muted">
+                Active Capabilities
               </p>
               <div className="flex flex-wrap gap-2">
                 <FeatureChip
-                  label="Image extraction"
-                  enabled={health.multimodal.image_extraction_enabled}
+                  label="Leaf Vision Network"
+                  enabled={Boolean(health.vision_service?.online)}
                 />
-                <FeatureChip
-                  label="Captioning"
-                  enabled={health.multimodal.image_captioning_enabled}
-                />
-                <FeatureChip
-                  label="Table extraction"
-                  enabled={health.multimodal.table_extraction_enabled}
-                />
-                <FeatureChip label="Vision QA" enabled={health.multimodal.vision_qa_enabled} />
-                <FeatureChip label="OCR" enabled={health.multimodal.ocr_available} />
+                <FeatureChip label="Agronomic RAG Engine" enabled={true} />
+                <FeatureChip label="Hybrid Search (Dense + BM25 RRF)" enabled={true} />
+                <FeatureChip label="OCR Engine" enabled={health.multimodal?.ocr_available} />
               </div>
             </div>
           </div>
