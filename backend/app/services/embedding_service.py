@@ -73,6 +73,7 @@ def get_embedding_model() -> SentenceTransformer:
     chunk/query), the same once-per-process lru_cache lifecycle as before.
     """
     from sentence_transformers import SentenceTransformer
+
     from app.core.config import _sanitize_hf_cache_dirs
 
     _sanitize_hf_cache_dirs()

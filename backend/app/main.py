@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Pre-warm embedding model in background thread so first user queries are instantaneous
     import threading
+
     from app.services.embedding_service import get_embedding_model
     threading.Thread(target=get_embedding_model, daemon=True).start()
 
