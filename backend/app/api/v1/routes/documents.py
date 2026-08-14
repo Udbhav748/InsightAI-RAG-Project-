@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.api.v1.routes.query import get_image_vector_store, get_llm_client, get_vector_store
@@ -13,15 +13,18 @@ from app.core.exceptions import (
     ApprovalRequiredError,
     ConfirmationRequiredError,
     DocumentNotFoundError,
+    TaskNotFoundError,
     VectorStoreNotFoundError,
 )
 from app.models.schemas import (
+    AsyncTaskResponse,
     DocumentDeleteResponse,
     DocumentImageItem,
     DocumentImagesResponse,
     DocumentListResponse,
     DocumentProcessingResponse,
     HighlightResponse,
+    TaskStatusResponse,
 )
 from app.services import approval_service, s3_sync_service
 from app.services.document_processing_service import DocumentProcessingService
@@ -31,7 +34,8 @@ from app.services.document_repository import (
     list_documents,
 )
 from app.services.image_captioning_service import image_storage_dir, load_image_manifest
-from app.services.upload_service import UPLOAD_DIR
+from app.services.task_service import execute_background_ingestion, get_task_service
+from app.services.upload_service import UPLOAD_DIR, save_uploaded_file
 from app.services.validation_service import validate_pdf_upload
 
 router = APIRouter(tags=["Documents"], dependencies=[Depends(require_auth)])
@@ -214,6 +218,101 @@ async def upload_document(
     return response
 
 
+@router.post(
+    "/upload/async",
+    response_model=AsyncTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_document_async(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    collection: str | None = Form(None),
+) -> AsyncTaskResponse:
+    """Asynchronously process large PDF uploads in the background (Recommendation 2).
+
+    Saves the file to disk, queues the ingestion pipeline via FastAPI BackgroundTasks,
+    and returns a task_id immediately. Callers poll GET /documents/tasks/{task_id}
+    to observe stage transitions (extracting -> chunking -> embedding -> indexing -> completed).
+    """
+    contents = await file.read()
+    await file.seek(0)
+
+    validate_pdf_upload(file, contents)
+
+    uploaded = await save_uploaded_file(file)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    task_service = get_task_service()
+
+    task = task_service.create_task(
+        original_filename=uploaded["original_filename"],
+        document_id=uploaded["document_id"],
+        stored_filename=uploaded["stored_filename"],
+        file_size=uploaded["file_size"],
+        tenant_id=tenant_id,
+        collection=collection,
+    )
+
+    background_tasks.add_task(
+        execute_background_ingestion,
+        task_id=task.task_id,
+        document_id=uploaded["document_id"],
+        original_filename=uploaded["original_filename"],
+        stored_filename=uploaded["stored_filename"],
+        file_size=uploaded["file_size"],
+        tenant_id=tenant_id,
+        collection=collection,
+    )
+
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "document_async_upload_queued",
+                "path": request.url.path,
+                "task_id": task.task_id,
+                "document_id": uploaded["document_id"],
+                "tenant_id": tenant_id,
+                "client": getattr(request.state, "client_name", "unknown"),
+            }
+        },
+    )
+
+    return AsyncTaskResponse(
+        task_id=task.task_id,
+        document_id=uploaded["document_id"],
+        original_filename=uploaded["original_filename"],
+        status="queued",
+        progress=0.0,
+        message="Document upload queued for background processing.",
+        created_at=task.created_at,
+    )
+
+
+@router.get("/documents/tasks/{task_id}", response_model=TaskStatusResponse)
+def get_task_status(task_id: str, request: Request) -> TaskStatusResponse:
+    """Check status and progress of a background ingestion task.
+
+    Enforces tenant isolation: tasks owned by another tenant return 404.
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    task = get_task_service().get_task(task_id, tenant_id=tenant_id)
+    if task is None:
+        raise TaskNotFoundError(f"No task found with id {task_id}")
+
+    return task.to_response()
+
+
+@router.get("/documents/tasks", response_model=list[TaskStatusResponse])
+def list_tasks(
+    request: Request, status: str | None = None, limit: int = 50
+) -> list[TaskStatusResponse]:
+    """List recent background tasks for the requesting tenant."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    tasks = get_task_service().list_tasks(tenant_id=tenant_id, status=status, limit=limit)
+    return [t.to_response() for t in tasks]
+
+
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
 def delete_document(
     document_id: str, request: Request, confirm: bool = False, approved: bool = False
@@ -294,7 +393,7 @@ def delete_document(
             raise DocumentNotFoundError(f"No document found with id {document_id}")
 
     vector_store = get_vector_store()
-    removed_count = vector_store.delete_document(document_id)
+    removed_count = vector_store.delete_document(document_id, tenant_id=requester_tenant_id)
 
     if removed_count == 0:
         raise DocumentNotFoundError(f"No document found with id {document_id}")
@@ -309,7 +408,9 @@ def delete_document(
     if settings.clip_embedding_enabled:
         image_store = get_image_vector_store()
         try:
-            image_chunks_removed = image_store.delete_document(document_id)
+            image_chunks_removed = image_store.delete_document(
+                document_id, tenant_id=requester_tenant_id
+            )
             image_store.save()
         except VectorStoreNotFoundError:
             pass

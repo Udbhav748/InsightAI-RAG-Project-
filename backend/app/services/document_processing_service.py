@@ -117,13 +117,38 @@ class DocumentProcessingService:
     async def process(
         self, file: UploadFile, tenant_id: int | None = None, collection: str | None = None
     ) -> DocumentProcessingResponse:
-        start = time.perf_counter()
-
         uploaded = await save_uploaded_file(file)
-        document_id = uploaded["document_id"]
-        self._log_stage("upload", document_id, file_size=uploaded["file_size"])
+        return await self.process_saved_file(
+            document_id=uploaded["document_id"],
+            original_filename=uploaded["original_filename"],
+            stored_filename=uploaded["stored_filename"],
+            file_size=uploaded["file_size"],
+            tenant_id=tenant_id,
+            collection=collection,
+        )
 
-        file_path = UPLOAD_DIR / uploaded["stored_filename"]
+    async def process_saved_file(
+        self,
+        document_id: str,
+        original_filename: str,
+        stored_filename: str,
+        file_size: int,
+        tenant_id: int | None = None,
+        collection: str | None = None,
+        progress_callback: Any | None = None,
+    ) -> DocumentProcessingResponse:
+        def _notify(stage: str, progress: float, step: str | None = None) -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(stage, progress, step)
+                except Exception:
+                    pass
+
+        start = time.perf_counter()
+        _notify("extracting", 15.0, "Extracting text layer and scanning OCR")
+        self._log_stage("upload", document_id, file_size=file_size)
+
+        file_path = UPLOAD_DIR / stored_filename
         extracted = extract_text_from_pdf(document_id, file_path)
         self._log_stage(
             "extraction",
@@ -148,15 +173,11 @@ class DocumentProcessingService:
                 },
             )
 
+        _notify("chunking", 40.0, "Chunking document text")
         chunks = chunk_document(extracted_document, tenant_id=tenant_id)
         self._log_stage("chunking", document_id, total_chunks=len(chunks))
 
         # --- Multi-modal ingestion (all off by default) ------------------
-        # Image extraction (Phase 1) → captioning (Phase 2) and table
-        # extraction (Phase 5) append their chunks after the body-text
-        # chunks, all embedded and stored through the *same* pipeline, so
-        # the vector store sees one homogeneous index. chunk_index_start
-        # keeps chunk_index ordering stable for get_chunks_by_document.
         total_images = 0
         images_captioned = 0
         images_embedded = 0
@@ -166,6 +187,7 @@ class DocumentProcessingService:
         captions_by_image_id: dict[str, str] = {}
 
         if settings.image_extraction_enabled:
+            _notify("extracting", 48.0, "Extracting embedded images")
             image_records = extract_images_from_pdf(document_id, file_path)
             total_images = len(image_records)
             self._log_stage("image_extraction", document_id, image_count=total_images)
@@ -179,6 +201,7 @@ class DocumentProcessingService:
                             extra={"extra_fields": {"document_id": document_id}},
                         )
                     else:
+                        _notify("chunking", 55.0, "Captioning images via vision LLM")
                         caption_chunks = caption_images(
                             images,
                             self._llm_client,
@@ -202,9 +225,9 @@ class DocumentProcessingService:
 
                 # Cross-modal figure retrieval (Phase 4): embed the *figure*
                 # images in CLIP space and index them into the dedicated image
-                # store. Captions feed the retrievable text; embedding is
-                # independent of whether captioning produced any.
+                # store.
                 if settings.clip_embedding_enabled and self._image_vector_store is not None:
+                    _notify("embedding", 60.0, "Generating CLIP image embeddings")
                     images_embedded = embed_images_to_store(
                         images,
                         self._image_vector_store,
@@ -219,6 +242,7 @@ class DocumentProcessingService:
                     )
 
         if settings.table_extraction_enabled:
+            _notify("extracting", 65.0, "Extracting PDF tables")
             tables = extract_tables_from_pdf(document_id, file_path)
             total_tables = len(tables)
             self._log_stage("table_extraction", document_id, table_count=total_tables)
@@ -243,15 +267,15 @@ class DocumentProcessingService:
             )
 
         all_chunks = chunks + multimodal_chunks
+        _notify("embedding", 75.0, "Generating text embeddings")
         embedded_chunks = generate_embeddings(all_chunks)
         self._log_stage("embedding", document_id, total_embeddings=len(embedded_chunks))
 
+        _notify("indexing", 90.0, "Writing vectors to index and persisting metadata")
         if embedded_chunks:
             try:
                 self._vector_store.add_embeddings(embedded_chunks)
             except VectorStoreNotFoundError:
-                # First document ever processed against this store: create
-                # it now, sized to what we just embedded, then retry once.
                 self._vector_store.create_index(dimension=len(embedded_chunks[0].embedding))
                 self._vector_store.add_embeddings(embedded_chunks)
             self._vector_store.save()
@@ -260,15 +284,12 @@ class DocumentProcessingService:
             "vector_store", document_id, total_vectors=self._vector_store.total_vectors()
         )
 
-        # Best-effort durable metadata record (PostgreSQL when configured).
-        # Runs after the vector store write so a DB failure can never lose
-        # the searchable document — it only loses the durable record.
         persist_document(
             tenant_id=tenant_id,
             document_id=document_id,
-            original_filename=uploaded["original_filename"],
-            stored_filename=uploaded["stored_filename"],
-            file_size=uploaded["file_size"],
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            file_size=file_size,
             total_pages=extracted["total_pages"],
             total_chunks=len(chunks),
             total_embeddings=len(embedded_chunks),
@@ -276,12 +297,6 @@ class DocumentProcessingService:
             collection=collection,
         )
 
-        # Agent 3.3 — duplicate-document detection (warn, never block).
-        # The upload's own first-chunk embedding is the fingerprint;
-        # compare it against every other same-tenant document's first-chunk
-        # embedding (L2-normalized → inner product == cosine similarity).
-        # Any failure degrades to no warning — this must never fail an
-        # upload.
         possible_duplicate_of: str | None = None
         if (
             settings.duplicate_document_detection_enabled
@@ -319,6 +334,7 @@ class DocumentProcessingService:
                 )
 
         processing_duration = time.perf_counter() - start
+        _notify("completed", 100.0, "Document ingestion complete")
 
         logger.info(
             "document_processing_completed",
@@ -340,7 +356,7 @@ class DocumentProcessingService:
 
         return DocumentProcessingResponse(
             document_id=document_id,
-            original_filename=uploaded["original_filename"],
+            original_filename=original_filename,
             total_pages=extracted["total_pages"],
             total_chunks=len(chunks),
             total_embeddings=len(embedded_chunks),
@@ -354,6 +370,7 @@ class DocumentProcessingService:
             collection=collection,
             possible_duplicate_of=possible_duplicate_of,
         )
+
 
     def _log_stage(self, stage: str, document_id: str, **fields: Any) -> None:
         logger.info(

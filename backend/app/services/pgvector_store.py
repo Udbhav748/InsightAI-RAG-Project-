@@ -307,17 +307,19 @@ class PgvectorVectorStore(VectorStore):
             rows = conn.execute(sql, params).mappings().all()
         return [self._record_to_chunk(row, float(row["score"])) for row in rows]
 
-    def delete_document(self, document_id: str) -> int:
+    def delete_document(self, document_id: str, tenant_id: int | None = None) -> int:
+        filters = ["document_id = :document_id"]
+        params: dict[str, Any] = {"document_id": document_id}
+        if tenant_id is not None:
+            filters.append("tenant_id = :tenant_id")
+            params["tenant_id"] = tenant_id
+
         with self._connect() as conn:
             result = conn.execute(
-                text(f"DELETE FROM {self.table_name} WHERE document_id = :document_id"),
-                {"document_id": document_id},
+                text(f"DELETE FROM {self.table_name} WHERE {' AND '.join(filters)}"),
+                params,
             )
             conn.commit()
-            # CursorResult.rowcount is typed Any by SQLAlchemy's stubs (its
-            # exact type depends on the DBAPI driver); it is documented, and
-            # actually returns an int, so this cast reflects reality rather
-            # than papering over a real gap.
             removed_count = int(result.rowcount)
         if removed_count:
             logger.info(

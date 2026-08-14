@@ -14,7 +14,10 @@ import logging
 import time
 from collections.abc import Iterator
 
-import groq
+try:
+    import groq
+except ImportError:
+    groq = None  # type: ignore[assignment]
 from tenacity import (
     RetryCallState,
     retry,

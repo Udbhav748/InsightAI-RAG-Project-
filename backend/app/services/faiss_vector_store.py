@@ -21,7 +21,10 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-import faiss
+try:
+    import faiss
+except ImportError:
+    faiss = None  # type: ignore[assignment]
 import numpy as np
 
 from app.core.config import settings
@@ -285,7 +288,7 @@ class FAISSVectorStore(VectorStore):
                 )
             ]
 
-    def delete_document(self, document_id: str) -> int:
+    def delete_document(self, document_id: str, tenant_id: int | None = None) -> int:
         with self._lock:
             if self._index is None:
                 raise VectorStoreNotFoundError(
@@ -293,7 +296,10 @@ class FAISSVectorStore(VectorStore):
                 )
 
             keep_positions = [
-                i for i, record in enumerate(self._metadata) if record["document_id"] != document_id
+                i
+                for i, record in enumerate(self._metadata)
+                if record["document_id"] != document_id
+                or (tenant_id is not None and record["metadata"].get("tenant_id") != tenant_id)
             ]
             removed_count = len(self._metadata) - len(keep_positions)
             if removed_count == 0:

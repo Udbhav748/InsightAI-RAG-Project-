@@ -6,3 +6,12 @@ import { randomUUID } from 'node:crypto'
 if (typeof globalThis.crypto?.randomUUID !== 'function') {
   globalThis.crypto = { ...(globalThis.crypto ?? {}), randomUUID }
 }
+
+if (typeof globalThis.DOMMatrix === 'undefined') {
+  globalThis.DOMMatrix = class DOMMatrix {}
+}
+
+if (typeof window !== 'undefined') {
+  window.DOMMatrix = globalThis.DOMMatrix
+  Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || vi.fn()
+}

@@ -433,3 +433,36 @@ class UsageSummaryRow(BaseModel):
 
 class UsageSummaryResponse(BaseModel):
     rows: list[UsageSummaryRow] = Field(default_factory=list)
+
+
+class AsyncTaskResponse(BaseModel):
+    task_id: str = Field(..., description="Unique task identifier for tracking async ingestion.")
+    document_id: str = Field(..., description="Document identifier assigned to the upload.")
+    original_filename: str = Field(..., description="Original filename of the uploaded PDF.")
+    status: str = Field("queued", description="Initial task status.")
+    progress: float = Field(0.0, description="Ingestion progress percentage (0-100).")
+    message: str = Field(
+        "Document upload queued for background processing.",
+        description="Informational message.",
+    )
+    created_at: float = Field(..., description="Epoch timestamp when the task was created.")
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str = Field(..., description="Unique task identifier.")
+    document_id: str | None = Field(None, description="Document identifier once assigned.")
+    original_filename: str = Field(..., description="Original filename of the uploaded PDF.")
+    status: Literal[
+        "queued", "extracting", "chunking", "embedding", "indexing", "completed", "failed"
+    ] = Field(..., description="Current processing status.")
+    progress: float = Field(
+        ..., ge=0.0, le=100.0, description="Processing progress percentage (0-100)."
+    )
+    current_step: str | None = Field(None, description="Human-readable description of current step.")
+    error: str | None = Field(None, description="Error message if status is 'failed'.")
+    result: DocumentProcessingResponse | None = Field(
+        None, description="Final document processing result once status is 'completed'."
+    )
+    created_at: float = Field(..., description="Epoch timestamp when the task was created.")
+    updated_at: float = Field(..., description="Epoch timestamp when the task was last updated.")
+

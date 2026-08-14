@@ -299,3 +299,13 @@ class ChatServiceError(AppError):
     status_code = 500
     taxonomy_category = "reasoning"
     error_code = "CHAT_SERVICE_ERROR"
+
+
+class TaskNotFoundError(AppError):
+    """The task_id in a GET /documents/tasks/{task_id} request doesn't match
+    any recorded task (or belongs to a different tenant)."""
+
+    status_code = 404
+    taxonomy_category = "input"
+    error_code = "TASK_NOT_FOUND"
+

@@ -31,8 +31,12 @@ import logging
 import time
 from typing import Any
 
-from duckduckgo_search import DDGS
-from duckduckgo_search.exceptions import DuckDuckGoSearchException
+try:
+    from duckduckgo_search import DDGS
+    from duckduckgo_search.exceptions import DuckDuckGoSearchException
+except ImportError:
+    DDGS = None  # type: ignore[assignment]
+    DuckDuckGoSearchException = Exception  # type: ignore[assignment,misc]
 from tenacity import (
     RetryCallState,
     retry,
@@ -78,6 +82,7 @@ def web_search_ready() -> bool:
                 }
             },
         )
+    if provider == "duckduckgo" and DDGS is None:
         return False
     return True
 
