@@ -128,8 +128,8 @@ jobs:
               title: `[nightly-eval] Regression detected on ${new Date().toISOString().slice(0, 10)}`,
               body: `The nightly eval gate failed against baseline \`${{ env.BASELINE }}\` (dataset \`${{ env.DATASET }}\`).
 
-See the "Nightly Eval" workflow run for details: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+              See the "Nightly Eval" workflow run for details: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
 
-Check backend/eval/results/latest.json for the headline metrics, and backend/eval/README.md for how to re-baseline an intentional change.`,
+              Check backend/eval/results/latest.json for the headline metrics, and backend/eval/README.md for how to re-baseline an intentional change.`,
               labels: [label],
             });
