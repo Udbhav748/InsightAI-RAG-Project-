@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Camera,
+  Cpu,
   FileText,
   History,
   MessageSquarePlus,
@@ -53,6 +54,7 @@ export default function CommandPalette({ open, onClose }) {
       { id: 'nav-upload', label: 'Upload Document', icon: UploadCloud, action: () => navigate('/upload') },
       { id: 'nav-history', label: 'History', icon: History, action: () => navigate('/history') },
       { id: 'nav-settings', label: 'Settings', icon: Settings, action: () => navigate('/settings') },
+      { id: 'nav-architecture', label: 'System Architecture & AI Review', icon: Cpu, action: () => navigate('/architecture') },
       {
         id: 'toggle-theme',
         label: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',

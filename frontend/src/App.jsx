@@ -15,6 +15,7 @@ const Upload = lazy(() => import('./pages/Upload'))
 const Documents = lazy(() => import('./pages/Documents'))
 const History = lazy(() => import('./pages/History'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Architecture = lazy(() => import('./pages/Architecture'))
 const Admin = lazy(() => import('./pages/Admin'))
 const Login = lazy(() => import('./pages/Login'))
 const Signup = lazy(() => import('./pages/Signup'))
@@ -83,6 +84,7 @@ function AnimatedRoutes() {
         <Route path="documents" element={<Documents />} />
         <Route path="history" element={<History />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="architecture" element={<Architecture />} />
         <Route path="admin" element={<Admin />} />
         <Route path="*" element={<NotFound />} />
       </Route>

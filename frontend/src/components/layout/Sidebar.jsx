@@ -3,6 +3,7 @@ import { Link, NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Camera,
+  Cpu,
   FileText,
   History,
   LogOut,
@@ -124,6 +125,10 @@ function SidebarContent({ onNavigate }) {
         <NavLink to="/settings" onClick={onNavigate} className={navItemClass}>
           <Settings size={17} strokeWidth={1.75} />
           Settings
+        </NavLink>
+        <NavLink to="/architecture" onClick={onNavigate} className={navItemClass}>
+          <Cpu size={17} strokeWidth={1.75} />
+          Architecture & AI Review
         </NavLink>
         <div className="flex items-center justify-between rounded-lg py-2 pl-[10px] pr-3 text-sm text-slate-500 dark:text-ink-muted">
           Appearance
