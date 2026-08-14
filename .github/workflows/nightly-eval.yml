@@ -62,7 +62,10 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.EVAL_GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.EVAL_GROQ_API_KEY }}
       API_KEY: ci-test-key
-      LLM_PROVIDER: ${{ env.LLM_PROVIDER }}
+      # LLM_PROVIDER is already set at the workflow level (above) and
+      # inherited by the job automatically -- redeclaring it here as
+      # ${{ env.LLM_PROVIDER }} self-references the env context from
+      # within an env: block, which GitHub's parser rejects outright.
       FALLBACK_LLM_PROVIDER: ""
       HYBRID_SEARCH_ENABLED: "true"
       RERANKING_ENABLED: "false"

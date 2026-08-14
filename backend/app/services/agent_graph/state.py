@@ -13,9 +13,10 @@ from pydantic import BaseModel, Field
 
 # Real (not TYPE_CHECKING-only) imports: these are Pydantic field types below,
 # and Pydantic must resolve them to actual classes at model-build time, not
-# just at static-analysis time.
-from app.models.document import RetrievedChunk, WebSearchResult
-from app.models.schemas import ChatResponse, DiagnosisInfo
+# just at static-analysis time. ruff's TC001 can't tell that apart from an
+# ordinary type-hint-only import, so it's suppressed per-line below.
+from app.models.document import RetrievedChunk, WebSearchResult  # noqa: TC001
+from app.models.schemas import ChatResponse, DiagnosisInfo  # noqa: TC001
 
 
 class AgentState(BaseModel):
