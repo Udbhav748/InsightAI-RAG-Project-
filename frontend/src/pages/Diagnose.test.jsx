@@ -97,10 +97,10 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
       expect(screen.getByText('Port 8001')).toBeInTheDocument()
     })
 
-    // Mode buttons
-    expect(screen.getByRole('button', { name: 'Upload photo mode' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Live camera mode' })).toBeInTheDocument()
-    expect(screen.getByText('Browse Files')).toBeInTheDocument()
+    // Action buttons
+    expect(screen.getByRole('button', { name: 'Upload leaf photo' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Take leaf photo' })).toBeInTheDocument()
+    expect(screen.getByText('Choose from Gallery / Files')).toBeInTheDocument()
   })
 
   it('handles image selection, shows preview, and handles image removal', async () => {
@@ -127,7 +127,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     // Should return to dropzone
     await waitFor(() => {
       expect(screen.queryByAltText('Plant leaf preview')).not.toBeInTheDocument()
-      expect(screen.getByText('Browse Files')).toBeInTheDocument()
+      expect(screen.getByText('Choose from Gallery / Files')).toBeInTheDocument()
     })
   })
 

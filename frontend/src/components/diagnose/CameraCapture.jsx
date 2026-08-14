@@ -12,7 +12,7 @@ import Button from '../ui/Button'
  * is unavailable or permission is denied, a file picker fallback is shown so
  * the feature still works from a phone's existing photos.
  */
-export default function CameraCapture({ onCapture, disabled }) {
+export default function CameraCapture({ onCapture, onCancel, disabled }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
@@ -101,7 +101,6 @@ export default function CameraCapture({ onCapture, disabled }) {
         videoRef.current.srcObject = stream
         await videoRef.current.play()
       }
-      setCameraError('')
       setCameraState('active')
     } catch {
       facingModeRef.current = 'environment'
@@ -114,6 +113,18 @@ export default function CameraCapture({ onCapture, disabled }) {
 
   return (
     <div className="space-y-4">
+      {onCancel && (
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-ink-muted dark:hover:text-ink-primary"
+          >
+            ← Back to File Upload
+          </button>
+        </div>
+      )}
+
       <div className="panel relative overflow-hidden rounded-panel bg-slate-950">
         <video
           ref={videoRef}
@@ -146,15 +157,26 @@ export default function CameraCapture({ onCapture, disabled }) {
                 >
                   Open Device Camera
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  icon={ImagePlus}
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disabled}
-                >
-                  Choose from Gallery
-                </Button>
+                {onCancel ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={onCancel}
+                    disabled={disabled}
+                  >
+                    Back to File Upload
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    icon={ImagePlus}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={disabled}
+                  >
+                    Choose from Gallery
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -170,7 +192,7 @@ export default function CameraCapture({ onCapture, disabled }) {
             disabled={disabled}
             onClick={capture}
           >
-            Capture photo
+            Capture Photo
           </Button>
           <Button
             variant="secondary"
@@ -179,16 +201,17 @@ export default function CameraCapture({ onCapture, disabled }) {
             loading={switching}
             onClick={switchCamera}
           >
-            Switch camera
+            Switch Camera
           </Button>
-          <Button
-            variant="ghost"
-            icon={ImagePlus}
-            disabled={disabled}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Upload from gallery
-          </Button>
+          {onCancel && (
+            <Button
+              variant="ghost"
+              disabled={disabled}
+              onClick={onCancel}
+            >
+              Back to Upload
+            </Button>
+          )}
         </div>
       )}
 

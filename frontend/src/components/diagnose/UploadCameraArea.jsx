@@ -132,32 +132,6 @@ export default function UploadCameraArea({
         </div>
       </div>
 
-      {/* Mode Selector Buttons when no preview exists */}
-      {!previewUrl && status === 'idle' && (
-        <div className="flex justify-center gap-2">
-          <Button
-            type="button"
-            variant={mode === 'upload' ? 'primary' : 'secondary'}
-            icon={UploadCloud}
-            onClick={() => setMode('upload')}
-            disabled={disabled}
-            aria-label="Upload photo mode"
-          >
-            Upload Photo
-          </Button>
-          <Button
-            type="button"
-            variant={mode === 'camera' ? 'primary' : 'secondary'}
-            icon={Camera}
-            onClick={handleCameraClick}
-            disabled={disabled}
-            aria-label="Live camera mode"
-          >
-            Camera Capture
-          </Button>
-        </div>
-      )}
-
       {/* Main Upload / Camera Box */}
       <AnimatePresence>
         {!previewUrl ? (
@@ -173,6 +147,7 @@ export default function UploadCameraArea({
                 onCapture={(file) => {
                   onSelectImage(file)
                 }}
+                onCancel={() => setMode('upload')}
                 disabled={disabled}
               />
             </motion.div>
@@ -198,32 +173,34 @@ export default function UploadCameraArea({
 
               <div className="mt-3 space-y-1">
                 <p className="font-display text-base font-semibold text-slate-800 dark:text-ink-primary">
-                  {isDragging ? 'Drop your leaf photo here' : 'Select or drag a plant leaf photo'}
+                  {isDragging ? 'Drop your leaf photo here' : 'Select or Snap a Plant Leaf Photo'}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-ink-muted">
-                  Supports JPG, PNG, WEBP up to {MAX_IMAGE_SIZE_MB}MB. High-contrast close-ups work best.
+                  Choose a saved photo from your device or take a live picture with your camera. Supports JPG, PNG, WEBP up to {MAX_IMAGE_SIZE_MB}MB.
                 </p>
               </div>
 
               <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-                <button
+                <Button
                   type="button"
+                  variant="primary"
+                  icon={ImagePlus}
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
-                  className="btn-primary inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-sm font-medium"
+                  aria-label="Upload leaf photo"
                 >
-                  <ImagePlus size={16} strokeWidth={2} />
-                  Browse Files
-                </button>
-                <button
+                  Choose from Gallery / Files
+                </Button>
+                <Button
                   type="button"
+                  variant="secondary"
+                  icon={Camera}
                   onClick={handleCameraClick}
                   disabled={disabled}
-                  className="btn-secondary inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-sm font-medium"
+                  aria-label="Take leaf photo"
                 >
-                  <Camera size={16} strokeWidth={2} />
-                  Use Camera
-                </button>
+                  Take Photo with Camera
+                </Button>
               </div>
 
               <input
