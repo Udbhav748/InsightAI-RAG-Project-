@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # DB keeps working exactly as before).
     database_url: str = ""
 
+    # Optional. Redis connection string for services/cache_service.py
+    # (CacheService — not currently wired into any route/service; this
+    # field just lets it construct without raising when someone does wire
+    # it in). Empty disables caching, matching CacheService's own
+    # try/except-degrade-to-no-cache behavior.
+    redis_url: str = ""
+
     # Timeout, in seconds, for the startup database connection attempt
     # (passed as connect_args["connect_timeout"] to create_engine in
     # app/core/database.py). When Postgres is unreachable (Docker Desktop

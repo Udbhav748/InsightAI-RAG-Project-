@@ -27,33 +27,33 @@ GROUND_TRUTH = {
 
 def compute_recall():
     detected = detect_pii(TEST_DOC)
-    
+
     print("=== PII Recall Test ===")
     print(f"Ground truth: {GROUND_TRUTH}")
     print(f"Detected:     {detected}")
-    
+
     total_gt = sum(GROUND_TRUTH.values())
     total_detected = sum(detected.values())
-    
+
     # True positives: min(detected, ground_truth) per type
     true_positives = sum(min(detected.get(k, 0), GROUND_TRUTH[k]) for k in GROUND_TRUTH)
-    
+
     recall = true_positives / total_gt if total_gt > 0 else 0
-    
-    print(f"\nPer-type:")
+
+    print("\nPer-type:")
     for pii_type in GROUND_TRUTH:
         gt = GROUND_TRUTH[pii_type]
         det = detected.get(pii_type, 0)
         tp = min(det, gt)
         r = tp / gt if gt > 0 else 0
         print(f"  {pii_type:12s}: GT={gt}, Detected={det}, TP={tp}, Recall={r:.2f}")
-    
+
     print(f"\nOverall Recall: {recall:.4f} ({true_positives}/{total_gt})")
-    
+
     # Precision
     precision = true_positives / total_detected if total_detected > 0 else 0
     print(f"Overall Precision: {precision:.4f} ({true_positives}/{total_detected})")
-    
+
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
     print(f"F1 Score: {f1:.4f}")
 

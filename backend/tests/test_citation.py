@@ -8,10 +8,8 @@ text would point at the wrong source.
 
 import time
 
-from app.models.document import RetrievedChunk, WebSearchResult
 from app.services.prompt_builder import _INSTRUCTIONS, build_prompt
 from app.services.rag_service import ChatService, _source_references, _web_source_references
-
 from tests.test_rag_service import FakeLLMClient, FakeVectorStore, make_chunk, make_web_result
 
 

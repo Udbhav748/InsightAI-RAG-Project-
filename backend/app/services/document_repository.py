@@ -9,6 +9,9 @@ identically on an ephemeral deployment.
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, db_enabled
 from app.models.db_models import Document
@@ -18,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _session() -> Session:
+    if SessionLocal is None:
+        raise RuntimeError("Database not configured")
+    return SessionLocal()
 
 
 def persist_document(
@@ -40,7 +49,7 @@ def persist_document(
         return
 
     try:
-        with SessionLocal() as db:
+        with _session() as db:
             db.add(
                 Document(
                     tenant_id=tenant_id,
@@ -76,7 +85,7 @@ def get_document_owner(document_id: str) -> int | None:
     if not db_enabled():
         return None
 
-    with SessionLocal() as db:
+    with _session() as db:
         doc = db.query(Document).filter(Document.document_id == document_id).first()
         return doc.tenant_id if doc is not None else None
 
@@ -89,7 +98,7 @@ def delete_document_metadata(document_id: str) -> None:
         return
 
     try:
-        with SessionLocal() as db:
+        with _session() as db:
             db.query(Document).filter(Document.document_id == document_id).delete()
             db.commit()
         logger.info(
@@ -102,14 +111,14 @@ def delete_document_metadata(document_id: str) -> None:
         )
 
 
-def list_documents(tenant_id: int | None, collection: str | None = None) -> list[dict]:
+def list_documents(tenant_id: int | None, collection: str | None = None) -> list[dict[str, Any]]:
     """Return all documents for a tenant (or all when tenant_id is None,
     e.g. pre-multi-tenant), optionally filtered to one collection. Returns
     [] when the DB is disabled."""
     if not db_enabled():
         return []
 
-    with SessionLocal() as db:
+    with _session() as db:
         query = db.query(Document).order_by(Document.upload_timestamp.desc())
         if tenant_id is not None:
             query = query.filter(Document.tenant_id == tenant_id)

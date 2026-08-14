@@ -14,6 +14,7 @@ happens during an upload, never when uvicorn first binds the port.
 import logging
 import time
 import uuid
+from typing import Any
 
 from app.core.config import settings
 from app.models.document import DocumentChunk, ExtractedDocument
@@ -89,7 +90,7 @@ def chunk_text(
     source: str,
     content_type: str,
     page_number: int | None = None,
-    **extra_metadata,
+    **extra_metadata: Any,
 ) -> list[DocumentChunk]:
     """Split arbitrary text into DocumentChunks — the shared helper for
     multi-modal ingestion (image captions, table text), which reuses the

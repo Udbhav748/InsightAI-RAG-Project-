@@ -28,7 +28,7 @@ import json
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Needed whether this runs as a standalone script (`python
@@ -190,7 +190,7 @@ def aggregate(records: list[dict], window_min: float = 0.0) -> dict:
     if window_min > 0:
         from datetime import timedelta
 
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_min)
+        cutoff = datetime.now(UTC) - timedelta(minutes=window_min)
         filtered = []
         for rec in records:
             ts = rec.get("timestamp")

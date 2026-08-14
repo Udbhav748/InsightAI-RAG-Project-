@@ -15,21 +15,24 @@ agent_completed and the next agent_started with the same request_id.
 
 import logging
 import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _emit(event: str, **fields) -> None:
+def _emit(event: str, **fields: Any) -> None:
     logger.info(event, extra={"extra_fields": fields})
 
 
-def log_agent_started(agent: str, task: str, **extra) -> None:
+def log_agent_started(agent: str, task: str, **extra: Any) -> None:
     """Record that `agent` began working on `task` (short shape, not
     content — see _summarize_input's philosophy in tool_registry.py)."""
     _emit("agent_started", agent=agent, task_length=len(task), **extra)
 
 
-def log_agent_completed(agent: str, task: str, start: float, *, outcome: str, **extra) -> None:
+def log_agent_completed(
+    agent: str, task: str, start: float, *, outcome: str, **extra: Any
+) -> None:
     """Record that `agent` finished. start is a time.perf_counter() value
     captured at the matching log_agent_started; duration is computed here
     so the two events can't drift on clock source."""
@@ -43,7 +46,7 @@ def log_agent_completed(agent: str, task: str, start: float, *, outcome: str, **
     )
 
 
-def log_agent_handoff(frm: str, to: str, task: str, **extra) -> None:
+def log_agent_handoff(frm: str, to: str, task: str, **extra: Any) -> None:
     """Record that `frm` handed `task` off to `to` — the from/to pair is
     what Handoff Accuracy is computed from. Also bumps the
     agent_handoffs_total Prometheus metric the agent-metrics dashboard's

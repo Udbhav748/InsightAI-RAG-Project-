@@ -35,6 +35,7 @@ import time
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection, Engine, RowMapping
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -56,9 +57,9 @@ class PgvectorVectorStore(VectorStore):
         # import) so importing this module never fails when DATABASE_URL is
         # empty — the store is only ever constructed when pgvector is
         # enabled, which already requires a DB.
-        self._engine = None
+        self._engine: Engine | None = None
 
-    def _connect(self):
+    def _connect(self) -> Connection:
         from app.core import database
 
         if not database.db_enabled():
@@ -67,13 +68,23 @@ class PgvectorVectorStore(VectorStore):
                 "nowhere to store vectors without a Postgres database."
             )
         if self._engine is None:
-            self._engine = database.engine
+            # db_enabled() being True guarantees database.engine is set
+            # (engine/SessionLocal are always assigned together — see
+            # app/core/database.py), but mypy can't see that invariant
+            # across the db_enabled() call, so it's re-checked explicitly.
+            engine = database.engine
+            if engine is None:
+                raise DatabaseNotConfiguredError(
+                    "PGVECTOR_ENABLED requires DATABASE_URL to be set — there is "
+                    "nowhere to store vectors without a Postgres database."
+                )
+            self._engine = engine
         return self._engine.connect()
 
     def _query_vector(self, embedding: list[float]) -> str:
         return "[" + ",".join(repr(float(v)) for v in embedding) + "]"
 
-    def _record_to_chunk(self, row, score: float) -> RetrievedChunk:
+    def _record_to_chunk(self, row: RowMapping, score: float) -> RetrievedChunk:
         metadata = dict(row["metadata"] or {})
         text_content = metadata.pop("text", row.get("text") or "")
         return RetrievedChunk(
@@ -303,7 +314,11 @@ class PgvectorVectorStore(VectorStore):
                 {"document_id": document_id},
             )
             conn.commit()
-            removed_count = result.rowcount
+            # CursorResult.rowcount is typed Any by SQLAlchemy's stubs (its
+            # exact type depends on the DBAPI driver); it is documented, and
+            # actually returns an int, so this cast reflects reality rather
+            # than papering over a real gap.
+            removed_count = int(result.rowcount)
         if removed_count:
             logger.info(
                 "pgvector_document_deleted",

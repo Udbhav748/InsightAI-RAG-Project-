@@ -31,6 +31,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +50,14 @@ class Approval:
     approval_id: str
     action: str  # APPROVAL_ACTION_* constant
     requested_by: str | None
-    payload: dict  # e.g. {"query": ...} for web_search, {"document_id": ...} for delete
+    payload: dict[str, Any]  # e.g. {"query": ...} for web_search, {"document_id": ...} for delete
     status: str = STATUS_PENDING
     note: str | None = None
     created_at: float = field(default_factory=time.time)
     resolved_at: float | None = None
     resolved_by: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "approval_id": self.approval_id,
             "action": self.action,
@@ -92,7 +93,7 @@ class ApprovalStore:
         *,
         action: str,
         requested_by: str | None = None,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
         note: str | None = None,
     ) -> Approval:
         """Record a new pending approval and return it."""
@@ -123,7 +124,9 @@ class ApprovalStore:
         with self._lock:
             return self._approvals.get(approval_id)
 
-    def list_approvals(self, action: str | None = None, status: str | None = None) -> list[dict]:
+    def list_approvals(
+        self, action: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
         """All approvals matching optional action/status filters, newest
         first (most-recently-created first)."""
         with self._lock:

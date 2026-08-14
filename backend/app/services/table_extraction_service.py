@@ -15,6 +15,7 @@ pdfplumber.extract_tables without touching the chunking pipeline.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import fitz
 
@@ -25,7 +26,7 @@ from app.models.document import ExtractedTable
 logger = logging.getLogger(__name__)
 
 
-def _table_to_markdown(table) -> str:
+def _table_to_markdown(table: fitz.table.Table) -> str:
     """Reduce a fitz Table to a markdown grid: header row, separator row,
     then data rows. Missing/empty cells become empty strings. Returns ""
     when there's no detectable header row."""
@@ -36,7 +37,7 @@ def _table_to_markdown(table) -> str:
     if column_count == 0:
         return ""
 
-    def _row_md(row) -> str:
+    def _row_md(row: list[Any]) -> str:
         cells = [str(cell or "").strip() for cell in row]
         cells += [""] * (column_count - len(cells))
         return "| " + " | ".join(cells) + " |"

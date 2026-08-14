@@ -1,11 +1,13 @@
 import hashlib
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
 import redis
-from backend.app.core.config import settings
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +15,16 @@ logger = logging.getLogger(__name__)
 class CacheService:
     """Caching service for frequently accessed data"""
 
-    def __init__(self):
-        self.redis_client = None
+    def __init__(self) -> None:
+        self.redis_client: redis.Redis | None = None
         self._connect()
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Initialize Redis connection"""
         try:
-            if settings.REDIS_URL:
+            if settings.redis_url:
                 self.redis_client = redis.from_url(
-                    settings.REDIS_URL,
+                    settings.redis_url,
                     decode_responses=True,
                     socket_connect_timeout=5,
                     socket_timeout=5,
@@ -35,7 +37,7 @@ class CacheService:
             logger.warning(f"Failed to connect to Redis: {e}. Caching disabled.")
             self.redis_client = None
 
-    def _generate_key(self, prefix: str, *args, **kwargs) -> str:
+    def _generate_key(self, prefix: str, *args: Any, **kwargs: Any) -> str:
         """Generate a cache key from arguments"""
         key_parts = [str(arg) for arg in args]
         key_parts.extend([f"{k}:{v}" for k, v in sorted(kwargs.items())])
@@ -67,7 +69,7 @@ class CacheService:
             if isinstance(expire, timedelta):
                 expire = int(expire.total_seconds())
 
-            return self.redis_client.setex(key, expire, serialized_value)
+            return bool(self.redis_client.setex(key, expire, serialized_value))
         except Exception as e:
             logger.error(f"Cache set error: {e}")
             return False
@@ -83,7 +85,9 @@ class CacheService:
             logger.error(f"Cache delete error: {e}")
             return False
 
-    def get_or_set(self, key: str, default_factory, expire: int | timedelta = 3600) -> Any:
+    def get_or_set(
+        self, key: str, default_factory: Callable[[], Any], expire: int | timedelta = 3600
+    ) -> Any:
         """Get value from cache or set it using factory function"""
         value = self.get(key)
         if value is not None:
@@ -99,11 +103,13 @@ cache_service = CacheService()
 
 
 # Cache decorators
-def cached(expire: int | timedelta = 3600, key_prefix: str = "cache"):
+def cached(
+    expire: int | timedelta = 3600, key_prefix: str = "cache"
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """Decorator for caching function results"""
 
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Generate cache key
             cache_key = cache_service._generate_key(key_prefix, func.__name__, *args, **kwargs)
 

@@ -7,6 +7,9 @@ routes degrade the same way document listing already does.
 """
 
 import logging
+from typing import Any
+
+from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, db_enabled
 from app.models.db_models import ChatSession
@@ -14,7 +17,13 @@ from app.models.db_models import ChatSession
 logger = logging.getLogger(__name__)
 
 
-def list_sessions(tenant_id: int | None) -> list[dict]:
+def _session() -> Session:
+    if SessionLocal is None:
+        raise RuntimeError("Database not configured")
+    return SessionLocal()
+
+
+def list_sessions(tenant_id: int | None) -> list[dict[str, Any]]:
     """All sessions for a tenant, most-recently-accessed first. []
     when the DB is disabled or tenant_id is None (no scope to list
     under — matches list_documents(None)'s own behavior for a caller
@@ -22,7 +31,7 @@ def list_sessions(tenant_id: int | None) -> list[dict]:
     if not db_enabled() or tenant_id is None:
         return []
 
-    with SessionLocal() as db:
+    with _session() as db:
         sessions = (
             db.query(ChatSession)
             .filter(ChatSession.tenant_id == tenant_id)
@@ -47,7 +56,7 @@ def get_session_owner(session_id: str) -> int | None:
     document_repository.get_document_owner already uses."""
     if not db_enabled():
         return None
-    with SessionLocal() as db:
+    with _session() as db:
         session = db.get(ChatSession, session_id)
         return session.tenant_id if session is not None else None
 
@@ -58,7 +67,7 @@ def set_session_title_if_unset(session_id: str, title: str) -> None:
     if not db_enabled():
         return
     try:
-        with SessionLocal() as db:
+        with _session() as db:
             session = db.get(ChatSession, session_id)
             if session is not None and session.title is None:
                 session.title = title[:200]

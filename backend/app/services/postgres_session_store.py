@@ -15,6 +15,9 @@ max_turns_per_session per session.
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.models.db_models import ChatSession, ChatTurn
@@ -26,6 +29,12 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _session() -> Session:
+    if SessionLocal is None:
+        raise RuntimeError("Database not configured")
+    return SessionLocal()
+
+
 class PostgresSessionStore:
     def __init__(self, max_sessions: int = 1000, max_turns_per_session: int = 50):
         if max_sessions <= 0:
@@ -35,7 +44,7 @@ class PostgresSessionStore:
         self._max_sessions = max_sessions
         self._max_turns_per_session = max_turns_per_session
 
-    def _evict_lru_if_needed(self, db) -> None:
+    def _evict_lru_if_needed(self, db: Session) -> None:
         """Delete oldest-by-last_accessed sessions beyond max_sessions.
         Called inside an open session; commits are the caller's job."""
         count = db.query(ChatSession).count()
@@ -55,7 +64,7 @@ class PostgresSessionStore:
 
     def create_session(self, tenant_id: int | None = None) -> str:
         session_id = str(uuid.uuid4())
-        with SessionLocal() as db:
+        with _session() as db:
             self._evict_lru_if_needed(db)
             db.add(
                 ChatSession(
@@ -72,8 +81,8 @@ class PostgresSessionStore:
         )
         return session_id
 
-    def get_history(self, session_id: str) -> list[dict] | None:
-        with SessionLocal() as db:
+    def get_history(self, session_id: str) -> list[dict[str, Any]] | None:
+        with _session() as db:
             session = db.get(ChatSession, session_id)
             if session is None:
                 return None
@@ -82,7 +91,7 @@ class PostgresSessionStore:
             return [{"role": turn.role, "content": turn.content} for turn in session.turns]
 
     def append_turn(self, session_id: str, role: str, content: str) -> bool:
-        with SessionLocal() as db:
+        with _session() as db:
             session = db.get(ChatSession, session_id)
             if session is None:
                 return False
@@ -102,7 +111,7 @@ class PostgresSessionStore:
         is never handed back (starts a fresh session instead of raising);
         either side being unknown (None) skips the check."""
         if session_id is not None:
-            with SessionLocal() as db:
+            with _session() as db:
                 session = db.get(ChatSession, session_id)
                 if session is not None and (
                     session.tenant_id is None or tenant_id is None or session.tenant_id == tenant_id
@@ -111,7 +120,7 @@ class PostgresSessionStore:
         return self.create_session(tenant_id=tenant_id)
 
     def delete_session(self, session_id: str) -> bool:
-        with SessionLocal() as db:
+        with _session() as db:
             session = db.get(ChatSession, session_id)
             if session is None:
                 return False
@@ -120,9 +129,9 @@ class PostgresSessionStore:
         return True
 
     def session_exists(self, session_id: str) -> bool:
-        with SessionLocal() as db:
+        with _session() as db:
             return db.get(ChatSession, session_id) is not None
 
     def get_session_count(self) -> int:
-        with SessionLocal() as db:
+        with _session() as db:
             return db.query(ChatSession).count()

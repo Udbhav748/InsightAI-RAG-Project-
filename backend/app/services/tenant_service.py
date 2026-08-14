@@ -25,6 +25,8 @@ False — see app/core/database.py):
 import logging
 import threading
 
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
 from app.core.database import SessionLocal, db_enabled
 from app.models.db_models import ApiKey, Tenant
@@ -41,8 +43,8 @@ _tenant_cache: dict[str, int] = {}
 _tenant_cache_lock = threading.Lock()
 
 
-def _session():
-    if not db_enabled():
+def _session() -> Session:
+    if SessionLocal is None:
         raise RuntimeError("Database not configured")
     return SessionLocal()
 

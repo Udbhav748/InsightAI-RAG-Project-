@@ -29,10 +29,17 @@ with the distinction than log it.
 
 import logging
 import time
+from typing import Any
 
 from duckduckgo_search import DDGS
 from duckduckgo_search.exceptions import DuckDuckGoSearchException
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from app.core.config import settings
 from app.core.exceptions import WebSearchError
@@ -75,13 +82,19 @@ def web_search_ready() -> bool:
     return True
 
 
-def _log_retry(retry_state) -> None:
+def _log_retry(retry_state: RetryCallState) -> None:
+    # .outcome is a property, not a plain attribute -- assign it to a local
+    # so mypy can narrow the None check (it won't narrow across repeated
+    # property reads, since a property isn't guaranteed to return the same
+    # value each access).
+    outcome = retry_state.outcome
+    exception = outcome.exception() if outcome is not None else None
     logger.warning(
         "web_search_retrying",
         extra={
             "extra_fields": {
                 "attempt": retry_state.attempt_number,
-                "exception": str(retry_state.outcome.exception()),
+                "exception": str(exception),
             }
         },
     )
@@ -132,7 +145,7 @@ def _search_keys(query: str, max_results: int) -> list[WebSearchResult]:
         raise WebSearchError(f"{provider} web search failed: {exc}") from exc
 
 
-def _parse_brave(data: dict) -> list[WebSearchResult]:
+def _parse_brave(data: dict[str, Any]) -> list[WebSearchResult]:
     results = []
     for item in data.get("web", {}).get("results", []):
         results.append(
@@ -145,7 +158,7 @@ def _parse_brave(data: dict) -> list[WebSearchResult]:
     return results
 
 
-def _parse_bing(data: dict) -> list[WebSearchResult]:
+def _parse_bing(data: dict[str, Any]) -> list[WebSearchResult]:
     results = []
     for item in data.get("webPages", {}).get("value", []):
         results.append(

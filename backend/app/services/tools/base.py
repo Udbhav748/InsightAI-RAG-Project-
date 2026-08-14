@@ -113,6 +113,11 @@ class BaseTool(Protocol[T_Args]):
     name: str
     description: str
     args_schema: type[T_Args]
-    output_schema: type
+    # Not `type`: some tools declare a generic alias here (e.g.
+    # tuple[str, list[RetrievedChunk]]), which isn't itself an instance of
+    # `type` — Any is the accurate annotation for "arbitrary type
+    # expression used for introspection only", same rationale as
+    # ToolContext.settings/agent_memory above.
+    output_schema: Any
 
     async def execute(self, args: T_Args, context: ToolContext) -> ToolResult: ...

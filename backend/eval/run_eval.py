@@ -96,20 +96,21 @@ import re
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from pydantic import BaseModel  # noqa: E402
+
+from app.core.config import settings  # noqa: E402
 from app.core.exceptions import AppError, VectorStoreNotFoundError  # noqa: E402
 from app.models.document import RetrievedChunk  # noqa: E402
 from app.models.schemas import SourceReference  # noqa: E402
 from app.services.faiss_vector_store import DEFAULT_METADATA_PATH, FAISSVectorStore  # noqa: E402
-from app.core.config import settings  # noqa: E402
 from app.services.llm_provider import build_llm_client, get_llm_client_for_provider  # noqa: E402
 from app.services.prompt_builder import FALLBACK_REPLY, PROMPT_VERSION  # noqa: E402
 from app.services.rag_service import ChatService  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +305,7 @@ def build_groundedness_judge_prompt(query: str, chunks: list[RetrievedChunk], an
     """
     if not chunks:
         return ""
-    
+
     context_blocks = []
     for chunk in chunks:
         context_blocks.append(
@@ -314,7 +315,7 @@ def build_groundedness_judge_prompt(query: str, chunks: list[RetrievedChunk], an
             "---END EXCERPT---"
         )
     context = "\n\n".join(context_blocks)
-    
+
     return (
         "You are an impartial evaluator. Your task is to determine whether the "
         "provided ANSWER is fully supported by the given CONTEXT.\n\n"
@@ -347,11 +348,11 @@ def judge_groundedness(llm_client, query: str, chunks: list[RetrievedChunk], ans
     """
     if not chunks or not answer.strip() or answer.strip() == FALLBACK_REPLY:
         return False, "", False
-    
+
     prompt = build_groundedness_judge_prompt(query, chunks, answer)
     if not prompt:
         return False, "", False
-    
+
     try:
         response_text = llm_client.generate(prompt)
         # Parse structured JSON response
@@ -397,8 +398,8 @@ def discover_document_id() -> str:
 
 
 def confusion_matrix(y_true: list[str], y_pred: list[str]) -> dict[str, dict[str, int]]:
-    matrix = {actual: {predicted: 0 for predicted in ACTIONS} for actual in ACTIONS}
-    for actual, predicted in zip(y_true, y_pred):
+    matrix = {actual: dict.fromkeys(ACTIONS, 0) for actual in ACTIONS}
+    for actual, predicted in zip(y_true, y_pred, strict=False):
         matrix[actual][predicted] += 1
     return matrix
 
@@ -407,9 +408,9 @@ def classification_report(y_true: list[str], y_pred: list[str]) -> dict:
     per_class = {}
     total = len(y_true)
     for label in ACTIONS:
-        tp = sum(1 for t, p in zip(y_true, y_pred) if t == label and p == label)
-        fp = sum(1 for t, p in zip(y_true, y_pred) if t != label and p == label)
-        fn = sum(1 for t, p in zip(y_true, y_pred) if t == label and p != label)
+        tp = sum(1 for t, p in zip(y_true, y_pred, strict=False) if t == label and p == label)
+        fp = sum(1 for t, p in zip(y_true, y_pred, strict=False) if t != label and p == label)
+        fn = sum(1 for t, p in zip(y_true, y_pred, strict=False) if t == label and p != label)
         tn = total - (tp + fp + fn)
         support = sum(1 for t in y_true if t == label)
         precision = tp / (tp + fp) if (tp + fp) else 0.0
@@ -424,7 +425,7 @@ def classification_report(y_true: list[str], y_pred: list[str]) -> dict:
             "support": support,
         }
 
-    accuracy = sum(1 for t, p in zip(y_true, y_pred) if t == p) / total if total else 0.0
+    accuracy = sum(1 for t, p in zip(y_true, y_pred, strict=False) if t == p) / total if total else 0.0
     macro_f1 = sum(v["f1"] for v in per_class.values()) / len(per_class)
     weighted_f1 = (
         sum(v["f1"] * v["support"] for v in per_class.values()) / total if total else 0.0
@@ -826,7 +827,7 @@ def run(dataset_path: Path, delay: float = 0.0) -> dict:
     report = {
         "dataset": dataset_path.name,
         "dataset_version": _dataset_version(dataset_path.name),
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "llm_provider": settings.llm_provider,
         "llm_model_name": (
             settings.gemini_model_name
@@ -970,22 +971,22 @@ def print_report(report: dict) -> None:
     print("\n" + "=" * 70)
     print("PER-ENTRY GROUNDEDNESS COMPARISON (lexical proxy vs entailment judge)")
     print("=" * 70)
-    
+
     comparison_entries = [
         e for e in report["entries"]
-        if e.get("tool_used") == "retrieval" 
+        if e.get("tool_used") == "retrieval"
         and e.get("grounded") is not None
         and e.get("entailment_grounded") is not None
     ]
-    
+
     if comparison_entries:
         # Table header
         print(f"{'#':>3}  {'Lexical':>7}  {'Entail':>7}  {'Agree?':>6}  Query")
         print("-" * 100)
-        
+
         agree_count = 0
         disagree_count = 0
-        
+
         for idx, e in enumerate(comparison_entries, 1):
             lexical = e["grounded"]
             entail = e["entailment_grounded"]
@@ -999,10 +1000,10 @@ def print_report(report: dict) -> None:
 
             query_short = e["query"][:70] + ("..." if len(e["query"]) > 70 else "")
             print(f"{idx:>3}  {str(lexical):>7}  {str(entail):>7}  {agree_str:>6}  {query_short}")
-        
+
         print("-" * 100)
         print(f"Agreed: {agree_count}  Disagreed: {disagree_count}  Total: {len(comparison_entries)}")
-        
+
         # Detailed breakdown for disagreements
         disagreements = [e for e in comparison_entries if e["grounded"] != e["entailment_grounded"]]
         if disagreements:
@@ -1018,10 +1019,10 @@ def print_report(report: dict) -> None:
                     print(f"    Judge reason: {reason}")
                 else:
                     if e.get("judge_parse_error"):
-                        print(f"    Judge reason: [PARSE ERROR - LLM response was not valid JSON]")
+                        print("    Judge reason: [PARSE ERROR - LLM response was not valid JSON]")
                     else:
-                        print(f"    Judge reason: [No reason provided]")
-        
+                        print("    Judge reason: [No reason provided]")
+
         # Parse error breakdown
         parse_errors = [e for e in comparison_entries if e.get("judge_parse_error")]
         genuine_false = [e for e in comparison_entries if not e["entailment_grounded"] and not e.get("judge_parse_error")]
@@ -1033,7 +1034,7 @@ def print_report(report: dict) -> None:
         print(f"  Total entailment_grounded=False:                 {len(genuine_false) + len(parse_errors)}")
     else:
         print("No retrieve-routed entries with both metrics scored.")
-    
+
     print("\n" + "=" * 70)
     print(
         f"RETRIEVAL QUALITY METRICS  (hybrid_search_enabled="
@@ -1078,7 +1079,7 @@ def main() -> None:
 
     results_dir = Path(__file__).parent / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     results_path = results_dir / f"{timestamp}.json"
     results_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Full results written to {results_path}")

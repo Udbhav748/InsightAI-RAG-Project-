@@ -14,7 +14,6 @@ Uses the same lightweight fakes as test_rag_service.py.
 import app.services.rag_service as rag_service_module
 from app.core.config import settings
 from app.models.document import RetrievedChunk, WebSearchResult
-from app.services.prompt_builder import FALLBACK_REPLY
 from app.services.rag_service import ChatService
 from app.services.structured_output import parse_structured_answer
 

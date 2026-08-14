@@ -7,10 +7,15 @@ beyond the uploaded corpus.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
+from app.models.document import WebSearchResult
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.research_agent import ResearchAgent, ResearchFindings
+
+if TYPE_CHECKING:
+    from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,7 @@ class WebResearcher(Agent):
     name = "web_researcher"
     description = "Conducts multi-step web research for current/external information"
 
-    def __init__(self, llm_client):
+    def __init__(self, llm_client: LLMClient):
         self._research_agent = ResearchAgent(llm_client)
 
     async def run(self, query: str, context: AgentContext) -> AgentResult:
@@ -57,7 +62,7 @@ class WebResearcher(Agent):
 
         return await asyncio.to_thread(self._research_agent.run, query, confirm_web_search)
 
-    def _build_sources(self, results: list) -> list[dict]:
+    def _build_sources(self, results: list[WebSearchResult]) -> list[dict[str, Any]]:
         from app.services.rag_service import _web_source_references
 
         refs = _web_source_references(results)

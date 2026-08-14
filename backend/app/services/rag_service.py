@@ -21,12 +21,15 @@ LLMClient interfaces, never on a concrete implementation (FAISSVectorStore,
 GeminiClient); those are constructed elsewhere and handed in.
 """
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
@@ -57,6 +60,10 @@ from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
 from app.services.vision_qa_service import try_vision_qa
 from app.services.web_search_service import search_web, web_search_ready
+
+if TYPE_CHECKING:
+    from app.services.agent_executor import AgentExecutor
+    from app.services.agent_memory import AgentMemory
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +402,7 @@ def _detect_hallucination(
     answer: str,
     chunks: list[RetrievedChunk],
     web_results: list[WebSearchResult],
-) -> tuple[bool, float]:
+) -> tuple[bool, float | None]:
     """Run the Feature #4 lexical groundedness check.
 
     Returns (detected, score). Detected is True when the check has
@@ -455,7 +462,7 @@ def _stream_filtering_sources(chunks: Iterator[str]) -> Iterator[str]:
         yield pending
 
 
-def _trace_event(stage: str, detail: dict) -> dict:
+def _trace_event(stage: str, detail: dict[str, Any]) -> dict[str, Any]:
     """Build an SSE trace event dict and log it server-side in the same
     call — the same pipeline progress already logged via plan_decided/
     retrieval_completed/retrieval_graded/etc. elsewhere in this file, this
@@ -501,8 +508,8 @@ class ChatService:
         self,
         vector_store: VectorStore,
         llm_client: LLMClient,
-        image_vector_store=None,
-        agent_memory=None,
+        image_vector_store: VectorStore | None = None,
+        agent_memory: AgentMemory | None = None,
     ):
         self._vector_store = vector_store
         self._llm_client = llm_client
@@ -543,7 +550,7 @@ class ChatService:
         # lazily (construction is cheap — no LLM calls) and only invoked
         # when the flag is on, so the inline path is byte-for-byte
         # unchanged by default.
-        self._agent_executor = None
+        self._agent_executor: AgentExecutor | None = None
         # Agent memory (services/agent_memory.py): a bounded per-session
         # working memory of turns + extracted facts, injected into later
         # prompts. Optional — None (the default) disables it entirely; the
@@ -608,7 +615,7 @@ class ChatService:
         self._cache_keys.insert(0, cache_key)
         self._response_cache[cache_key] = response
 
-    def _plan(self, query: str, history: list[dict] | None = None) -> PlanDecision:
+    def _plan(self, query: str, history: list[dict[str, str]] | None = None) -> PlanDecision:
         """Decide which tool this query needs.
 
         Plain keyword/regex checks — no LLM call, no external planner.
@@ -625,7 +632,7 @@ class ChatService:
 
         return PlanDecision(action="retrieve")
 
-    def _agent_executor_instance(self):
+    def _agent_executor_instance(self) -> AgentExecutor:
         """Lazily construct the AgentExecutor (services/agent_executor.py)
         the first time it's needed. Cheap — no LLM calls until execute().
         Deliberately not built in __init__: the executor is only ever
@@ -648,7 +655,7 @@ class ChatService:
     def _handle_via_executor(
         self,
         query: str,
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         session_id: str | None,
         tenant_id: int | None,
         top_k: int | None,
@@ -706,8 +713,8 @@ class ChatService:
             return loop.run_until_complete(_run())
 
     def _inject_memory(
-        self, history: list[dict] | None, session_id: str | None
-    ) -> list[dict] | None:
+        self, history: list[dict[str, str]] | None, session_id: str | None
+    ) -> list[dict[str, str]] | None:
         """Append the session's remembered facts to the history passed to
         the router and generation prompts, as a synthetic system turn.
 
@@ -831,7 +838,7 @@ class ChatService:
             extra={"extra_fields": {"session_id": session_id, "fact_count": len(facts)}},
         )
 
-    def _route(self, query: str, history: list[dict] | None = None) -> PlanDecision:
+    def _route(self, query: str, history: list[dict[str, str]] | None = None) -> PlanDecision:
         """Decide the query's action: the keyword planner, upgraded by the
         LLM router agent when Settings.agent_routing_enabled.
 
@@ -888,7 +895,7 @@ class ChatService:
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
@@ -919,7 +926,7 @@ class ChatService:
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
@@ -970,7 +977,7 @@ class ChatService:
         self,
         query: str,
         chunks: list[RetrievedChunk],
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
     ) -> str:
@@ -1047,7 +1054,7 @@ class ChatService:
         get_metrics().record_retrieval_grade(grade)
         return grade
 
-    def _contextualize_query(self, query: str, history: list[dict] | None) -> str:
+    def _contextualize_query(self, query: str, history: list[dict[str, str]] | None) -> str:
         """Rewrite a follow-up question into a standalone one, using
         conversation history, before it's used for retrieval. Only called
         when history is non-empty. Degrades to the raw query on any LLM
@@ -1176,7 +1183,12 @@ class ChatService:
             # web_search_ready(). Callers should retry after fixing config.
             return []
         try:
-            results = search_web(query)
+            # search_web() is itself typed -> list[WebSearchResult], but the
+            # @track_tool decorator wrapping it currently erases that to Any
+            # (its Callable[..., Any] signature doesn't preserve the wrapped
+            # function's exact return type) — annotate explicitly here
+            # rather than weaken this function's own return type.
+            results: list[WebSearchResult] = search_web(query)
             if results:
                 get_metrics().record_web_search_fallback(stage="retrieval")
             return results
@@ -1201,7 +1213,7 @@ class ChatService:
         query: str,
         chunks: list[RetrievedChunk],
         answer: str,
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         web_results: list[WebSearchResult],
         web_search_attempted: bool,
         llm_calls: int,
@@ -1298,14 +1310,14 @@ class ChatService:
         query: str,
         chunks: list[RetrievedChunk],
         answer: str,
-        history: list[dict] | None,
+        history: list[dict[str, str]] | None,
         web_results: list[WebSearchResult],
         web_search_attempted: bool,
         llm_calls: int,
         steps_taken: int,
         confirm_web_search: bool = False,
         persona: str | None = None,
-    ) -> Iterator[dict]:
+    ) -> Generator[dict[str, Any], None, tuple[str, int, int, list[WebSearchResult], bool]]:
         """Streamed counterpart to _correct — mirrors its exact branches,
         conditions, and log lines (the two must be kept in sync; a
         divergence here is a real behavioral difference between /chat and
@@ -1403,7 +1415,7 @@ class ChatService:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
-        history: list[dict] | None = None,
+        history: list[dict[str, str]] | None = None,
         session_id: str | None = None,
         confirm_web_search: bool = False,
         structured_response: bool = False,
@@ -1445,8 +1457,13 @@ class ChatService:
             )
 
         if plan.action == "conversational":
+            # plan.action == "conversational" is only ever set (in _plan/
+            # _route) when this same match already succeeded, so this is
+            # never actually None — the FALLBACK_REPLY default is just a
+            # typed, non-crashing guard against the two ever desyncing,
+            # not expected behavior.
             return self._respond(
-                answer=_match_conversational_reply(query),
+                answer=_match_conversational_reply(query) or FALLBACK_REPLY,
                 retrieved_chunks=[],
                 query=query,
                 query_type="conversational",
@@ -1501,7 +1518,7 @@ class ChatService:
             retrieval_query = query
             if settings.query_contextualization_enabled and recent_history:
                 retrieval_query = self._contextualize_query(query, recent_history)
-            retrieve_kwargs: dict = {
+            retrieve_kwargs: dict[str, Any] = {
                 "top_k": top_k,
                 "min_score": min_score,
                 "tenant_id": tenant_id,
@@ -1702,14 +1719,14 @@ class ChatService:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
-        history: list[dict] | None = None,
+        history: list[dict[str, str]] | None = None,
         session_id: str | None = None,
         confirm_web_search: bool = False,
         structured_response: bool = False,
         tenant_id: int | None = None,
         persona: str | None = None,
         document_ids: list[str] | None = None,
-    ) -> Iterator[dict]:
+    ) -> Iterator[dict[str, Any]]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
         Same planner and pipeline (conversational / summarize / retrieve
@@ -1750,7 +1767,9 @@ class ChatService:
         yield _trace_event("planning", {"action": plan.action})
 
         if plan.action == "conversational":
-            answer = _match_conversational_reply(query)
+            # Same non-None invariant as handle_query's conversational
+            # branch — see the comment there.
+            answer = _match_conversational_reply(query) or FALLBACK_REPLY
             yield {"type": "answer_chunk", "text": answer}
             response = self._respond(
                 answer=answer,
@@ -1811,7 +1830,7 @@ class ChatService:
             retrieval_query = query
             if settings.query_contextualization_enabled and recent_history:
                 retrieval_query = self._contextualize_query(query, recent_history)
-            retrieve_kwargs: dict = {
+            retrieve_kwargs: dict[str, Any] = {
                 "top_k": top_k,
                 "min_score": min_score,
                 "tenant_id": tenant_id,
@@ -2018,7 +2037,7 @@ class ChatService:
         filename: str,
         content_type: str,
         query: str | None = None,
-        history: list[dict] | None = None,
+        history: list[dict[str, str]] | None = None,
         session_id: str | None = None,
         confirm_web_search: bool = False,
         tenant_id: int | None = None,
@@ -2157,13 +2176,13 @@ class ChatService:
     def _respond(
         self,
         *,
-        answer,
-        retrieved_chunks,
-        query,
-        query_type,
-        tool_used,
-        steps_taken,
-        start,
+        answer: str,
+        retrieved_chunks: list[RetrievedChunk],
+        query: str,
+        query_type: str,
+        tool_used: str,
+        steps_taken: int,
+        start: float,
         web_results: list[WebSearchResult] | None = None,
         diagnosis: DiagnosisInfo | None = None,
         session_id: str | None = None,

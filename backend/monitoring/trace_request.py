@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Make the backend root importable regardless of how this script is run
@@ -46,7 +46,7 @@ _SUPPRESSED_FIELDS = {"timestamp", "level", "message", "request_id", "logger"}
 # enumerates, so it shows one row per request, not one per log line.
 _OUTCOME_MESSAGES = {"chat_query_handled", "request_failed", "diagnose_response_sent"}
 
-_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+_EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
 def _parse_timestamp(ts: str | None) -> datetime | None:

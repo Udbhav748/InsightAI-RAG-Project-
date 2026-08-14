@@ -21,8 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def _run_git(args: list[str]) -> str:
@@ -84,11 +83,11 @@ def main() -> None:
     since: datetime | None = None
     until: datetime | None = None
     if args.days is not None:
-        since = datetime.now(timezone.utc) - timedelta(days=args.days)
+        since = datetime.now(UTC) - timedelta(days=args.days)
     if args.since:
-        since = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
+        since = datetime.fromisoformat(args.since).replace(tzinfo=UTC)
     if args.until:
-        until = datetime.fromisoformat(args.until).replace(tzinfo=timezone.utc)
+        until = datetime.fromisoformat(args.until).replace(tzinfo=UTC)
 
     all_releases = list_releases()
     windowed = filter_window(all_releases, since, until)
@@ -96,7 +95,7 @@ def main() -> None:
 
     period_days = None
     if since is not None:
-        period_end = until or datetime.now(timezone.utc)
+        period_end = until or datetime.now(UTC)
         period_days = max((period_end - since).total_seconds() / 86400, 0.0001)
 
     report = {

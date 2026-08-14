@@ -1,7 +1,7 @@
 """Pydantic request/response schemas for API validation and serialization."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,7 @@ class ChatRequest(BaseModel):
         le=1.0,
         description="Minimum similarity score to keep a chunk. Defaults to Settings.retrieval_min_score.",
     )
-    history: list[dict] | None = Field(
+    history: list[dict[str, Any]] | None = Field(
         None,
         description="Prior conversation turns, oldest first, each shaped like "
         "{'role': 'user'|'assistant', 'content': str}. Only the most recent "
@@ -278,7 +278,7 @@ class ApprovalItem(BaseModel):
     approval_id: str
     action: str  # "web_search" | "document_delete"
     requested_by: str | None = None
-    payload: dict = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
     status: str  # "pending" | "approved" | "rejected"
     note: str | None = None
     created_at: float
@@ -300,7 +300,7 @@ class ApprovalResolveResponse(BaseModel):
     approval_id: str
     action: str
     requested_by: str | None = None
-    payload: dict = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
     status: str
     note: str | None = None
     created_at: float
@@ -318,7 +318,7 @@ class FeedbackEvent(BaseModel):
     rating: str
     comment: str | None = None
     reviewer_id: str | None = None
-    rubric: dict | None = Field(
+    rubric: dict[str, Any] | None = Field(
         None, description="Optional RubricScores dict, when this event carried a full review."
     )
 

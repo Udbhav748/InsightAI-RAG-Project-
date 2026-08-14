@@ -8,6 +8,8 @@ deployment has enabled, so an operator can tell at a glance why uploads
 and captioning behave the way they do.
 """
 
+from typing import Any
+
 from fastapi import APIRouter
 
 from app.core.config import settings
@@ -34,8 +36,8 @@ def _provider_configured(provider: str | None) -> bool:
 
 
 @router.get("/health", tags=["Health"])
-def health_check():
-    body = {
+def health_check() -> dict[str, Any]:
+    body: dict[str, Any] = {
         "status": "ok",
         "llm": {
             "provider": settings.llm_provider,

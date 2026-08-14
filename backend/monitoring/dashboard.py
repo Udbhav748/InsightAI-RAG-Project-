@@ -23,7 +23,7 @@ import argparse
 import json
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Make the backend root importable regardless of how this script is run
@@ -38,7 +38,7 @@ from monitoring.log_aggregate import _load_records, aggregate  # noqa: E402
 def _time_window(records: list[dict], window_min: float) -> list[dict]:
     if window_min <= 0:
         return records
-    cutoff = datetime.now(timezone.utc).timestamp() - window_min * 60
+    cutoff = datetime.now(UTC).timestamp() - window_min * 60
     kept = []
     for rec in records:
         ts = rec.get("timestamp")

@@ -26,7 +26,7 @@ echoed into.
 
 import re
 
-_PATTERNS: dict[str, re.Pattern] = {
+_PATTERNS: dict[str, re.Pattern[str]] = {
     "ignore_instructions": re.compile(
         r"ignore (all |any )?(previous|prior|above|earlier) instructions", re.IGNORECASE
     ),

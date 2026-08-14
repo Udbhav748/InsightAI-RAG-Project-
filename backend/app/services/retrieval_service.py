@@ -41,7 +41,7 @@ def _search_with_timeout(
     resolved_top_k: int,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
-    image_vector_store=None,
+    image_vector_store: VectorStore | None = None,
 ) -> list[RetrievedChunk]:
     """Run the retrieval search block (hybrid or plain semantic) under a
     configurable wall-clock timeout.
@@ -123,7 +123,7 @@ def _retrieve_core(
     min_score: float | None = None,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
-    image_vector_store=None,
+    image_vector_store: VectorStore | None = None,
 ) -> list[RetrievedChunk]:
     """Core retrieval logic: retrieve (optionally hybrid + reranked), then
     drop results below min_score. Split out of the @track_tool-wrapped
@@ -245,7 +245,7 @@ def retrieve(
     min_score: float | None = None,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
-    image_vector_store=None,
+    image_vector_store: VectorStore | None = None,
 ) -> list[RetrievedChunk]:
     """Public, instrumented retrieval entry point — the inline ChatService
     path. Validates args, runs _retrieve_core, and logs one

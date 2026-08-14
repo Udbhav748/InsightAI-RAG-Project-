@@ -9,11 +9,13 @@ app/core/config.py's database_url docstring.
 """
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
 
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
 
@@ -28,8 +30,8 @@ class Base(DeclarativeBase):
 # db_enabled() before touching these. Models imported against this module
 # still work without a live connection because they only need the
 # declarative metadata, not an engine.
-engine = None
-SessionLocal = None
+engine: Engine | None = None
+SessionLocal: sessionmaker[Session] | None = None
 
 if settings.database_url:
     # Bounded first-connect: with an unbounded connect attempt, a down
@@ -50,11 +52,16 @@ def db_enabled() -> bool:
     return engine is not None and SessionLocal is not None
 
 
-def get_db():
+def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency yielding a scoped session (only valid when
     db_enabled(); routes that may run with the DB disabled must guard
     before depending on this)."""
-    if not db_enabled():
+    # Checked directly on SessionLocal (rather than via db_enabled()) so
+    # mypy can narrow it from `sessionmaker[Session] | None` in this same
+    # scope — engine/SessionLocal are always set together (see the
+    # `if settings.database_url:` block above), so this is equivalent to
+    # db_enabled() being False.
+    if SessionLocal is None:
         raise RuntimeError("Database not configured (DATABASE_URL is empty)")
     db = SessionLocal()
     try:
@@ -76,9 +83,8 @@ def run_migrations() -> None:
 
     Idempotent: `upgrade head` on an already-current database is a no-op.
     """
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -139,6 +145,13 @@ def init_db() -> None:
             "db_no_alembic_history_using_create_all",
             extra={"extra_fields": {"reason": str(exc)}},
         )
+        # engine is guaranteed non-None here: init_db() returned early above
+        # unless db_enabled() was True, and engine/SessionLocal are only ever
+        # set together. Narrowed explicitly (rather than relied on across the
+        # try/except) since mypy doesn't track that invariant through the
+        # intervening calls.
+        if engine is None:
+            raise RuntimeError("Database engine not initialized despite db_enabled() check")
         Base.metadata.create_all(bind=engine)
         _stamp_migrations_at_head()
     logger.info(
@@ -154,9 +167,8 @@ def _stamp_migrations_at_head() -> None:
     the same create_all fallback and the next real migration would be skipped
     silently forever.
     """
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -169,7 +181,12 @@ def _has_alembic_history() -> bool:
     """True if the target DB has ever been through Alembic (an
     alembic_version table exists). A fresh DB that only ever used create_all()
     has no such table — that's the no-history fallback case in init_db."""
-    return inspect(engine).has_table("alembic_version")
+    # Only called from init_db()'s except block, which is only reached after
+    # db_enabled() confirmed engine is set — but that invariant isn't visible
+    # to mypy across the function boundary, so it's re-checked here.
+    if engine is None:
+        raise RuntimeError("Database engine not initialized despite db_enabled() check")
+    return bool(inspect(engine).has_table("alembic_version"))
 
 
 def _database_host_for_log() -> str:

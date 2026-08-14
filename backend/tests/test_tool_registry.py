@@ -17,7 +17,12 @@ import pytest
 from app.core import usage_tracking
 from app.core.usage_tracking import current_usage, record_usage, reset_usage
 from app.models.document import RetrievedChunk, VisionPrediction
-from app.services.tool_registry import ToolInputError, ToolOutputError, _summarize_output, track_tool
+from app.services.tool_registry import (
+    ToolInputError,
+    ToolOutputError,
+    _summarize_output,
+    track_tool,
+)
 
 
 @track_tool("retrieval")

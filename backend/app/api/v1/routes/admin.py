@@ -22,6 +22,9 @@ def get_usage_summary(request: Request) -> UsageSummaryResponse:
     )
     if not db_enabled():
         return UsageSummaryResponse(rows=[])
+    # db_enabled() guarantees SessionLocal is set, but that's not something
+    # mypy can follow across the function call — narrow it explicitly here.
+    assert SessionLocal is not None
     with SessionLocal() as db:
         results = (
             db.query(

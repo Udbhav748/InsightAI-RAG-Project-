@@ -10,7 +10,6 @@ stubbed unavailable so the tesseract binary is never invoked.
 
 import asyncio
 import io
-from pathlib import Path
 
 import fitz
 import pytest
@@ -21,15 +20,18 @@ from app.core.exceptions import LLMConfigurationError
 from app.models.document import (
     EmbeddedChunk,
     ExtractedImage,
-    ExtractedTable,
     RetrievedChunk,
 )
 from app.services import document_service
 from app.services.chunking_service import chunk_text
 from app.services.document_processing_service import DocumentProcessingService
-from app.services.document_service import extract_images_from_pdf, extract_text_from_pdf
+from app.services.document_service import extract_images_from_pdf
 from app.services.gemini_client import GeminiClient
-from app.services.image_captioning_service import caption_images, load_image_manifest, write_image_manifest
+from app.services.image_captioning_service import (
+    caption_images,
+    load_image_manifest,
+    write_image_manifest,
+)
 from app.services.table_extraction_service import extract_tables_from_pdf
 from app.services.vision_qa_service import try_vision_qa
 

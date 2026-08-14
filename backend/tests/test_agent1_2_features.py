@@ -10,7 +10,7 @@ from app.models.document import RetrievedChunk
 from app.services.local_research_agent import LocalResearchAgent
 from app.services.prompt_builder import FALLBACK_REPLY, PERSONAS, build_prompt
 from app.services.query_planning import plan_subqueries
-from app.services.rag_service import ChatService, PlanDecision
+from app.services.rag_service import ChatService
 
 
 class FakeLLMClient:

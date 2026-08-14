@@ -22,9 +22,9 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Same reasoning as dashboard.py's identical line: needed whether this
@@ -79,7 +79,7 @@ def _save_state(state: dict) -> None:
 
 def check_all(backend: str, frontend: str) -> dict:
     state = _load_state()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     targets = {"backend": backend, "frontend": frontend}
     results = {}

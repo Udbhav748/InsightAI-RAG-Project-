@@ -23,9 +23,8 @@ from app.services.approval_service import (
     STATUS_PENDING,
     STATUS_REJECTED,
     ApprovalStore,
-    get_approval_store,
 )
-from app.services.rag_service import ChatService, PlanDecision
+from app.services.rag_service import ChatService
 
 VALID_HEADERS = {"X-API-Key": settings.api_key}
 
@@ -285,7 +284,6 @@ class TestWebSearchGateRecordsApproval:
         assert searched[0]["payload"]["query"] == "a query"
 
     def test_client_name_attributed_to_web_search_approval(self, monkeypatch):
-        import app.services.rag_service as rag_service_module
 
         monkeypatch.setattr(settings, "web_search_requires_approval", True)
         service = make_service()

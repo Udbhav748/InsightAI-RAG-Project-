@@ -29,6 +29,7 @@ import functools
 import inspect
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -125,12 +126,12 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
 # Built once rather than per-call — TypeAdapter's schema build isn't free,
 # and the output type per tool is static.
-_OUTPUT_ADAPTERS: dict[str, TypeAdapter] = {
+_OUTPUT_ADAPTERS: dict[str, TypeAdapter[Any]] = {
     tool_name: TypeAdapter(spec["output"]) for tool_name, spec in TOOL_SCHEMAS.items()
 }
 
 
-def track_tool(name: str):
+def track_tool(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator: validates args against the tool's input schema, runs the
     wrapped function, and logs one structured tool_invocation event.
 
@@ -139,13 +140,13 @@ def track_tool(name: str):
     attempt, exactly, on success or failure).
     """
 
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         # Bind call-site args to parameter names so schemas can be applied
         # regardless of whether callers pass args positionally or by keyword.
         signature = inspect.signature(func)
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
             input_schema = TOOL_SCHEMAS[name]["input"]
@@ -262,7 +263,7 @@ def _looks_like_timeout(exc: Exception) -> bool:
     return "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
 
 
-def _summarize_input(data: dict) -> dict:
+def _summarize_input(data: dict[str, Any]) -> dict[str, Any]:
     """Trim values that would bloat the log (long query strings, image
     bytes) to a short length — the event records shape, not content."""
     summary = {}

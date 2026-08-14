@@ -14,6 +14,7 @@ import time
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import fitz
 import pytesseract
@@ -62,10 +63,14 @@ def _ocr_page(page: fitz.Page) -> str:
     — callers decide how to degrade (see extract_text_from_pdf)."""
     pixmap = page.get_pixmap(dpi=settings.ocr_dpi)
     image = Image.open(BytesIO(pixmap.tobytes("png")))
-    return pytesseract.image_to_string(image)
+    # pytesseract ships no type stubs, so image_to_string() resolves to Any.
+    # At runtime it's always a str here: we never pass output_type, and its
+    # default (Output.STRING) is what returns plain text rather than the
+    # dict/DataFrame shapes other output_type values produce.
+    return str(pytesseract.image_to_string(image))
 
 
-def extract_text_from_pdf(document_id: str, file_path: Path) -> dict:
+def extract_text_from_pdf(document_id: str, file_path: Path) -> dict[str, Any]:
     """Extract text from every page of a PDF, in order.
 
     Returns a dict with extracted_text, total_pages, extracted_characters,
@@ -209,7 +214,7 @@ def _rasterize_page(page: fitz.Page) -> tuple[bytes, int, int]:
     return pixmap.tobytes("png"), pixmap.width, pixmap.height
 
 
-def extract_images_from_pdf(document_id: str, file_path: Path) -> list[dict]:
+def extract_images_from_pdf(document_id: str, file_path: Path) -> list[dict[str, Any]]:
     """Extract the images embedded in a PDF (Phase 1 of multi-modal RAG).
 
     Returns a list of dicts, each describing one image record:
@@ -248,7 +253,7 @@ def extract_images_from_pdf(document_id: str, file_path: Path) -> list[dict]:
     except fitz.FileDataError as exc:
         raise CorruptedPDFError(f"File is not a valid PDF: {file_path.name}") from exc
 
-    images: list[dict] = []
+    images: list[dict[str, Any]] = []
     seen_xrefs: set[int] = set()
 
     try:

@@ -7,13 +7,13 @@ vision_client's HTTP handling (see test_vision_client.py) or retrieval
 internals (see test_retrieval_service.py).
 """
 
+import pytest
+
 import app.services.rag_service as rag_service_module
 from app.core.exceptions import VisionServiceError
 from app.models.document import RetrievedChunk, VisionPrediction
 from app.services.prompt_builder import FALLBACK_REPLY
 from app.services.rag_service import ChatService
-
-import pytest
 
 
 class FakeLLMClient:

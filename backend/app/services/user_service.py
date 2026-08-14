@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal, db_enabled
@@ -104,7 +105,7 @@ def _clear_failed_attempts(email: str) -> None:
         _failed_login_store.pop(email, None)
 
 
-def _session():
+def _session() -> Session:
     if not db_enabled():
         # Unlike tenant_service.py's identically-shaped _session() (whose
         # callers all check db_enabled() themselves first, so this branch
@@ -114,6 +115,13 @@ def _session():
         # AppError, not a bare RuntimeError: individual user login being
         # unavailable in a DB-less deployment is a config gap the caller
         # should see clearly (503), not a generic 500.
+        raise DatabaseNotConfiguredError(
+            "Individual user login requires DATABASE_URL to be configured."
+        )
+    if SessionLocal is None:
+        # db_enabled() being True guarantees this in practice (engine and
+        # SessionLocal are always set together — see app/core/database.py),
+        # but mypy can't see that invariant across the db_enabled() call.
         raise DatabaseNotConfiguredError(
             "Individual user login requires DATABASE_URL to be configured."
         )

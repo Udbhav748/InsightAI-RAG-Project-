@@ -7,12 +7,19 @@ should import the google-genai SDK directly.
 import logging
 import time
 from collections.abc import Iterator
+from typing import cast
 
 import httpx
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -28,21 +35,21 @@ from app.services.llm_client import LLMClient
 logger = logging.getLogger(__name__)
 
 
-def _log_retry(retry_state) -> None:
+def _log_retry(retry_state: RetryCallState) -> None:
     logger.warning(
         "llm_generation_retrying",
         extra={
             "extra_fields": {
                 "provider": "gemini",
                 "attempt": retry_state.attempt_number,
-                "exception": str(retry_state.outcome.exception()),
+                "exception": str(retry_state.outcome.exception() if retry_state.outcome else None),
             }
         },
     )
 
 
 class GeminiClient(LLMClient):
-    def __init__(self):
+    def __init__(self) -> None:
         if not settings.gemini_api_key:
             raise LLMConfigurationError("GEMINI_API_KEY is not configured.")
 
@@ -234,7 +241,14 @@ class GeminiClient(LLMClient):
         """
         start = time.perf_counter()
 
-        contents = [
+        # SDK-declared param type is a Union whose list members are
+        # invariant (list[Content | ContentDict | ...]), so a plain
+        # list[Content] — the only type mypy can infer for a single-item
+        # literal like this — never structurally matches even though every
+        # element in it is a valid Content. The cast documents that this is
+        # exactly the invariance false-positive mypy itself warns about,
+        # not a real type mismatch.
+        contents: list[types.Content] = [
             types.Content(
                 parts=[
                     types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
@@ -246,7 +260,7 @@ class GeminiClient(LLMClient):
         try:
             response = self._client.models.generate_content(
                 model=settings.gemini_model_name,
-                contents=contents,
+                contents=cast("types.ContentListUnionDict", contents),
             )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(

@@ -9,6 +9,7 @@ concrete implementation; that's constructed elsewhere and handed in.
 
 import logging
 import time
+from typing import Any
 
 import numpy as np
 from fastapi import UploadFile
@@ -55,7 +56,7 @@ def _ext_for_mime(mime_type: str) -> str:
     return _IMAGE_MIME_EXT.get(ext, "png")
 
 
-def _persist_images(image_records: list[dict]) -> list[ExtractedImage]:
+def _persist_images(image_records: list[dict[str, Any]]) -> list[ExtractedImage]:
     """Write each extracted image's bytes to Settings.image_storage_dir_name
     and return the ExtractedImage records the downstream captioning/vision
     steps operate on. A write failure for one image logs and drops that
@@ -100,7 +101,7 @@ class DocumentProcessingService:
         self,
         vector_store: VectorStore,
         llm_client: LLMClient | None = None,
-        image_vector_store=None,
+        image_vector_store: VectorStore | None = None,
     ):
         self._vector_store = vector_store
         # Optional, only consulted when Settings.image_captioning_enabled:
@@ -354,7 +355,7 @@ class DocumentProcessingService:
             possible_duplicate_of=possible_duplicate_of,
         )
 
-    def _log_stage(self, stage: str, document_id: str, **fields) -> None:
+    def _log_stage(self, stage: str, document_id: str, **fields: Any) -> None:
         logger.info(
             "pipeline_stage_completed",
             extra={"extra_fields": {"stage": stage, "document_id": document_id, **fields}},

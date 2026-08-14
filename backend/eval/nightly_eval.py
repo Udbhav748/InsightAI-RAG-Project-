@@ -29,7 +29,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import settings
@@ -73,7 +73,7 @@ def _latest_result() -> Path:
 
 def _summarize(report: dict, baseline: dict | None, gate_passed: bool) -> dict:
     summary = {
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "dataset": report.get("dataset"),
         "dataset_version": report.get("dataset_version"),
         "llm_provider": report.get("llm_provider"),

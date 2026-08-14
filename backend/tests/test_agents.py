@@ -20,8 +20,6 @@ from.
 import time
 from types import SimpleNamespace
 
-import pytest
-
 import app.services.research_agent as research_agent
 from app.core.config import settings
 from app.models.document import WebSearchResult

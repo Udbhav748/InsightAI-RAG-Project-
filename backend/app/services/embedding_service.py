@@ -12,7 +12,13 @@ import uuid
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -33,13 +39,19 @@ logger = logging.getLogger(__name__)
 _SPECIAL_TOKEN_BUDGET = 2
 
 
-def _log_retry(retry_state) -> None:
+def _log_retry(retry_state: RetryCallState) -> None:
+    # .outcome is a property, not a plain attribute -- assign it to a local
+    # so mypy can narrow the None check (it won't narrow across repeated
+    # property reads, since a property isn't guaranteed to return the same
+    # value each access).
+    outcome = retry_state.outcome
+    exception = outcome.exception() if outcome is not None else None
     logger.warning(
         "embed_query_retrying",
         extra={
             "extra_fields": {
                 "attempt": retry_state.attempt_number,
-                "exception": str(retry_state.outcome.exception()),
+                "exception": str(exception),
             }
         },
     )

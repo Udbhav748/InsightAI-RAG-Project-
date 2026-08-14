@@ -16,10 +16,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.core.exceptions import ChatServiceError
+from app.models.document import RetrievedChunk, WebSearchResult
 from app.models.schemas import ChatResponse, SourceReference
 from app.services.planning_agent import Observation
 from app.services.prompt_builder import build_prompt, strip_sources_section
@@ -49,7 +50,7 @@ class AgentExecutorError(ChatServiceError):
 class AgentResult:
     answer: str
     sources: list[SourceReference]
-    retrieved_chunks: list
+    retrieved_chunks: list[RetrievedChunk]
     steps_taken: int
     tool_used: str
     answer_source: str
@@ -84,7 +85,7 @@ class AgentExecutor:
         query: str,
         context: ToolContext,
         session_id: str | None = None,
-        history: list[dict] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
         min_score: float | None = None,
         confirm_web_search: bool = False,
@@ -103,8 +104,8 @@ class AgentExecutor:
 
         step_results: list[_StepResult] = []
         observations: list[Observation] = []
-        all_chunks: list = []
-        all_web_results: list = []
+        all_chunks: list[RetrievedChunk] = []
+        all_web_results: list[WebSearchResult] = []
         tool_used = "retrieval"
         answer_source = "documents"
         llm_calls = 0
@@ -199,9 +200,9 @@ class AgentExecutor:
     async def _synthesize(
         self,
         query: str,
-        chunks: list,
-        web_results: list,
-        history: list[dict] | None,
+        chunks: list[RetrievedChunk],
+        web_results: list[WebSearchResult],
+        history: list[dict[str, str]] | None,
         persona: str | None,
         step_results: list[_StepResult],
         llm_calls: int,
@@ -230,10 +231,12 @@ class AgentExecutor:
         answer = strip_sources_section(self._llm.generate(prompt))
         return answer, used_web
 
-    def _build_sources(self, chunks: list, web_results: list) -> list[SourceReference]:
+    def _build_sources(
+        self, chunks: list[RetrievedChunk], web_results: list[WebSearchResult]
+    ) -> list[SourceReference]:
         from app.services.rag_service import _source_references, _web_source_references
 
-        sources = []
+        sources: list[SourceReference] = []
         if chunks:
             sources.extend(_source_references(chunks, start=1))
         if web_results:
@@ -241,18 +244,38 @@ class AgentExecutor:
         return sources
 
     def _detect_hallucination(
-        self, answer: str, chunks: list, web_results: list
+        self, answer: str, chunks: list[RetrievedChunk], web_results: list[WebSearchResult]
     ) -> tuple[bool, float | None]:
         from app.services.rag_service import _detect_hallucination
 
         return _detect_hallucination(answer, chunks, web_results)
 
     def _suggest_follow_ups(self, query: str, answer: str) -> list[str]:
-        from app.services.rag_service import _suggest_follow_ups as rag_suggest
+        """Suggest up to 3 short follow-up questions. Degrades to an empty
+        list on any LLM/parse failure — never blocks or fails the main
+        answer. Mirrors ChatService._suggest_follow_ups in rag_service.py
+        (duplicated rather than imported: that's an instance method bound
+        to ChatService's own LLM client, not a module-level function)."""
+        prompt = (
+            f"Question: {query}\nAnswer: {answer}\n\n"
+            "Suggest up to 3 short, natural follow-up questions the user "
+            "might ask next. Return ONLY a JSON array of strings, e.g. "
+            '["question one?", "question two?"]. Return an empty array [] '
+            "if you can't think of good ones."
+        )
+        try:
+            import json
 
-        return rag_suggest(query, answer)
+            raw = self._llm.generate(prompt).strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            result = json.loads(raw)
+            return [str(q) for q in result][:3] if isinstance(result, list) else []
+        except Exception:
+            return []
 
-    def _inject_memory(self, history: list[dict] | None, session_id: str) -> list[dict] | None:
+    def _inject_memory(
+        self, history: list[dict[str, str]] | None, session_id: str
+    ) -> list[dict[str, str]] | None:
         if self._memory is None or not settings.agent_memory_enabled or not session_id:
             return history
         try:
@@ -273,7 +296,7 @@ class AgentExecutor:
         session_id: str,
         query: str,
         answer: str,
-        chunks: list,
+        chunks: list[RetrievedChunk],
         query_type: str,
     ) -> None:
         if self._memory is None or not settings.agent_memory_enabled or not session_id:
@@ -306,7 +329,7 @@ class AgentExecutor:
                 session_id, key, value, confidence=confidence, source_chunk_ids=source_chunk_ids
             )
 
-    async def _extract_facts(self, query: str, answer: str) -> list[tuple[str, str, str]]:
+    def _extract_facts(self, query: str, answer: str) -> list[tuple[str, str, str]]:
         prompt = (
             "Extract the durable factual claims from this question-answer "
             "exchange — the concrete facts a later question might want to "
@@ -348,12 +371,12 @@ class AgentExecutor:
         query: str,
         context: ToolContext,
         session_id: str | None = None,
-        history: list[dict] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
         min_score: float | None = None,
         confirm_web_search: bool = False,
         persona: str | None = None,
-    ) -> AsyncIterator[dict]:
+    ) -> AsyncIterator[dict[str, Any]]:
         start_time = time.perf_counter()
 
         # Same approval-gate threading as execute() — the streamed path
@@ -365,8 +388,8 @@ class AgentExecutor:
 
         step_results: list[_StepResult] = []
         observations: list[Observation] = []
-        all_chunks: list = []
-        all_web_results: list = []
+        all_chunks: list[RetrievedChunk] = []
+        all_web_results: list[WebSearchResult] = []
         tool_used = "retrieval"
         answer_source = "documents"
         llm_calls = 0

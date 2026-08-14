@@ -12,6 +12,7 @@ backend/).
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from app.core.config import settings
 from app.services import s3_sync_service
@@ -22,7 +23,7 @@ FEEDBACK_PATH = FEEDBACK_DIR / settings.feedback_filename
 logger = logging.getLogger(__name__)
 
 
-def list_feedback(limit: int = 50, reviewer_id: str | None = None) -> list[dict]:
+def list_feedback(limit: int = 50, reviewer_id: str | None = None) -> list[dict[str, Any]]:
     """Read back recorded feedback events, newest first (Feature #6).
 
     Mirrors how eval/metrics_report.py consumes the same file — this is the
@@ -34,7 +35,7 @@ def list_feedback(limit: int = 50, reviewer_id: str | None = None) -> list[dict]
     """
     if not FEEDBACK_PATH.exists():
         return []
-    events: list[dict] = []
+    events: list[dict[str, Any]] = []
     with FEEDBACK_PATH.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -58,7 +59,7 @@ def record_feedback(
     rating: str,
     comment: str | None,
     reviewer_id: str | None = None,
-    rubric: dict | None = None,
+    rubric: dict[str, Any] | None = None,
 ) -> None:
     """reviewer_id identifies who submitted this judgment — resolved from
     the authenticated caller's client_name (see query.py's submit_feedback),

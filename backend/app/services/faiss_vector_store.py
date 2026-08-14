@@ -19,6 +19,7 @@ import logging
 import threading
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import faiss
 import numpy as np
@@ -47,7 +48,7 @@ class FAISSVectorStore(VectorStore):
         self.index_path = index_path or DEFAULT_INDEX_PATH
         self.metadata_path = metadata_path or DEFAULT_METADATA_PATH
         self._index: faiss.Index | None = None
-        self._metadata: list[dict] = []
+        self._metadata: list[dict[str, Any]] = []
         self._bm25_index = BM25Index()
         # Guards every method that reads or writes self._index/self._metadata
         # against a writer (add_embeddings/delete_document/load) swapping
@@ -76,7 +77,7 @@ class FAISSVectorStore(VectorStore):
         # implicit.
         self._lock = threading.Lock()
 
-    def _record_to_chunk(self, record: dict, score: float) -> RetrievedChunk:
+    def _record_to_chunk(self, record: dict[str, Any], score: float) -> RetrievedChunk:
         record_metadata = record["metadata"]
         text = record_metadata.get("text", "")
         metadata = {key: value for key, value in record_metadata.items() if key != "text"}
@@ -179,7 +180,7 @@ class FAISSVectorStore(VectorStore):
                 },
             )
 
-    def _is_duplicate_of_existing(self, document_id: str, vector) -> bool:
+    def _is_duplicate_of_existing(self, document_id: str, vector: list[float]) -> bool:
         """True if `vector` is a near-duplicate (cosine similarity >=
         settings.chunk_dedup_similarity_threshold) of any already-indexed
         chunk belonging to `document_id`. Vectors are assumed
@@ -188,6 +189,13 @@ class FAISSVectorStore(VectorStore):
         delete_document already uses — fine at this app's per-document
         scale."""
         if not settings.chunk_dedup_enabled:
+            return False
+        if self._index is None:
+            # Only called from add_embeddings(), which already guarantees
+            # self._index is not None before reaching this helper — this is
+            # a defensive fallback for mypy's benefit and for any future
+            # caller, not a path expected to actually run: with no index,
+            # nothing indexed yet counts as "not a duplicate".
             return False
         positions = [
             i for i, record in enumerate(self._metadata) if record["document_id"] == document_id
@@ -387,7 +395,12 @@ class FAISSVectorStore(VectorStore):
             if not positions:
                 return None
             positions.sort(key=lambda i: self._metadata[i]["metadata"].get("chunk_index", 0))
-            return self._index.reconstruct(positions[0]).tolist()
+            # faiss has no type stubs, so reconstruct(...).tolist() is
+            # typed Any all the way through; reconstruct() returns a 1-D
+            # float32 ndarray and .tolist() genuinely produces list[float]
+            # at runtime, so this cast reflects reality rather than
+            # papering over a real gap.
+            return cast("list[float]", self._index.reconstruct(positions[0]).tolist())
 
     def save(self) -> None:
         with self._lock:

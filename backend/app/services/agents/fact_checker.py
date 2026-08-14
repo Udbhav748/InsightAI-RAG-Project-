@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
+from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ class FactChecker(Agent):
             metadata={"tool": self.name, "verified": verified, "skipped": False},
         )
 
-    async def _verify_citations(self, answer: str, chunks: list) -> bool:
+    async def _verify_citations(self, answer: str, chunks: list[RetrievedChunk]) -> bool:
         citation_numbers = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)})
         if not citation_numbers:
             return True

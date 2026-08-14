@@ -15,9 +15,12 @@ retrieval_service.py checks for it explicitly (isinstance) rather than
 assuming every VectorStore has it.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import time
+from typing import TYPE_CHECKING, Any
 
 from rank_bm25 import BM25Okapi
 
@@ -26,6 +29,10 @@ from app.core.exceptions import ClipServiceError
 from app.models.document import RetrievedChunk
 from app.services import clip_client
 from app.services.embedding_service import embed_query
+
+if TYPE_CHECKING:
+    from app.services.faiss_vector_store import FAISSVectorStore
+    from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +49,11 @@ class BM25Index:
     same caveat FAISSVectorStore itself already has around concurrent
     writes (see docs/ARCHITECTURE.md)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._bm25: BM25Okapi | None = None
-        self._records: list[dict] = []
+        self._records: list[dict[str, Any]] = []
 
-    def rebuild(self, records: list[dict]) -> None:
+    def rebuild(self, records: list[dict[str, Any]]) -> None:
         """records is FAISSVectorStore._metadata — each a dict with
         chunk_id, document_id, and metadata (which carries the chunk
         text under metadata["text"]). Rebuilds from scratch every time;
@@ -65,7 +72,7 @@ class BM25Index:
         top_k: int,
         tenant_id: int | None = None,
         document_ids: list[str] | None = None,
-    ) -> list[tuple[dict, float]]:
+    ) -> list[tuple[dict[str, Any], float]]:
         """Return up to top_k (record, score) pairs, highest score first.
         score is BM25Okapi's raw score: unbounded above, exactly 0.0 for a
         document with no query-term overlap at all.
@@ -80,7 +87,7 @@ class BM25Index:
             return []
 
         scores = self._bm25.get_scores(_tokenize(query))
-        candidate_positions = range(len(scores))
+        candidate_positions: list[int] = list(range(len(scores)))
         if tenant_id is not None:
             candidate_positions = [
                 i
@@ -114,12 +121,12 @@ def _min_max_normalize(scores: list[float]) -> list[float]:
 
 def hybrid_search(
     query: str,
-    vector_store,
+    vector_store: FAISSVectorStore,
     top_k: int,
     candidate_k: int | None = None,
     tenant_id: int | None = None,
     document_ids: list[str] | None = None,
-    image_vector_store=None,
+    image_vector_store: VectorStore | None = None,
 ) -> list[RetrievedChunk]:
     """Fuse FAISS semantic search with BM25 lexical search, and (when CLIP
     cross-modal retrieval is enabled) a third CLIP image-similarity signal.
@@ -194,7 +201,7 @@ def hybrid_search(
     bm25_norm = _min_max_normalize([chunk.score for chunk in bm25_results])
     clip_norm = _min_max_normalize([chunk.score for chunk in clip_results])
 
-    fused: dict[str, dict] = {}
+    fused: dict[str, dict[str, Any]] = {}
     for chunk, norm_score in zip(semantic_results, semantic_norm, strict=False):
         fused[chunk.chunk_id] = {
             "chunk": chunk,
@@ -225,11 +232,13 @@ def hybrid_search(
         else:
             entry["clip"] = norm_score
 
-    def _blend(entry: dict) -> float:
-        text_blend = semantic_weight * entry["semantic"] + (1.0 - semantic_weight) * entry["bm25"]
+    def _blend(entry: dict[str, Any]) -> float:
+        text_blend: float = (
+            semantic_weight * entry["semantic"] + (1.0 - semantic_weight) * entry["bm25"]
+        )
         if clip_weight > 0.0:
             # Scale the text blend down so three-way weights sum to 1.
-            return clip_weight * entry["clip"] + (1.0 - clip_weight) * text_blend
+            return float(clip_weight * entry["clip"] + (1.0 - clip_weight) * text_blend)
         return text_blend
 
     scored = [(entry["chunk"], _blend(entry)) for entry in fused.values()]

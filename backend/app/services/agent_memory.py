@@ -32,6 +32,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.core.config import settings
 
@@ -58,7 +59,7 @@ class _SessionMemory:
     the (lowercased) fact key so upserting is an O(1) update, not a scan."""
 
     session_id: str
-    turns: list[dict] = field(default_factory=list)  # [{"role", "content"}]
+    turns: list[dict[str, Any]] = field(default_factory=list)  # [{"role", "content"}]
     facts: dict[str, _MemoryFact] = field(default_factory=dict)
     last_accessed: float = field(default_factory=time.time)
 
@@ -136,7 +137,7 @@ class AgentMemory:
                 session.turns = session.turns[-self._max_turns_per_session :]
             session.last_accessed = time.time()
 
-    def get_recent_turns(self, session_id: str, limit: int | None = None) -> list[dict]:
+    def get_recent_turns(self, session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
         """Return the most recent turns (oldest-first), capped at limit
         (default: the session's turn cap). [] for an unknown session."""
         limit = limit or self._max_turns_per_session
@@ -186,7 +187,7 @@ class AgentMemory:
                 )
             session.last_accessed = time.time()
 
-    def get_fact(self, session_id: str, key: str) -> dict | None:
+    def get_fact(self, session_id: str, key: str) -> dict[str, Any] | None:
         """Return one fact as a dict (key/value/confidence/
         source_chunk_ids), or None if the session or key is unknown."""
         key = str(key).strip().lower()
@@ -205,7 +206,7 @@ class AgentMemory:
                 "source_chunk_ids": list(fact.source_chunk_ids),
             }
 
-    def get_all_facts(self, session_id: str) -> list[dict]:
+    def get_all_facts(self, session_id: str) -> list[dict[str, Any]]:
         """Return every fact for a session (insertion order). [] for an
         unknown session."""
         with self._lock:

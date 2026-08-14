@@ -20,7 +20,7 @@ exercised end-to-end through the real middleware.
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.metrics import Metrics, get_metrics, reset_metrics, normalize_path
+from app.core.metrics import Metrics, normalize_path, reset_metrics
 from app.main import app
 
 

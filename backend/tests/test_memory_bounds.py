@@ -9,7 +9,7 @@ which had none.
 """
 
 import app.services.rag_service as rag_service_module
-from app.services.rag_service import ChatService, _MAX_HISTORY_TURNS
+from app.services.rag_service import _MAX_HISTORY_TURNS, ChatService
 from app.services.session_store import InMemorySessionStore
 from tests.test_rag_service import FakeLLMClient, FakeVectorStore, make_chunk
 

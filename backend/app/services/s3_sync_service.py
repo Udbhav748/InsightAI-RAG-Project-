@@ -20,6 +20,7 @@ cold start is at risk.
 import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from app.core.config import settings
 
@@ -27,7 +28,10 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
-def _client():
+def _client() -> Any:
+    # boto3 ships no inline type stubs (would need the separate
+    # boto3-stubs/mypy-boto3-s3 package, not a project dependency), so
+    # boto3.client("s3") resolves to Any regardless of annotation here.
     import boto3
 
     return boto3.client("s3")

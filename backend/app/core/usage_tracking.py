@@ -75,4 +75,10 @@ def current_usage() -> Usage:
             "total_tokens": 0,
             "estimated_cost_usd": 0.0,
         }
-    return dict(usage)
+    # A copy, not the live accumulator itself — callers must not be able to
+    # mutate the request-scoped total by mutating what this returns.
+    # dict(usage) makes that copy but degrades TypedDict-ness to
+    # dict[str, object] (heterogeneous field types), which mypy then
+    # rejects against the declared Usage return type; constructing a fresh
+    # Usage from the same keys keeps both the copy and the precise type.
+    return Usage(**usage)

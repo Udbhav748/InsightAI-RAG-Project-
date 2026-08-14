@@ -5,6 +5,7 @@ Pure text formatting: no retrieval, no LLM calls.
 """
 
 import re
+from typing import Any
 
 from app.core.exceptions import PromptGenerationError
 from app.models.document import RetrievedChunk, WebSearchResult
@@ -124,7 +125,7 @@ _WEB_RESULTS_INSTRUCTION = (
 )
 
 
-def _format_history(history: list[dict] | None) -> str:
+def _format_history(history: list[dict[str, Any]] | None) -> str:
     if not history:
         return ""
     lines = "\n".join(f"{turn.get('role', 'user')}: {turn.get('content', '')}" for turn in history)
@@ -170,7 +171,7 @@ def _build_context(chunks: list[RetrievedChunk], web_results: list[WebSearchResu
 def build_prompt(
     query: str,
     chunks: list[RetrievedChunk],
-    history: list[dict] | None = None,
+    history: list[dict[str, Any]] | None = None,
     extra_instruction: str | None = None,
     web_results: list[WebSearchResult] | None = None,
     persona: str | None = None,
@@ -217,7 +218,7 @@ _STRUCTURED_OUTPUT_SCHEMA = '{"answer": "<your answer text>", "sources": ["<docu
 def build_structured_prompt(
     query: str,
     chunks: list[RetrievedChunk],
-    history: list[dict] | None = None,
+    history: list[dict[str, Any]] | None = None,
     web_results: list[WebSearchResult] | None = None,
     persona: str | None = None,
 ) -> str:

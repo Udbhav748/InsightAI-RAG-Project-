@@ -27,7 +27,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import Any, Protocol, TypedDict, cast
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,38 @@ logger = logging.getLogger(__name__)
 class HistoryTurn(TypedDict):
     role: str  # "user" | "assistant"
     content: str
+
+
+class SessionStore(Protocol):
+    """Structural interface shared by InMemorySessionStore (below) and
+    PostgresSessionStore (services/postgres_session_store.py) — the two
+    backends get_session_store() picks between. A Protocol rather than a
+    shared base class: both already implement matching method signatures
+    independently, so this just gives get_session_store()'s return value
+    (and the module-level singleton) a real static type instead of forcing
+    either concrete class on callers."""
+
+    def create_session(self, tenant_id: int | None = None) -> str: ...
+
+    # dict[str, Any], not HistoryTurn: this is the shape callers (query.py,
+    # rag_service.py) actually consume — ChatRequest.history is already
+    # `list[dict[str, Any]] | None` (see app/models/schemas.py) and gets
+    # assigned into the same local as this method's result when a session
+    # has no server-side history yet, so the two must match exactly.
+    # HistoryTurn remains InMemorySessionStore's internal storage shape.
+    def get_history(self, session_id: str) -> list[dict[str, Any]] | None: ...
+
+    def append_turn(self, session_id: str, role: str, content: str) -> bool: ...
+
+    def get_or_create_session(
+        self, session_id: str | None, tenant_id: int | None = None
+    ) -> str: ...
+
+    def delete_session(self, session_id: str) -> bool: ...
+
+    def session_exists(self, session_id: str) -> bool: ...
+
+    def get_session_count(self) -> int: ...
 
 
 @dataclass
@@ -101,15 +133,18 @@ class InMemorySessionStore:
         logger.info("session_created", extra={"extra_fields": {"session_id": session_id}})
         return session_id
 
-    def get_history(self, session_id: str) -> list[HistoryTurn] | None:
+    def get_history(self, session_id: str) -> list[dict[str, Any]] | None:
         """Return history for session_id, or None if not found."""
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
             session.last_accessed = time.time()
-            # Return a copy to prevent external mutation
-            return list(session.history)
+            # Return a copy to prevent external mutation. HistoryTurn is a
+            # TypedDict (a plain dict at runtime, just with fixed keys), so
+            # this cast only widens the static type back to the
+            # SessionStore Protocol's dict[str, Any] shape.
+            return cast("list[dict[str, Any]]", list(session.history))
 
     def append_turn(self, session_id: str, role: str, content: str) -> bool:
         """Append a turn to the session's history. Returns False if session not found.
@@ -171,11 +206,11 @@ class InMemorySessionStore:
 
 
 # Global singleton instance
-_session_store: InMemorySessionStore | None = None
+_session_store: SessionStore | None = None
 _session_store_lock = threading.Lock()
 
 
-def get_session_store():
+def get_session_store() -> SessionStore:
     """Return the global session store instance (created on first call).
 
     Returns the PostgreSQL-backed store when the DB is enabled, else the

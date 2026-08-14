@@ -20,7 +20,7 @@ class AgentContext:
     llm_client: LLMClient
     agent_memory: AgentMemory | None
     tenant_id: int | None
-    history: list[dict] | None
+    history: list[dict[str, Any]] | None
     prompt_builder: Any  # callable(query, chunks, history, web_results) -> str
     confirm_web_search: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -31,7 +31,7 @@ class AgentResult:
     """Result returned by agent.run()."""
 
     answer: str
-    sources: list[dict]
+    sources: list[dict[str, Any]]
     metadata: dict[str, Any]
 
 

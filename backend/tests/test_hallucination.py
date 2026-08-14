@@ -6,14 +6,12 @@ _detect_hallucination) and the ChatResponse wiring in _respond (the
 hallucination_detected / grounding_score fields + metric/log emission).
 """
 
-import app.services.rag_service as rag_service_module
 from app.core.config import settings
 from app.models.document import RetrievedChunk, WebSearchResult
 from app.services.rag_service import (
     _content_tokens,
-    _grounding_score,
     _detect_hallucination,
-    _GROUNDEDNESS_STOPWORDS,
+    _grounding_score,
 )
 
 
@@ -131,7 +129,7 @@ class TestDetectHallucination:
 
 class TestRespondWiring:
     def test_grounded_answer_passthrough(self, monkeypatch):
-        from tests.test_rag_service import FakeLLMClient, FakeVectorStore, make_chunk as mk, make_service
+        from tests.test_rag_service import make_service
 
         monkeypatch.setattr(settings, "hallucination_detection_enabled", True)
         service = make_service()

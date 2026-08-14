@@ -1,8 +1,9 @@
 import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.routes import (
@@ -32,7 +33,7 @@ configure_logging()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # On the Lambda deployment (Settings.s3_sync_enabled), restore whatever
     # was last synced before anything else touches local disk — a no-op
     # everywhere else. Must run before query.get_vector_store() below,
@@ -69,7 +70,9 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def security_headers(request: Request, call_next):
+async def security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Apply the security-headers middleware (core/security.py) to every
     response — one more Starlette-style wrapper because main.py already
     uses the @app.middleware("http") decorator shape for its other
@@ -79,7 +82,9 @@ async def security_headers(request: Request, call_next):
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
+async def request_id_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Generate (or propagate) an X-Request-ID for every request.
 
     Stored in request_id_var for the duration of the request so every log
@@ -99,7 +104,9 @@ async def request_id_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
-async def usage_log_middleware(request: Request, call_next):
+async def usage_log_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Record one usage_log row per request when PostgreSQL is configured.
 
     Registered after request_id_middleware, so it wraps it: when the
@@ -112,7 +119,7 @@ async def usage_log_middleware(request: Request, call_next):
         return await call_next(request)
 
     start = time.perf_counter()
-    response = None
+    response: Response | None = None
     try:
         response = await call_next(request)
     finally:
@@ -131,11 +138,17 @@ async def usage_log_middleware(request: Request, call_next):
             status_code=response.status_code if response is not None else 500,
             latency_ms=round(latency_ms, 2),
         )
+    # Reachable only when call_next above didn't raise (an exception would
+    # have propagated out of the finally block instead) — response is
+    # always set by then.
+    assert response is not None
     return response
 
 
 @app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
+async def metrics_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Record one http_requests_total + latency histogram per request.
 
     Lives in-app so a Prometheus-style scraper can pull live metrics from

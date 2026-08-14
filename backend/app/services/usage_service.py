@@ -25,6 +25,7 @@ def record_usage(
 ) -> None:
     if not db_enabled():
         return
+    assert SessionLocal is not None  # db_enabled() guarantees this
     try:
         with SessionLocal() as db:
             db.add(

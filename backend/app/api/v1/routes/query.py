@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Iterator
 from functools import lru_cache
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -61,7 +62,7 @@ def get_vector_store() -> VectorStore:
     if settings.pgvector_enabled:
         from app.services.pgvector_store import PgvectorVectorStore
 
-        store = PgvectorVectorStore()
+        store: VectorStore = PgvectorVectorStore()
         from app.core.metrics import get_metrics
 
         get_metrics().record_vectors(store.total_vectors())
@@ -195,7 +196,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     return ChatResponse(**response_data)
 
 
-def _sse_line(event: dict) -> str:
+def _sse_line(event: dict[str, Any]) -> str:
     """Serialize one stream_query() event as an SSE `data:` line.
 
     The "done" event's payload is a ChatResponse (a Pydantic model, not
@@ -468,7 +469,7 @@ def list_feedback(
 
 
 @router.get("/chat/sessions")
-def list_chat_sessions(request: Request) -> dict:
+def list_chat_sessions(request: Request) -> dict[str, Any]:
     """List the caller's own past conversations (title, timestamps),
     newest-accessed first — the history sidebar's data source. []
     when the DB is disabled: session listing needs durable storage that
@@ -505,7 +506,7 @@ def _check_session_ownership(request: Request, session_id: str) -> None:
 
 
 @router.get("/chat/sessions/{session_id}")
-def get_chat_session(session_id: str, request: Request) -> dict:
+def get_chat_session(session_id: str, request: Request) -> dict[str, Any]:
     """Full turn history for one session — what the frontend calls to
     resume a past conversation from the history list."""
     _check_session_ownership(request, session_id)
@@ -519,7 +520,7 @@ def get_chat_session(session_id: str, request: Request) -> dict:
 
 
 @router.delete("/chat/sessions/{session_id}")
-def delete_chat_session(session_id: str, request: Request) -> dict:
+def delete_chat_session(session_id: str, request: Request) -> dict[str, Any]:
     """Delete one session by id — replaces the old header-based
     DELETE /chat/session (which read X-Session-ID and had a dead-code
     path that tried, and failed, to also read a JSON body). A path

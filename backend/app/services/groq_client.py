@@ -15,7 +15,13 @@ import time
 from collections.abc import Iterator
 
 import groq
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -31,21 +37,21 @@ from app.services.llm_client import LLMClient
 logger = logging.getLogger(__name__)
 
 
-def _log_retry(retry_state) -> None:
+def _log_retry(retry_state: RetryCallState) -> None:
     logger.warning(
         "llm_generation_retrying",
         extra={
             "extra_fields": {
                 "provider": "groq",
                 "attempt": retry_state.attempt_number,
-                "exception": str(retry_state.outcome.exception()),
+                "exception": str(retry_state.outcome.exception() if retry_state.outcome else None),
             }
         },
     )
 
 
 class GroqClient(LLMClient):
-    def __init__(self):
+    def __init__(self) -> None:
         if not settings.groq_api_key:
             raise LLMConfigurationError("GROQ_API_KEY is not configured.")
 

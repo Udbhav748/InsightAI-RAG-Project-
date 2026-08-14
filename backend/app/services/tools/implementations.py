@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -47,7 +48,7 @@ class RetrievalTool:
         "top-k passages most relevant to the query."
     )
     args_schema = RetrievalInput
-    output_schema = list[RetrievedChunk]
+    output_schema: Any = list[RetrievedChunk]
 
     async def execute(self, args: RetrievalInput, context: ToolContext) -> ToolResult:
         if context.vector_store is None:
@@ -79,7 +80,7 @@ class WebSearchTool:
         "(news, prices, current events); opt-in and human-approval gated."
     )
     args_schema = WebSearchInput
-    output_schema = list[WebSearchResult]
+    output_schema: Any = list[WebSearchResult]
 
     async def execute(self, args: WebSearchInput, context: ToolContext) -> ToolResult:
         # Master switch (Settings.web_search_enabled): checked here, not
@@ -148,7 +149,7 @@ class SummarizationTool:
         "Whole-document summary built from every chunk belonging to one uploaded document."
     )
     args_schema = SummarizationInput
-    output_schema = tuple[str, list[RetrievedChunk]]
+    output_schema: Any = tuple[str, list[RetrievedChunk]]
 
     async def execute(self, args: SummarizationInput, context: ToolContext) -> ToolResult:
         if context.vector_store is None or context.llm_client is None:
@@ -185,7 +186,7 @@ class DiagnoseTool:
         "into a disease class, mapped to a plain-language crop/disease/confidence."
     )
     args_schema = DiagnoseInput
-    output_schema = VisionPrediction
+    output_schema: Any = VisionPrediction
 
     async def execute(self, args: DiagnoseInput, context: ToolContext) -> ToolResult:
         try:
@@ -213,7 +214,7 @@ class VisionQATool:
         "retrieve well."
     )
     args_schema = VisionQAInput
-    output_schema = str
+    output_schema: Any = str
 
     async def execute(self, args: VisionQAInput, context: ToolContext) -> ToolResult:
         if context.llm_client is None:

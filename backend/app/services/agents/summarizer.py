@@ -6,7 +6,9 @@ Wraps the SummarizationService for "summarize <document_id>" requests.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
+from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.summarization_service import summarize_document
 
@@ -17,7 +19,7 @@ class Summarizer(Agent):
     name = "summarizer"
     description = "Produces a whole-document summary for one uploaded document"
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     async def run(self, query: str, context: AgentContext) -> AgentResult:
@@ -64,7 +66,7 @@ class Summarizer(Agent):
             metadata={"tool": self.name, "success": True, "chunks": len(chunks)},
         )
 
-    def _build_sources(self, chunks: list) -> list[dict]:
+    def _build_sources(self, chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
         from app.services.rag_service import _source_references
 
         refs = _source_references(chunks)

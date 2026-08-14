@@ -7,8 +7,9 @@ multi-step reasoning over the local corpus.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.tools.base import ToolContext
 
@@ -62,7 +63,7 @@ class DocumentAnalyst(Agent):
             },
         )
 
-    def _build_sources(self, chunks: list) -> list[dict]:
+    def _build_sources(self, chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
         from app.services.rag_service import _source_references
 
         refs = _source_references(chunks)

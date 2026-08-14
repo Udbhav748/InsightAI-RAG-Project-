@@ -84,7 +84,7 @@ class PlanningAgent:
     async def plan_next(
         self,
         query: str,
-        history: list[dict] | None,
+        history: list[dict[str, Any]] | None,
         observations: list[Observation],
     ) -> PlanStep:
         """Decide the next single step. Never raises: an LLM failure or an
@@ -109,7 +109,7 @@ class PlanningAgent:
         return self._parse_step(raw, query, observations)
 
     def _prompt_for(
-        self, query: str, history: list[dict] | None, observations: list[Observation]
+        self, query: str, history: list[dict[str, Any]] | None, observations: list[Observation]
     ) -> str:
         prompt = _NEXT_STEP_PROMPT_TEMPLATE.format(
             tool_descriptions=self._format_tool_descriptions(),

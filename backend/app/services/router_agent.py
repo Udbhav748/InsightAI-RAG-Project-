@@ -122,7 +122,7 @@ class RouterAgent:
         self._llm_client = llm_client
         self._fallback_planner = fallback_planner
 
-    def _prompt_for(self, query: str, history: list[dict] | None) -> str:
+    def _prompt_for(self, query: str, history: list[dict[str, Any]] | None) -> str:
         history_block = ""
         if history:
             lines = "\n".join(
@@ -131,7 +131,7 @@ class RouterAgent:
             history_block = f"\nConversation history:\n{lines}\n"
         return f"{_ROUTER_PROMPT}\n{history_block}\nQuery: {query.strip()}"
 
-    def decide(self, query: str, history: list[dict] | None = None) -> RouterDecision:
+    def decide(self, query: str, history: list[dict[str, Any]] | None = None) -> RouterDecision:
         """Return the routed action for `query`.
 
         Fast paths (conversational / summarize-with-uuid) are decided by
@@ -164,7 +164,7 @@ class RouterAgent:
         log_agent_completed("router", query, start, outcome="llm", action=decision.action)
         return decision
 
-    def _classify(self, query: str, history: list[dict] | None) -> RouterDecision | None:
+    def _classify(self, query: str, history: list[dict[str, Any]] | None) -> RouterDecision | None:
         """One JSON-mode LLM call; None on any parse/validation failure."""
         try:
             raw = self._llm_client.generate_structured(self._prompt_for(query, history))

@@ -13,7 +13,11 @@ returning `input_ids`/`offset_mapping` and `.max_seq_length`.
 import numpy as np
 
 from app.models.document import DocumentChunk
-from app.services.embedding_service import _SPECIAL_TOKEN_BUDGET, _split_oversized_chunk, generate_embeddings
+from app.services.embedding_service import (
+    _SPECIAL_TOKEN_BUDGET,
+    _split_oversized_chunk,
+    generate_embeddings,
+)
 
 
 class _FakeTokenizer:

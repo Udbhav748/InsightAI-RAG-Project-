@@ -20,8 +20,9 @@ itself of the app it's already authenticated to.
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 
-from fastapi import Request
+from fastapi import Request, Response
 
 from app.core.config import settings
 from app.core.exceptions import RateLimitExceededError
@@ -140,7 +141,9 @@ _CONTENT_SECURITY_POLICY = (
 )
 
 
-async def security_headers_middleware(request: Request, call_next):
+async def security_headers_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Add security headers to all responses."""
     response = await call_next(request)
     for header, value in _SECURITY_HEADERS.items():

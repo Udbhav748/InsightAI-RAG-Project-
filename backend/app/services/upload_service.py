@@ -4,10 +4,12 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import UploadFile
 
 from app.core.config import settings
+from app.core.exceptions import UnsupportedFileTypeError
 from app.services import s3_sync_service
 
 UPLOAD_DIR = settings.data_dir(settings.upload_dir_name)
@@ -15,12 +17,21 @@ UPLOAD_DIR = settings.data_dir(settings.upload_dir_name)
 logger = logging.getLogger(__name__)
 
 
-async def save_uploaded_file(file: UploadFile) -> dict:
+async def save_uploaded_file(file: UploadFile) -> dict[str, Any]:
     """Save an uploaded file to UPLOAD_DIR under a UUID-based filename.
 
     Returns a dict of the fields needed to build a DocumentUploadResponse.
     """
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not file.filename:
+        # UploadFile.filename is `str | None`: starlette leaves it None
+        # when the multipart part's Content-Disposition carries no
+        # filename parameter at all (validate_pdf_upload doesn't check
+        # this — it only looks at content_type/magic bytes/size). Without
+        # this guard, Path(None) below raises an unhandled TypeError
+        # (-> 500) instead of the same clean 415 a bad content_type gets.
+        raise UnsupportedFileTypeError("Uploaded file is missing a filename.")
 
     document_id = str(uuid.uuid4())
     extension = Path(file.filename).suffix
