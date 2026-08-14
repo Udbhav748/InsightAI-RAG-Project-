@@ -21,7 +21,6 @@ from app.services.faiss_vector_store import FAISSVectorStore, faiss
 from scripts.bulk_ingest import (
     BulkIngester,
     CheckpointManager,
-    compute_file_hash,
     detect_collection,
     generate_batch_embeddings,
     parse_csv_file,

@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.tools.base import ToolContext
 
 if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
     from app.services.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)

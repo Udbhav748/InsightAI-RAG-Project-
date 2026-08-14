@@ -10,10 +10,10 @@ import re
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 
 if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
     from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)

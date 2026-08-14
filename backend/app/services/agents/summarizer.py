@@ -6,11 +6,13 @@ Wraps the SummarizationService for "summarize <document_id>" requests.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.models.document import RetrievedChunk
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.summarization_service import summarize_document
+
+if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

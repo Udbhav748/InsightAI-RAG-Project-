@@ -35,7 +35,7 @@ try:
     from duckduckgo_search import DDGS
     from duckduckgo_search.exceptions import DuckDuckGoSearchException
 except ImportError:
-    DDGS = None  # type: ignore[assignment]
+    DDGS = None  # type: ignore[assignment,misc]
     DuckDuckGoSearchException = Exception  # type: ignore[assignment,misc]
 from tenacity import (
     RetryCallState,
@@ -82,9 +82,8 @@ def web_search_ready() -> bool:
                 }
             },
         )
-    if provider == "duckduckgo" and DDGS is None:
         return False
-    return True
+    return not (provider == "duckduckgo" and DDGS is None)
 
 
 def _log_retry(retry_state: RetryCallState) -> None:

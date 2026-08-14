@@ -34,7 +34,6 @@ from app.core.config import settings
 from app.core.exceptions import AppError, VectorStoreNotFoundError
 from app.core.logging import configure_logging
 from app.models.document import DocumentChunk, EmbeddedChunk
-from app.services.chunking_service import chunk_text
 from app.services.embedding_service import get_embedding_model
 from app.services.faiss_vector_store import (
     DEFAULT_INDEX_PATH,
@@ -591,11 +590,11 @@ class BulkIngester:
             print(f"[BulkIngest] No supported documents found in {directory}")
             return stats
 
-        print(f"\n=======================================================")
+        print("\n=======================================================")
         print(f" Bulk Ingestion: {len(files)} document(s) in {directory}")
         print(f" Batch Size: {self.batch_size} | Chunk Size: {self.chunk_size}")
         print(f" Force Re-index: {self.force}")
-        print(f"=======================================================\n")
+        print("=======================================================\n")
 
         pending_chunks: list[DocumentChunk] = []
         files_in_current_batch: list[tuple[Path, str, int]] = []
@@ -694,7 +693,7 @@ class BulkIngester:
 
     def _print_summary(self, stats: IngestionStats) -> None:
         """Print ingestion summary report."""
-        print(f"\n=======================================================")
+        print("\n=======================================================")
         print(f" Ingestion Completed in {stats.elapsed_seconds:.2f}s")
         print(f" Files Scanned:   {stats.total_files_scanned}")
         print(f" Files Indexed:   {stats.files_processed}")
@@ -703,10 +702,10 @@ class BulkIngester:
         print(f" Chunks Created:  {stats.total_chunks_created}")
         print(f" Vectors Indexed: {stats.total_vectors_indexed}")
         print(f" Index Total:     {self.vector_store.total_vectors()} vectors")
-        print(f" Collections:")
+        print(" Collections:")
         for col, count in stats.collections_tagged.items():
             print(f"   - {col}: {count} file(s)")
-        print(f"=======================================================\n")
+        print("=======================================================\n")
 
 
 def main() -> None:

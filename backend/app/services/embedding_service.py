@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tenacity import (
     RetryCallState,
@@ -75,7 +75,10 @@ def get_embedding_model() -> SentenceTransformer:
     from sentence_transformers import SentenceTransformer
 
     try:
-        return SentenceTransformer(settings.embedding_model_name)
+        # sentence_transformers ships no py.typed marker, so its constructor
+        # resolves to Any under mypy --strict; cast back to the declared
+        # return type rather than let Any leak into every caller.
+        return cast("SentenceTransformer", SentenceTransformer(settings.embedding_model_name))
     except Exception as exc:
         raise EmbeddingModelLoadError(
             f"Failed to load embedding model '{settings.embedding_model_name}': {exc}"
@@ -165,7 +168,11 @@ def _split_oversized_chunk(chunk: DocumentChunk, model: SentenceTransformer) -> 
     count. Returns [chunk] unchanged when it's already within budget —
     the overwhelmingly common case.
     """
-    budget = model.max_seq_length - _SPECIAL_TOKEN_BUDGET
+    # max_seq_length is typed as int | None by sentence_transformers, though
+    # a loaded model always sets it; 256 matches all-MiniLM-L6-v2's actual
+    # limit (see docstring above) and is only a fallback for that None case.
+    max_seq_length = model.max_seq_length or 256
+    budget = max_seq_length - _SPECIAL_TOKEN_BUDGET
     encoding = model.tokenizer(chunk.text, add_special_tokens=False, return_offsets_mapping=True)
     token_count = len(encoding["input_ids"])
     if token_count <= budget:

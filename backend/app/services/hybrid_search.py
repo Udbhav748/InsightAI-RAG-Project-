@@ -25,15 +25,15 @@ from typing import TYPE_CHECKING, Any
 try:
     from rank_bm25 import BM25Okapi
 except ImportError:
-    BM25Okapi = None  # type: ignore[assignment]
+    BM25Okapi = None
 
 from app.core.config import settings
 from app.core.exceptions import ClipServiceError
-from app.models.document import RetrievedChunk
 from app.services import clip_client
 from app.services.embedding_service import embed_query
 
 if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
     from app.services.faiss_vector_store import FAISSVectorStore
     from app.services.vector_store import VectorStore
 

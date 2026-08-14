@@ -72,7 +72,7 @@ class IngestionTask:
             task_id=self.task_id,
             document_id=self.document_id,
             original_filename=self.original_filename,
-            status=self.status,  # type: ignore[arg-type]
+            status=self.status,
             progress=round(self.progress, 1),
             current_step=self.current_step,
             error=self.error,

@@ -32,10 +32,9 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
-from sqlalchemy.engine import Connection, Engine, RowMapping
 
 from app.core.config import settings
 from app.core.exceptions import (
@@ -44,6 +43,9 @@ from app.core.exceptions import (
 )
 from app.models.document import EmbeddedChunk, RetrievedChunk
 from app.services.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection, Engine, RowMapping
 
 logger = logging.getLogger(__name__)
 

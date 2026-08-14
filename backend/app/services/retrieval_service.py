@@ -20,18 +20,21 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
 from app.core.metrics import get_metrics
-from app.models.document import RetrievedChunk
 from app.services.embedding_service import embed_query
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.hybrid_search import hybrid_search
 from app.services.prompt_injection_service import detect_possible_injection
 from app.services.reranking_service import rerank
 from app.services.tool_registry import track_tool
-from app.services.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
+    from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +187,7 @@ def _retrieve_core(
         if collection_filtered:
             filtered = collection_filtered
 
+    log_extra: dict[str, Any]
     if resolved_doc_ids:
         log_extra = {"document_id_count": len(resolved_doc_ids), "results_after_doc_filter": len(filtered)}
     elif collection:

@@ -1,10 +1,9 @@
 """Unit tests for asynchronous document ingestion and task management (Recommendation 2 & 3)."""
 
-import io
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.exceptions import TaskNotFoundError
+import pytest
+
 from app.models.schemas import DocumentProcessingResponse
 from app.services.task_service import (
     TASK_STATUS_COMPLETED,

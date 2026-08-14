@@ -29,14 +29,16 @@ import functools
 import inspect
 import logging
 import time
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from app.core.exceptions import AppError, ChatServiceError
 from app.core.metrics import get_metrics
 from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

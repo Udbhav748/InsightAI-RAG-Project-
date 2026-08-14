@@ -7,11 +7,13 @@ intermediate drafts, fact-check outcomes, reflection counts, and final responses
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, Field
 
-from app.models.document import RetrievedChunk, WebSearchResult
-from app.models.schemas import ChatResponse, DiagnosisInfo
+if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk, WebSearchResult
+    from app.models.schemas import ChatResponse, DiagnosisInfo
 
 
 class AgentState(BaseModel):

@@ -13,13 +13,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Generator, Iterator
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.core.exceptions import WebSearchError
 from app.core.metrics import get_metrics
-from app.models.document import RetrievedChunk, WebSearchResult
 from app.models.schemas import SourceReference
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
@@ -35,6 +33,9 @@ from app.services.web_search_service import search_web as default_search_web
 from app.services.web_search_service import web_search_ready
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Iterator
+
+    from app.models.document import RetrievedChunk, WebSearchResult
     from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)

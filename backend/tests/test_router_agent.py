@@ -2,7 +2,6 @@
 and chemical safety reflection checks.
 """
 
-import pytest
 
 from app.models.document import RetrievedChunk, VisionPrediction
 from app.services.prompt_builder import (
@@ -11,19 +10,16 @@ from app.services.prompt_builder import (
     build_prompt,
 )
 from app.services.rag.reflection_engine import (
-    CHEMICAL_SAFETY_INSTRUCTION,
     ReflectionEngine,
     verify_chemical_safety,
 )
 from app.services.rag.router import (
-    PlanDecision,
-    QueryRouter,
     build_diagnosis_query,
     extract_crop_context,
     plan_query,
     route_query,
 )
-from app.services.router_agent import RouterAgent, RouterDecision
+from app.services.router_agent import RouterAgent
 
 
 class FakeLLMClient:

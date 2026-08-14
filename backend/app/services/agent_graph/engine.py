@@ -14,11 +14,13 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.services.agent_graph.state import AgentState
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -157,10 +159,7 @@ class CompiledGraph:
         sig = inspect.signature(fn)
         num_params = len(sig.parameters)
 
-        if num_params >= 2:
-            res = fn(current_state, context)
-        else:
-            res = fn(current_state)
+        res = fn(current_state, context) if num_params >= 2 else fn(current_state)
 
         if asyncio.iscoroutine(res):
             res = await res
@@ -189,10 +188,7 @@ class CompiledGraph:
                 route_res = await route_res
 
             route_name = str(route_res)
-            if mapping is not None:
-                next_node = mapping.get(route_name, route_name)
-            else:
-                next_node = route_name
+            next_node = mapping.get(route_name, route_name) if mapping is not None else route_name
             return next_node
 
         if current_node in self.edges:

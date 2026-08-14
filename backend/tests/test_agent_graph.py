@@ -9,15 +9,13 @@ Covers:
 - End-to-end multi-agent RAG workflow with reflection loops and recovery.
 """
 
+
 import pytest
-from types import SimpleNamespace
 
 from app.core.config import settings
 from app.models.document import RetrievedChunk, WebSearchResult
-from app.models.schemas import ChatResponse
 from app.services.agent_graph import (
     END,
-    START,
     AgentState,
     GraphCompilationError,
     GraphContext,
@@ -26,7 +24,6 @@ from app.services.agent_graph import (
     document_analyst_node,
     fact_checker_node,
     planner_node,
-    summarizer_node,
     synthesizer_node,
     web_researcher_node,
 )

@@ -10,10 +10,13 @@ based on chunk count and similarity scores:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.core.metrics import get_metrics
-from app.models.document import RetrievedChunk
+
+if TYPE_CHECKING:
+    from app.models.document import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

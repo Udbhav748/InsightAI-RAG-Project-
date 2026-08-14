@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from app.core.config import settings
 from app.core.exceptions import RerankingError
@@ -48,7 +48,10 @@ def get_reranker() -> CrossEncoder:
     from sentence_transformers import CrossEncoder
 
     try:
-        return CrossEncoder(settings.reranking_model_name)
+        # sentence_transformers ships no py.typed marker, so its constructor
+        # resolves to Any under mypy --strict; cast back to the declared
+        # return type rather than let Any leak into every caller.
+        return cast("CrossEncoder", CrossEncoder(settings.reranking_model_name))
     except Exception as exc:
         raise RerankingError(
             f"Failed to load reranking model '{settings.reranking_model_name}': {exc}"
@@ -81,7 +84,10 @@ def rerank(query: str, candidates: list[RetrievedChunk], top_k: int) -> list[Ret
     model = get_reranker()
     pairs = [(query, chunk.text) for chunk in candidates]
     try:
-        raw_scores = model.predict(pairs)
+        # CrossEncoder.predict's stub type covers the newer multimodal
+        # (text/image/audio/video) input shapes; list[tuple[str, str]] is
+        # the documented, correct call for plain text reranking.
+        raw_scores = model.predict(pairs)  # type: ignore[arg-type]
     except Exception as exc:
         raise RerankingError(f"Failed to re-rank candidates: {exc}") from exc
     processing_duration = time.perf_counter() - start

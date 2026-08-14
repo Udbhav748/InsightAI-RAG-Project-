@@ -10,11 +10,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
-from app.models.document import WebSearchResult
 from app.services.agents.base import Agent, AgentContext, AgentResult
 from app.services.research_agent import ResearchAgent, ResearchFindings
 
 if TYPE_CHECKING:
+    from app.models.document import WebSearchResult
     from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)

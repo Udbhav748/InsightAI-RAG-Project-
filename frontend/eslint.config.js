@@ -36,7 +36,7 @@ export default [
     },
   },
   {
-    files: ['**/*.test.{js,jsx}'],
+    files: ['**/*.test.{js,jsx}', 'src/setupTests.js'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node, ...globals.vitest },
     },

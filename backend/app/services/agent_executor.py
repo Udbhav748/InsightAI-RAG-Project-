@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.core.exceptions import ChatServiceError
-from app.models.document import RetrievedChunk, WebSearchResult
 from app.models.schemas import ChatResponse, SourceReference
 from app.services.planning_agent import Observation
 from app.services.prompt_builder import build_prompt, strip_sources_section
@@ -30,6 +29,7 @@ from app.services.tools.base import ToolContext, ToolResult
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from app.models.document import RetrievedChunk, WebSearchResult
     from app.services.agent_memory import AgentMemory
     from app.services.llm_client import LLMClient
     from app.services.planning_agent import PlanningAgent, PlanStep

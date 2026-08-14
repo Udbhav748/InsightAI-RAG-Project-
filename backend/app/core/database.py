@@ -132,8 +132,9 @@ def run_migrations() -> None:
 
     Idempotent: `upgrade head` on an already-current database is a no-op.
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -200,7 +201,9 @@ def init_db() -> None:
         # try/except) since mypy doesn't track that invariant through the
         # intervening calls.
         if engine is None:
-            raise RuntimeError("Database engine not initialized despite db_enabled() check")
+            raise RuntimeError(
+                "Database engine not initialized despite db_enabled() check"
+            ) from exc
         Base.metadata.create_all(bind=engine)
         _stamp_migrations_at_head()
     logger.info(
@@ -216,8 +219,9 @@ def _stamp_migrations_at_head() -> None:
     the same create_all fallback and the next real migration would be skipped
     silently forever.
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))

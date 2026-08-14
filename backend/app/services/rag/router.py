@@ -12,13 +12,13 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from app.models.document import VisionPrediction
 from app.services.prompt_injection_service import detect_possible_injection
 
 if TYPE_CHECKING:
+    from app.models.document import VisionPrediction
     from app.services.router_agent import RouterAgent
 
 logger = logging.getLogger(__name__)

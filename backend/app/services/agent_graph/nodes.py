@@ -13,14 +13,11 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
-from app.models.document import RetrievedChunk, WebSearchResult
 from app.models.schemas import ChatResponse, SourceReference
-from app.services.agent_graph.state import AgentState
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
     REFLECTION_INSTRUCTION,
@@ -41,6 +38,7 @@ from app.services.summarization_service import summarize_document
 from app.services.web_search_service import search_web
 
 if TYPE_CHECKING:
+    from app.services.agent_graph.state import AgentState
     from app.services.llm_client import LLMClient
     from app.services.router_agent import RouterAgent
     from app.services.tools.registry import ToolRegistry
@@ -90,10 +88,10 @@ async def planner_node(state: AgentState, context: GraphContext | None = None) -
     if context and context.router_agent:
         decision = context.router_agent.decide(query, state.history)
         action = decision.action
-        doc_id = decision.document_id or state.document_id
+        routed_doc_id = decision.document_id or state.document_id
         return state.copy_with(
-            plan={"action": action, "document_id": doc_id, "reason": "router_agent"},
-            document_id=doc_id,
+            plan={"action": action, "document_id": routed_doc_id, "reason": "router_agent"},
+            document_id=routed_doc_id,
             steps_taken=state.steps_taken + 1,
         )
 

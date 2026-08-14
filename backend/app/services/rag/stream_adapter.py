@@ -8,11 +8,14 @@ and final ChatResponse done events.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.exceptions import AppError, ChatServiceError
-from app.models.schemas import ChatResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from app.models.schemas import ChatResponse
 
 logger = logging.getLogger(__name__)
 

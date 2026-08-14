@@ -27,7 +27,6 @@ import hashlib
 import logging
 import re
 import time
-from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,10 +34,8 @@ from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
 from app.core.metrics import get_metrics
 from app.core.usage_tracking import current_usage, reset_usage
-from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
 from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
 from app.services.agent_events import log_agent_handoff
-from app.services.llm_client import LLMClient
 from app.services.local_research_agent import LocalResearchAgent
 from app.services.prompt_builder import (
     FALLBACK_REPLY,
@@ -49,6 +46,7 @@ from app.services.prompt_builder import (
     strip_sources_section,
 )
 from app.services.prompt_injection_service import detect_possible_injection
+from app.services.rag.router import extract_crop_context as _extract_crop_context
 from app.services.research_agent import ResearchAgent, ResearchFindings
 from app.services.retrieval_service import retrieve
 from app.services.router_agent import RouterAgent
@@ -56,14 +54,18 @@ from app.services.structured_output import parse_structured_answer
 from app.services.summarization_service import summarize_document
 from app.services.tools.base import ToolContext
 from app.services.tools.factory import build_tool_registry
-from app.services.vector_store import VectorStore
 from app.services.vision_client import diagnose_image
 from app.services.vision_qa_service import try_vision_qa
 from app.services.web_search_service import search_web, web_search_ready
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+
+    from app.models.document import RetrievedChunk, VisionPrediction, WebSearchResult
     from app.services.agent_executor import AgentExecutor
     from app.services.agent_memory import AgentMemory
+    from app.services.llm_client import LLMClient
+    from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -482,9 +484,6 @@ def _match_conversational_reply(query: str) -> str | None:
     return None
 
 
-from app.services.rag.router import extract_crop_context as _extract_crop_context
-
-
 def _build_diagnosis_query(
     prediction: VisionPrediction,
     user_query: str | None = None,
@@ -875,6 +874,7 @@ class ChatService:
         plan = self._plan(query, history)
         if not settings.agent_routing_enabled:
             return plan
+        routed = self._router_agent.decide(query, history)
         crop = getattr(routed, "crop", None) or plan.crop
         collection = getattr(routed, "collection", None) or plan.collection or crop
         if routed.action != plan.action or routed.document_id != plan.document_id:

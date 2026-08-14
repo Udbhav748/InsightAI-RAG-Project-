@@ -14,7 +14,11 @@ every model_id runs the same hybrid model) with a multipart field named
 """
 
 import logging
+import os
+import socket
+import subprocess
 import time
+from pathlib import Path
 
 import httpx
 from tenacity import (
@@ -104,12 +108,6 @@ CLASS_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 
-import os
-import socket
-import subprocess
-from pathlib import Path
-
-
 def is_leafsense_online(host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.6) -> bool:
     """Probe if the LeafSense vision service is actively listening on its port."""
     try:
@@ -184,9 +182,12 @@ def _diagnose_with_gemini_fallback(contents: bytes, filename: str, content_type:
             '{"class": "<exact_class_name>", "confidence": <float_between_0_and_1>}'
         )
         part = types.Part.from_bytes(data=contents, mime_type=content_type or "image/jpeg")
+        # list[Part | str] structurally matches genai's accepted element
+        # union (str | Image | File | FileDict | Part | PartDict), but
+        # list's invariance means mypy won't accept it as that exact type.
         response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[part, prompt],
+            model=settings.gemini_model_name,
+            contents=[part, prompt],  # type: ignore[arg-type]
         )
         text = response.text or ""
         import json

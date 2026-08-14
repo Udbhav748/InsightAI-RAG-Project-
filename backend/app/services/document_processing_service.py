@@ -7,6 +7,7 @@ reports on the result. Depends on the VectorStore interface, never on a
 concrete implementation; that's constructed elsewhere and handed in.
 """
 
+import contextlib
 import logging
 import time
 from typing import Any
@@ -139,10 +140,8 @@ class DocumentProcessingService:
     ) -> DocumentProcessingResponse:
         def _notify(stage: str, progress: float, step: str | None = None) -> None:
             if progress_callback is not None:
-                try:
+                with contextlib.suppress(Exception):
                     progress_callback(stage, progress, step)
-                except Exception:
-                    pass
 
         start = time.perf_counter()
         _notify("extracting", 15.0, "Extracting text layer and scanning OCR")
