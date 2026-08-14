@@ -7,6 +7,30 @@ const nextId = () => `msg-${++idCounter}-${Date.now()}`
 
 const SESSION_KEY = 'insightai_session_id'
 
+// crypto.randomUUID() is restricted to secure contexts (HTTPS or
+// localhost) — a plain-HTTP deployment (e.g. by IP address, no TLS)
+// throws "crypto.randomUUID is not a function" there. crypto.getRandomValues()
+// has no such restriction, so build a UUID v4 from it by hand as the
+// fallback; only a session identifier, not a security boundary, so
+// Math.random() as a last-resort fallback (no Web Crypto at all) is fine too.
+function generateUUID() {
+  if (typeof crypto?.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const bytes = new Uint8Array(16)
+  if (typeof crypto?.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256)
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'))
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`
+}
+
 // Backend only wants role/content pairs (see ChatRequest.history) — strip
 // UI-only fields, and drop error/in-progress bubbles since they aren't
 // real answers.
@@ -33,7 +57,7 @@ function historyBeforeQuery(messages, query) {
 function getOrCreateSessionId() {
   let sessionId = localStorage.getItem(SESSION_KEY)
   if (!sessionId) {
-    sessionId = crypto.randomUUID()
+    sessionId = generateUUID()
     localStorage.setItem(SESSION_KEY, sessionId)
   }
   return sessionId
