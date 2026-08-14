@@ -197,7 +197,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
 
 
 def _sse_line(event: dict[str, Any]) -> str:
-    """Serialize one stream_query() event as an SSE `data:` line.
+    """Serialize one stream_query() or stream_diagnose() event as an SSE `data:` line.
 
     The "done" event's payload is a ChatResponse (a Pydantic model, not
     plain JSON yet) — every other event type is already a plain dict.
@@ -207,11 +207,9 @@ def _sse_line(event: dict[str, Any]) -> str:
     already converted it to a dict (chat_stream injects session_id into the
     done payload before this is called), leave it as-is.
     """
-    if event.get("type") == "done":
-        payload = event["payload"]
-        if hasattr(payload, "model_dump"):
-            payload = payload.model_dump(mode="json")
-        event = {**event, "payload": payload}
+    payload = event.get("payload")
+    if hasattr(payload, "model_dump"):
+        event = {**event, "payload": payload.model_dump(mode="json")}
     return f"data: {json.dumps(event)}\n\n"
 
 
@@ -264,7 +262,13 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
-                full_answer_parts.append(event["text"])
+                token = (
+                    event.get("payload", {}).get("token")
+                    if isinstance(event.get("payload"), dict)
+                    else None
+                )
+                text = token or event.get("text") or ""
+                full_answer_parts.append(text)
             elif event.get("type") == "done":
                 # Stream completed — append this turn to server-side history
                 full_answer = "".join(full_answer_parts)
@@ -387,6 +391,102 @@ async def diagnose(
     response_data = response.model_dump()
     response_data["session_id"] = session_id
     return ChatResponse(**response_data)
+
+
+@router.post("/chat/diagnose/stream")
+async def diagnose_stream(
+    request: Request,
+    image: UploadFile = File(...),
+    query: str | None = Form(None),
+    session_id: str | None = Form(None),
+    confirm_web_search: bool = Form(False),
+) -> StreamingResponse:
+    """Streamed SSE endpoint for plant leaf photo diagnosis and treatment recommendations.
+
+    Streams real-time trace events, immediate vision diagnosis prediction, retrieval trace,
+    and LLM token chunks over SSE text/event-stream.
+    """
+    chat_service = get_chat_service()
+    session_store = get_session_store()
+    tenant_id = getattr(request.state, "tenant_id", None)
+
+    contents = await image.read()
+    await image.seek(0)
+    validate_image_upload(image, contents)
+
+    session_id = session_store.get_or_create_session(session_id, tenant_id=tenant_id)
+    set_session_title_if_unset(session_id, query or "Leaf diagnosis")
+    history = session_store.get_history(session_id)
+
+    logger.info(
+        "diagnose_stream_request_received",
+        extra={
+            "extra_fields": {
+                "filename": image.filename,
+                "content_type": image.content_type,
+                "has_accompanying_query": query is not None,
+                "session_id": session_id,
+                "history_turns": len(history) if history else 0,
+            }
+        },
+    )
+
+    filename = image.filename or "upload"
+    content_type = image.content_type or "application/octet-stream"
+
+    def event_source() -> Iterator[str]:
+        full_answer_parts: list[str] = []
+
+        for event in chat_service.stream_diagnose(
+            contents,
+            filename,
+            content_type,
+            query=query,
+            history=history,
+            session_id=session_id,
+            confirm_web_search=confirm_web_search,
+            tenant_id=tenant_id,
+        ):
+            if event.get("type") == "answer_chunk":
+                token = (
+                    event.get("payload", {}).get("token")
+                    if isinstance(event.get("payload"), dict)
+                    else None
+                )
+                text = token or event.get("text") or ""
+                full_answer_parts.append(text)
+            elif event.get("type") == "done":
+                full_answer = "".join(full_answer_parts)
+                done_payload = event["payload"]
+                if hasattr(done_payload, "model_dump"):
+                    payload_data = done_payload.model_dump(mode="json")
+                else:
+                    payload_data = done_payload
+                payload_data["session_id"] = session_id
+
+                diagnosis_info = payload_data.get("diagnosis")
+                if diagnosis_info:
+                    crop = diagnosis_info.get("crop", "")
+                    disease = diagnosis_info.get("disease", "")
+                    if disease and disease != "healthy":
+                        diag_label = f"{disease} on {crop}" if crop else disease
+                    else:
+                        diag_label = f"healthy {crop}" if crop else "healthy"
+                    user_turn = f"[Uploaded a leaf photo — diagnosed: {diag_label}]"
+                    if query:
+                        user_turn += f" {query}"
+                else:
+                    user_turn = query or "[Uploaded a leaf photo for diagnosis]"
+
+                answer_text = payload_data.get("answer") or full_answer
+                session_store.append_turn(session_id, "user", user_turn)
+                session_store.append_turn(session_id, "assistant", answer_text)
+
+                event = {**event, "payload": payload_data}
+
+            yield _sse_line(event)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @router.post("/chat/feedback", response_model=FeedbackResponse)

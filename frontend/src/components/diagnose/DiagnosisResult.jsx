@@ -9,7 +9,7 @@ import SprayDosageCalculator from './SprayDosageCalculator'
  * - 5-Tab Treatment & Agronomic Plan
  * - Interactive Spray Dosage & Mix Volume Calculator Widget
  */
-export default function DiagnosisResult({ result, onReset, query }) {
+export default function DiagnosisResult({ result, onReset, query, isStreaming = false }) {
   const { diagnosis, answer, sources, processing_time, session_id } = result
 
   return (
@@ -33,6 +33,7 @@ export default function DiagnosisResult({ result, onReset, query }) {
         answer={answer}
         sources={sources}
         query={query}
+        isStreaming={isStreaming}
       />
 
       {/* 3. Spray Dosage Calculator Widget */}

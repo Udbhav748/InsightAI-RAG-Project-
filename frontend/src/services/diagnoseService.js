@@ -1,4 +1,6 @@
-import api from './api'
+import api, { AUTH_TOKEN_KEY } from './api'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 /**
  * Diagnose a plant leaf photo via POST /chat/diagnose.
@@ -23,6 +25,132 @@ export async function diagnoseLeaf(image, options = {}) {
   // same longer timeout as /chat rather than the shared api instance default.
   const { data } = await api.post('/chat/diagnose', formData, { timeout: 60000 })
   return data
+}
+
+/**
+ * Diagnose a plant leaf photo via SSE streaming from POST /chat/diagnose/stream,
+ * falling back to non-streaming POST /chat/diagnose if the stream endpoint is unavailable.
+ *
+ * SSE event types emitted to onEvent:
+ * - 'diagnosis': { type: 'diagnosis', diagnosis: { raw_class, crop, disease, confidence, low_confidence } }
+ * - 'trace': { type: 'trace', stage: string, detail: object }
+ * - 'answer_chunk': { type: 'answer_chunk', text: string }
+ * - 'done': { type: 'done', payload: object }
+ * - 'error': { type: 'error', detail: object }
+ *
+ * @param {File} file An image file (from camera capture or file picker).
+ * @param {string|{ query?: string, sessionId?: string, confirmWebSearch?: boolean }} [queryOrOptions]
+ * @param {(event: { type: string, [key: string]: any }) => void} [onEvent]
+ * @param {(error: any) => void} [onError]
+ * @returns {Promise<void>}
+ */
+export async function diagnoseImageStream(file, queryOrOptions = '', onEvent, onError) {
+  let query = ''
+  let sessionId = undefined
+  let confirmWebSearch = false
+
+  if (typeof queryOrOptions === 'string') {
+    query = queryOrOptions
+  } else if (queryOrOptions && typeof queryOrOptions === 'object') {
+    query = queryOrOptions.query || ''
+    sessionId = queryOrOptions.sessionId
+    confirmWebSearch = queryOrOptions.confirmWebSearch
+  }
+
+  const formData = new FormData()
+  formData.append('image', file)
+  if (query?.trim()) formData.append('query', query.trim())
+  if (sessionId) formData.append('session_id', sessionId)
+  if (confirmWebSearch) formData.append('confirm_web_search', String(confirmWebSearch))
+
+  const token = typeof window !== 'undefined' ? window.localStorage?.getItem(AUTH_TOKEN_KEY) : null
+
+  async function fallbackNonStreaming() {
+    try {
+      const data = await diagnoseLeaf(file, { query, sessionId, confirmWebSearch })
+      if (data?.diagnosis) {
+        onEvent?.({ type: 'diagnosis', diagnosis: data.diagnosis, payload: data.diagnosis })
+      }
+      if (data?.answer) {
+        onEvent?.({ type: 'answer_chunk', text: data.answer })
+      }
+      onEvent?.({ type: 'done', payload: data })
+      return data
+    } catch (err) {
+      onError?.(err)
+      throw err
+    }
+  }
+
+  let response
+  try {
+    response = await fetch(`${API_BASE_URL}/chat/diagnose/stream`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: formData,
+    })
+  } catch {
+    // If fetch failed (network error, offline, or endpoint not implemented), fallback to non-streaming
+    return await fallbackNonStreaming()
+  }
+
+  if (response.status === 404 || response.status === 405 || response.status === 501) {
+    return await fallbackNonStreaming()
+  }
+
+  if (!response.ok || !response.body) {
+    if (response.status === 401 && typeof window !== 'undefined' && window.location?.pathname !== '/login') {
+      window.localStorage?.removeItem(AUTH_TOKEN_KEY)
+      window.location.href = '/login'
+    }
+    const errData = await response.json().catch(() => null)
+    const err = new Error(errData?.detail || `Request failed with status ${response.status}`)
+    err.response = { status: response.status, data: errData }
+    onError?.(errData || { message: err.message, status_code: response.status })
+    throw err
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+
+      const data = rawEvent
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice('data: '.length))
+        .join('\n')
+
+      if (data) {
+        try {
+          const event = JSON.parse(data)
+          onEvent?.(event)
+          if (event.type === 'error') {
+            onError?.(event.detail || event)
+          }
+        } catch {
+          onError?.({
+            error_type: 'stream_parse_error',
+            message: 'Received an unexpected message from the server.',
+            status_code: 0,
+          })
+        }
+      }
+
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
 }
 
 /**

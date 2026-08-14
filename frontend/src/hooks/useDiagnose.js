@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { checkLeafSenseHealth, diagnoseLeaf } from '../services/diagnoseService'
+import { checkLeafSenseHealth, diagnoseImageStream, diagnoseLeaf } from '../services/diagnoseService'
 import getErrorMessage, { getErrorInfo } from '../utils/errorMessage'
 import useToast from './useToast'
 import { MAX_IMAGE_SIZE_BYTES, MAX_IMAGE_SIZE_MB } from '../constants'
@@ -8,7 +8,7 @@ export default function useDiagnose() {
   const [image, setImage] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('idle') // idle | preview | analyzing | success | error
+  const [status, setStatus] = useState('idle') // idle | preview | analyzing | streaming | success | error
   const [result, setResult] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
   const [isLeafSenseOnline, setIsLeafSenseOnline] = useState(true)
@@ -96,14 +96,70 @@ export default function useDiagnose() {
   const setQueryText = useCallback((text) => setQuery(text), [])
 
   const analyze = useCallback(async () => {
-    if (!image || status === 'analyzing') return
+    if (!image || status === 'analyzing' || status === 'streaming') return
     setStatus('analyzing')
     setErrorMessage('')
+    setResult(null)
+
+    let currentResult = {
+      diagnosis: null,
+      answer: '',
+      sources: [],
+      processing_time: null,
+      session_id: null,
+      tool_used: 'diagnose',
+      steps_taken: 1,
+      retrieved_chunks: [],
+    }
+
     try {
-      const response = await diagnoseLeaf(image, { query })
-      setResult(response)
-      setStatus('success')
-      setIsLeafSenseOnline(true)
+      await diagnoseImageStream(
+        image,
+        query,
+        (event) => {
+          if (event.type === 'diagnosis') {
+            const diagData = event.diagnosis || event.payload || event
+            currentResult = {
+              ...currentResult,
+              diagnosis: diagData,
+            }
+            setResult({ ...currentResult })
+            setStatus('streaming')
+            setIsLeafSenseOnline(true)
+          } else if (event.type === 'answer_chunk') {
+            currentResult = {
+              ...currentResult,
+              answer: (currentResult.answer || '') + (event.text || ''),
+            }
+            setResult({ ...currentResult })
+            setStatus('streaming')
+          } else if (event.type === 'trace') {
+            // Trace telemetry received
+          } else if (event.type === 'done') {
+            const payload = event.payload || {}
+            currentResult = {
+              ...currentResult,
+              ...payload,
+              diagnosis: payload.diagnosis || currentResult.diagnosis,
+              answer: payload.answer || currentResult.answer,
+              sources: payload.sources || currentResult.sources || [],
+              processing_time: payload.processing_time ?? currentResult.processing_time,
+              session_id: payload.session_id || currentResult.session_id,
+            }
+            setResult({ ...currentResult })
+            setStatus('success')
+            setIsLeafSenseOnline(true)
+          } else if (event.type === 'error') {
+            const errDetail = event.detail || event
+            const err = new Error(errDetail?.message || 'Diagnosis failed.')
+            err.response = { data: errDetail }
+            throw err
+          }
+        },
+        (error) => {
+          throw error
+        }
+      )
     } catch (error) {
       const errInfo = getErrorInfo(error)
       if (
@@ -135,6 +191,7 @@ export default function useDiagnose() {
     previewUrl,
     query,
     status,
+    isStreaming: status === 'streaming',
     result,
     errorMessage,
     isLeafSenseOnline,
@@ -147,3 +204,4 @@ export default function useDiagnose() {
     reset,
   }
 }
+

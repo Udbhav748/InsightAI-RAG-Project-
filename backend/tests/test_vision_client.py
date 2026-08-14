@@ -202,3 +202,38 @@ class TestDiagnoseImage:
 
         with pytest.raises(VisionServiceError):
             diagnose_image(b"fake-bytes", "leaf.jpg", "image/jpeg")
+
+    def test_is_leafsense_online_caches_result_within_ttl(self, monkeypatch):
+        """Verify is_leafsense_online caches its result for 5 seconds."""
+        call_count = 0
+
+        def _mock_create_connection(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            class _MockSocket:
+                def __enter__(self): return self
+                def __exit__(self, *a): pass
+            return _MockSocket()
+
+        monkeypatch.setattr(vision_client_module.socket, "create_connection", _mock_create_connection)
+        vision_client_module._last_online_check = 0.0
+
+        # First call hits socket
+        assert vision_client_module.is_leafsense_online(force_refresh=True) is True
+        assert call_count == 1
+
+        # Second call within TTL hits cache (no new socket connection)
+        assert vision_client_module.is_leafsense_online() is True
+        assert call_count == 1
+
+        # Force refresh bypasses cache
+        assert vision_client_module.is_leafsense_online(force_refresh=True) is True
+        assert call_count == 2
+
+    def test_persistent_vision_client_session(self):
+        """Verify _get_vision_client returns a reusable httpx.Client with expected limits."""
+        client1 = vision_client_module._get_vision_client()
+        client2 = vision_client_module._get_vision_client()
+        assert client1 is client2
+        assert isinstance(client1, httpx.Client)
+        assert client1.timeout.connect == 15.0 or client1.timeout.read == 15.0

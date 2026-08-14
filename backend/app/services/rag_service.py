@@ -1387,7 +1387,7 @@ class ChatService:
             if is_final:
                 answer = value
             else:
-                yield {"type": "answer_chunk", "text": value}
+                yield {"type": "answer_chunk", "payload": {"token": value}, "text": value}
         llm_calls += 1
         steps_taken += 1  # regeneration
 
@@ -1427,7 +1427,7 @@ class ChatService:
             if is_final:
                 answer = value
             else:
-                yield {"type": "answer_chunk", "text": value}
+                yield {"type": "answer_chunk", "payload": {"token": value}, "text": value}
         llm_calls += 1
         steps_taken += 1  # regeneration with web context
 
@@ -1954,7 +1954,7 @@ class ChatService:
                 if is_final:
                     answer = value
                 else:
-                    yield {"type": "answer_chunk", "text": value}
+                    yield {"type": "answer_chunk", "payload": {"token": value}, "text": value}
             llm_calls = 1
             steps_taken += 1  # generation
 
@@ -2076,6 +2076,7 @@ class ChatService:
         session_id: str | None = None,
         confirm_web_search: bool = False,
         tenant_id: int | None = None,
+        persona: str | None = "agronomist",
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense, then run the predicted
         disease through the same corrective RAG loop handle_query uses —
@@ -2167,7 +2168,7 @@ class ChatService:
                     steps_taken += 1  # web search
 
             answer = self._generate(
-                diagnosis_query, chunks, recent_history, web_results=web_results
+                diagnosis_query, chunks, recent_history, web_results=web_results, persona=persona
             )
             llm_calls = 1
             steps_taken += 1  # generation
@@ -2182,6 +2183,7 @@ class ChatService:
                 llm_calls,
                 steps_taken,
                 confirm_web_search=confirm_web_search,
+                persona=persona,
             )
         except AppError:
             # Includes VisionServiceError from diagnose_image, alongside the
@@ -2211,6 +2213,245 @@ class ChatService:
             ),
             session_id=session_id,
         )
+
+    def stream_diagnose(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str,
+        query: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        session_id: str | None = None,
+        confirm_web_search: bool = False,
+        tenant_id: int | None = None,
+        persona: str | None = "agronomist",
+    ) -> Iterator[dict[str, Any]]:
+        """Streamed counterpart to handle_diagnose, for POST /chat/diagnose/stream.
+
+        Yields SSE event dicts in order:
+        1. vision_analyzing trace event: {"type": "trace", "event": "vision_analyzing", "payload": {"filename": filename}}
+        2. diagnosis prediction event: {"type": "diagnosis", "payload": prediction.model_dump()}
+        3. retrieval_completed trace event: {"type": "trace", "event": "retrieval_completed", "payload": {"chunks_count": len(chunks)}}
+        4. real-time answer_chunk tokens: {"type": "answer_chunk", "payload": {"token": chunk}}
+        5. final done event: {"type": "done", "payload": ChatResponse}
+        """
+        start = time.perf_counter()
+        steps_taken = 1  # planning
+
+        plan = PlanDecision(action="diagnose")
+        reset_usage()  # per-request LLM token/cost rollup
+        logger.info(
+            "plan_decided",
+            extra={
+                "extra_fields": {"action": plan.action, "query_length": len(query) if query else 0}
+            },
+        )
+
+        history = self._inject_memory(history, session_id)
+        recent_history = history[-_MAX_HISTORY_TURNS:] if history else None
+
+        yield {
+            "type": "trace",
+            "event": "vision_analyzing",
+            "stage": "vision_analyzing",
+            "payload": {"filename": filename},
+            "detail": {"filename": filename},
+        }
+
+        try:
+            steps_taken += 1  # vision inference
+            prediction = diagnose_image(image_bytes, filename, content_type)
+
+            # Emitted immediately once vision classifier returns
+            yield {
+                "type": "diagnosis",
+                "payload": prediction.model_dump(),
+            }
+
+            crop_context = (
+                prediction.crop if prediction.crop and prediction.crop != "unknown" else None
+            )
+            diagnosis_query = _build_diagnosis_query(prediction, query, collection=crop_context)
+
+            steps_taken += 1  # retrieval
+            chunks = retrieve(
+                diagnosis_query,
+                self._vector_store,
+                tenant_id=tenant_id,
+                image_vector_store=self._image_vector_store,
+                collection=crop_context,
+            )
+
+            yield {
+                "type": "trace",
+                "event": "retrieval_completed",
+                "stage": "retrieval_completed",
+                "payload": {"chunks_count": len(chunks)},
+                "detail": {"chunks_count": len(chunks)},
+            }
+
+            steps_taken += 1  # grading
+            grade = self._grade_retrieval(diagnosis_query, chunks)
+            yield _trace_event("grading", {"grade": grade})
+
+            web_results: list[WebSearchResult] = []
+            web_search_attempted = False
+            research_attempted = False
+            if grade != "good":
+                if settings.research_agent_enabled and settings.web_search_enabled:
+                    research_attempted = True
+                    yield _trace_event("research_handoff", {"reason": "diagnose_weak_grade"})
+                    findings = self._research_handoff(
+                        diagnosis_query, confirm_web_search, reason="diagnose_weak_grade"
+                    )
+                    for step in findings.steps:
+                        yield _trace_event(f"research_{step['stage']}", step)
+                    if findings.answer:
+                        steps_taken += self._research_steps(findings)
+                        yield {
+                            "type": "answer_chunk",
+                            "payload": {"token": findings.answer},
+                            "text": findings.answer,
+                        }
+                        response = self._respond(
+                            answer=findings.answer,
+                            retrieved_chunks=chunks,
+                            query=diagnosis_query,
+                            query_type="diagnose",
+                            tool_used="research_agent",
+                            steps_taken=steps_taken,
+                            start=start,
+                            web_results=findings.results,
+                            diagnosis=DiagnosisInfo(
+                                raw_class=prediction.raw_class,
+                                crop=prediction.crop,
+                                disease=prediction.disease,
+                                confidence=prediction.confidence,
+                                low_confidence=prediction.low_confidence,
+                            ),
+                            session_id=session_id,
+                        )
+                        yield {"type": "done", "payload": response}
+                        return
+                if settings.web_search_enabled and not research_attempted:
+                    web_results = self._search_web(
+                        diagnosis_query, confirm_web_search=confirm_web_search
+                    )
+                    web_search_attempted = True
+                    steps_taken += 1  # web search
+                    yield _trace_event("web_search", {"result_count": len(web_results)})
+
+            yield _trace_event("generating", {})
+            answer = ""
+            for is_final, value in self._generate_streamed(
+                diagnosis_query, chunks, recent_history, web_results=web_results, persona=persona
+            ):
+                if is_final:
+                    answer = value
+                else:
+                    yield {
+                        "type": "answer_chunk",
+                        "payload": {"token": value},
+                        "text": value,
+                    }
+            llm_calls = 1
+            steps_taken += 1  # generation
+
+            (
+                answer,
+                llm_calls,
+                steps_taken,
+                web_results,
+                web_search_attempted,
+            ) = yield from self._correct_streamed(
+                diagnosis_query,
+                chunks,
+                answer,
+                recent_history,
+                web_results,
+                web_search_attempted,
+                llm_calls,
+                steps_taken,
+                confirm_web_search=confirm_web_search,
+                persona=persona,
+            )
+
+            follow_up_questions = []
+            if settings.follow_up_questions_enabled:
+                follow_up_questions = self._suggest_follow_ups(diagnosis_query, answer)
+
+        except AppError as exc:
+            logger.info(
+                "diagnose_stream_error",
+                extra={
+                    "extra_fields": {
+                        "error_type": type(exc).__name__,
+                        "status_code": exc.status_code,
+                    }
+                },
+            )
+            yield {
+                "type": "error",
+                "detail": {
+                    "error_type": type(exc).__name__,
+                    "message": exc.detail,
+                    "status_code": exc.status_code,
+                },
+                "payload": {
+                    "error_type": type(exc).__name__,
+                    "message": exc.detail,
+                    "status_code": exc.status_code,
+                },
+            }
+            return
+        except Exception as exc:
+            chat_error = ChatServiceError(f"Unexpected error while handling image diagnosis: {exc}")
+            logger.info(
+                "diagnose_stream_error",
+                extra={
+                    "extra_fields": {
+                        "error_type": type(chat_error).__name__,
+                        "status_code": chat_error.status_code,
+                    }
+                },
+            )
+            yield {
+                "type": "error",
+                "detail": {
+                    "error_type": type(chat_error).__name__,
+                    "message": chat_error.detail,
+                    "status_code": chat_error.status_code,
+                },
+                "payload": {
+                    "error_type": type(chat_error).__name__,
+                    "message": chat_error.detail,
+                    "status_code": chat_error.status_code,
+                },
+            }
+            return
+
+        tool_used = "web_search" if web_results else "diagnose"
+        response = self._respond(
+            answer=answer,
+            retrieved_chunks=chunks,
+            query=diagnosis_query,
+            query_type="diagnose",
+            tool_used=tool_used,
+            steps_taken=steps_taken,
+            start=start,
+            web_results=web_results,
+            diagnosis=DiagnosisInfo(
+                raw_class=prediction.raw_class,
+                crop=prediction.crop,
+                disease=prediction.disease,
+                confidence=prediction.confidence,
+                low_confidence=prediction.low_confidence,
+            ),
+            session_id=session_id,
+            retrieval_confidence=grade,
+            follow_up_questions=follow_up_questions,
+        )
+        yield {"type": "done", "payload": response}
 
     def _respond(
         self,

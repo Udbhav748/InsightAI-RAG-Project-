@@ -327,6 +327,82 @@ class TestChatServiceDiagnose:
         with pytest.raises(VisionServiceError):
             service.handle_diagnose(b"fake-image", "leaf.jpg", "image/jpeg")
 
+    def test_chat_service_stream_diagnose_success(self, monkeypatch):
+        fake_prediction = VisionPrediction(
+            raw_class="Tomato___Early_blight",
+            crop="tomato",
+            disease="early blight",
+            confidence=0.95,
+            low_confidence=False,
+        )
+        monkeypatch.setattr(
+            "app.services.rag_service.diagnose_image", lambda *a, **k: fake_prediction
+        )
+        monkeypatch.setattr(
+            "app.services.rag_service.retrieve",
+            lambda query, vector_store, **k: [
+                RetrievedChunk(
+                    chunk_id="c1",
+                    document_id="d1",
+                    text="Treat early blight with copper fungicide.",
+                    score=0.92,
+                    metadata={"source": "corpus"},
+                )
+            ],
+        )
+
+        class StreamingLLMClient(FakeLLMClient):
+            def generate_stream(self, prompt: str):
+                yield "Apply "
+                yield "copper "
+                yield "fungicide."
+
+        service = ChatService(vector_store=None, llm_client=StreamingLLMClient())
+        events = list(service.stream_diagnose(b"fake-image", "tomato.jpg", "image/jpeg"))
+
+        assert len(events) >= 5
+        # 1. vision analyzing trace event
+        assert events[0]["type"] == "trace"
+        assert events[0].get("event") == "vision_analyzing" or events[0].get("stage") == "vision_analyzing"
+        assert events[0]["payload"]["filename"] == "tomato.jpg"
+
+        # 2. immediate diagnosis prediction
+        assert events[1]["type"] == "diagnosis"
+        assert events[1]["payload"]["crop"] == "tomato"
+        assert events[1]["payload"]["disease"] == "early blight"
+        assert events[1]["payload"]["confidence"] == pytest.approx(0.95)
+
+        # 3. retrieval trace
+        assert events[2]["type"] == "trace"
+        assert events[2].get("event") == "retrieval_completed" or events[2].get("stage") == "retrieval_completed"
+        assert events[2]["payload"]["chunks_count"] == 1
+
+        # 4. answer chunk events
+        chunk_events = [e for e in events if e["type"] == "answer_chunk"]
+        assert len(chunk_events) > 0
+        assert "token" in chunk_events[0]["payload"]
+
+        # 5. final done event
+        done_event = events[-1]
+        assert done_event["type"] == "done"
+        assert isinstance(done_event["payload"], ChatResponse)
+        assert done_event["payload"].tool_used == "diagnose"
+        assert done_event["payload"].diagnosis.crop == "tomato"
+
+    def test_chat_service_stream_diagnose_error_event(self, monkeypatch):
+        def _raise_error(*a, **k):
+            raise VisionServiceError("Could not reach LeafSense at http://localhost:8001")
+
+        monkeypatch.setattr("app.services.rag_service.diagnose_image", _raise_error)
+
+        service = ChatService(vector_store=None, llm_client=FakeLLMClient())
+        events = list(service.stream_diagnose(b"fake-image", "leaf.jpg", "image/jpeg"))
+
+        assert len(events) == 2
+        assert events[0]["type"] == "trace"
+        assert events[1]["type"] == "error"
+        assert "Could not reach LeafSense" in events[1]["detail"]["message"]
+
 
 # ---------------------------------------------------------------------------
 # API Route Tests: POST /api/v1/chat/diagnose with TestClient
@@ -400,6 +476,56 @@ class TestDiagnoseEndpointE2E:
         assert body["diagnosis"]["disease"] == "early blight"
         assert body["diagnosis"]["confidence"] == pytest.approx(0.94)
         assert body["diagnosis"]["low_confidence"] is False
+
+    def test_post_diagnose_stream_success(self, diagnose_api_client, monkeypatch):
+        """Streaming diagnose endpoint returns SSE event-stream with real-time chunks."""
+        monkeypatch.setattr(
+            vision_client_module.httpx,
+            "post",
+            lambda *a, **k: _FakeResponse(
+                {"class": "Tomato___Early_blight", "confidence": 0.94}
+            ),
+        )
+
+        class StreamingLLM(FakeLLMClient):
+            def generate_stream(self, prompt: str):
+                yield "Treatment: "
+                yield "Apply copper spray."
+
+        monkeypatch.setattr("app.api.v1.routes.query.get_llm_client", lambda: StreamingLLM())
+
+        import json
+
+        response = diagnose_api_client.post(
+            "/chat/diagnose/stream",
+            headers=VALID_HEADERS,
+            files={"image": ("leaf.jpg", b"fake-jpeg-image-bytes", "image/jpeg")},
+            data={"query": "What fungicide?"},
+        )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        events = []
+        for line in response.text.split("\n"):
+            if line.startswith("data: "):
+                event_json = line[len("data: "):].strip()
+                if event_json:
+                    events.append(json.loads(event_json))
+
+        assert len(events) >= 4
+        event_types = [e.get("type") for e in events]
+        assert "trace" in event_types
+        assert "diagnosis" in event_types
+        assert "done" in event_types
+
+        diag_event = next(e for e in events if e.get("type") == "diagnosis")
+        assert diag_event["payload"]["crop"] == "tomato"
+        assert diag_event["payload"]["disease"] == "early blight"
+
+        done_event = next(e for e in events if e.get("type") == "done")
+        assert done_event["payload"]["diagnosis"]["crop"] == "tomato"
+        assert "session_id" in done_event["payload"]
 
     def test_post_diagnose_low_confidence(self, diagnose_api_client, monkeypatch):
         """Low-confidence diagnosis returns 200 with low_confidence flag True."""

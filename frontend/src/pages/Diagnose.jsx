@@ -30,6 +30,7 @@ export default function Diagnose() {
     previewUrl,
     query,
     status,
+    isStreaming,
     result,
     errorMessage,
     isLeafSenseOnline,
@@ -69,8 +70,8 @@ export default function Diagnose() {
 
       {/* Main Workflow Area */}
       <AnimatePresence mode="wait">
-        {/* State: Idle / Preview / Analyzing */}
-        {(status === 'idle' || status === 'preview' || status === 'analyzing') && (
+        {/* State: Idle / Preview / Analyzing (before diagnosis arrives) */}
+        {(status === 'idle' || status === 'preview' || (status === 'analyzing' && !result?.diagnosis)) && (
           <motion.div
             key="upload-section"
             initial={{ opacity: 0, y: 6 }}
@@ -155,8 +156,8 @@ export default function Diagnose() {
           </motion.div>
         )}
 
-        {/* State: Success -> Hero Card, 5-Tab Treatment Plan, and Calculator */}
-        {status === 'success' && result && (
+        {/* State: Streaming / Success -> Hero Card, 5-Tab Treatment Plan, and Calculator */}
+        {(status === 'success' || status === 'streaming') && result?.diagnosis && (
           <motion.div
             key="result-section"
             initial={{ opacity: 0, y: 8 }}
@@ -164,10 +165,17 @@ export default function Diagnose() {
             exit={{ opacity: 0, y: -8 }}
             className="space-y-6"
           >
-            <DiagnosisResult result={result} onReset={reset} query={query} />
+            <DiagnosisResult
+              result={result}
+              onReset={reset}
+              query={query}
+              isStreaming={isStreaming || status === 'streaming'}
+            />
           </motion.div>
         )}
       </AnimatePresence>
     </div>
   )
 }
+
+

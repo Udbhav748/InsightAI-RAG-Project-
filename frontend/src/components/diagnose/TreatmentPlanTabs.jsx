@@ -39,6 +39,7 @@ export default function TreatmentPlanTabs({
   answer,
   sources = [],
   query,
+  isStreaming = false,
 }) {
   const [activeTab, setActiveTab] = useState('overview')
   const crop = diagnosis?.crop || ''
@@ -143,12 +144,27 @@ export default function TreatmentPlanTabs({
 
               {/* AI Diagnosis Explanation from RAG */}
               <div className="rounded-xl border border-border-light bg-slate-900/[0.02] p-4 dark:border-border dark:bg-white/[0.02]">
-                <h4 className="mb-2 flex items-center gap-2 font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
-                  <Sparkles size={14} className="text-accent-500" />
-                  AI Agricultural Analysis & Grounded Context
+                <h4 className="mb-2 flex items-center justify-between font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
+                  <span className="flex items-center gap-2">
+                    <Sparkles size={14} className="text-accent-500" />
+                    AI Agricultural Analysis & Grounded Context
+                  </span>
+                  {isStreaming && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-accent-600 dark:text-accent-400">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-500" />
+                      Streaming response...
+                    </span>
+                  )}
                 </h4>
                 <div className="text-sm leading-relaxed text-slate-700 dark:text-ink-secondary">
-                  <CitedAnswer text={answer || 'Diagnosis completed. Review the treatment recommendations below.'} sources={sources} query={query} />
+                  {isStreaming ? (
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {answer || 'Generating treatment plan...'}
+                      <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-accent-500 align-middle" />
+                    </p>
+                  ) : (
+                    <CitedAnswer text={answer || 'Diagnosis completed. Review the treatment recommendations below.'} sources={sources} query={query} />
+                  )}
                 </div>
               </div>
             </motion.div>

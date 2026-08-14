@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import Diagnose from './Diagnose'
 import * as diagnoseService from '../services/diagnoseService'
 import * as documentService from '../services/documentService'
@@ -20,6 +20,7 @@ vi.mock('../services/documentService', () => ({
 
 vi.mock('../services/diagnoseService', () => ({
   diagnoseLeaf: vi.fn(),
+  diagnoseImageStream: vi.fn(),
   checkLeafSenseHealth: vi.fn(),
 }))
 
@@ -64,6 +65,21 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
       port: 8001,
       url: 'http://localhost:8001',
       status: 'ok',
+    })
+    diagnoseService.diagnoseLeaf.mockResolvedValue(mockDiagnosisResult)
+    diagnoseService.diagnoseImageStream.mockImplementation(async (file, query, onEvent) => {
+      onEvent?.({
+        type: 'diagnosis',
+        diagnosis: mockDiagnosisResult.diagnosis,
+      })
+      onEvent?.({
+        type: 'answer_chunk',
+        text: mockDiagnosisResult.answer,
+      })
+      onEvent?.({
+        type: 'done',
+        payload: mockDiagnosisResult,
+      })
     })
   })
 
@@ -116,8 +132,6 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
   })
 
   it('submits leaf photo, displays analyzing state, and renders prediction hero card', async () => {
-    diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
-
     render(<Diagnose />)
 
     const file = new File(['fake-leaf-bytes'], 'tomato_leaf.png', { type: 'image/png' })
@@ -135,9 +149,11 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
     fireEvent.click(diagnoseBtn)
 
-    expect(diagnoseService.diagnoseLeaf).toHaveBeenCalledWith(
+    expect(diagnoseService.diagnoseImageStream).toHaveBeenCalledWith(
       file,
-      expect.objectContaining({ query: 'Observed yellow halos on bottom leaves' })
+      'Observed yellow halos on bottom leaves',
+      expect.any(Function),
+      expect.any(Function)
     )
 
     // Wait for Hero Card to render
@@ -160,6 +176,99 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     fireEvent.click(chatBtn)
     expect(mockNavigate).toHaveBeenCalledWith('/chat', {
       state: { sessionId: 'session-agri-test-123' },
+    })
+  })
+
+  it('progressively streams diagnosis: immediately displays hero card on diagnosis event, streams tokens, and finalizes on done', async () => {
+    let emitEvent
+    diagnoseService.diagnoseImageStream.mockImplementation(async (file, query, onEvent) => {
+      emitEvent = onEvent
+    })
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-leaf-bytes'], 'tomato_early_blight.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    // 1. Sub-second diagnosis event arrives immediately
+    act(() => {
+      emitEvent({
+        type: 'diagnosis',
+        diagnosis: {
+          raw_class: 'Tomato___Early_blight',
+          crop: 'tomato',
+          disease: 'early blight',
+          confidence: 0.95,
+          low_confidence: false,
+        },
+      })
+    })
+
+    // Prediction Hero Card renders immediately
+    await waitFor(() => {
+      expect(screen.getByText('early blight')).toBeInTheDocument()
+    })
+    expect(screen.getByText('tomato')).toBeInTheDocument()
+    expect(screen.getByTestId('severity-badge')).toHaveTextContent(/Severity:\s*(Severe|Moderate)/i)
+    expect(screen.getByTestId('confidence-score-value')).toHaveTextContent('95%')
+    expect(screen.getByText(/Streaming response\.\.\./i)).toBeInTheDocument()
+
+    // 2. Stream tokens arrive in real-time
+    act(() => {
+      emitEvent({
+        type: 'answer_chunk',
+        text: 'Early Blight initial symptoms detected. ',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Early Blight initial symptoms detected/i)).toBeInTheDocument()
+    })
+
+    act(() => {
+      emitEvent({
+        type: 'answer_chunk',
+        text: 'Apply Copper Hydroxide spray immediately.',
+      })
+    })
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Early Blight initial symptoms detected\. Apply Copper Hydroxide spray immediately\./i)
+      ).toBeInTheDocument()
+    })
+
+    // User can switch tabs while streaming
+    const tabOrganic = screen.getByRole('tab', { name: /Organic Remedies/i })
+    fireEvent.click(tabOrganic)
+    await waitFor(() => {
+      expect(screen.getByText(/Biological Fungicides & Antagonists/i)).toBeInTheDocument()
+    })
+
+    // Switch back to overview tab
+    const tabOverview = screen.getByRole('tab', { name: /Overview & Symptoms/i })
+    fireEvent.click(tabOverview)
+
+    // 3. Done event arrives and finalizes
+    act(() => {
+      emitEvent({
+        type: 'done',
+        payload: {
+          ...mockDiagnosisResult,
+          answer: 'Early Blight initial symptoms detected. Apply Copper Hydroxide spray immediately.',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Streaming response\.\.\./i)).not.toBeInTheDocument()
     })
   })
 

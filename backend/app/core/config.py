@@ -557,7 +557,7 @@ class Settings(BaseSettings):
     # backend/main.py hardcodes port 8000 when run directly, which collides
     # with this backend's own default port. Start LeafSense with
     # `uvicorn main:app --port 8001` when running both services locally.
-    vision_service_url: str = "http://localhost:8001"
+    vision_service_url: str = "http://127.0.0.1:8001"
 
     # Timeout, in seconds, for calls to the vision service.
     vision_service_timeout_seconds: int = 15

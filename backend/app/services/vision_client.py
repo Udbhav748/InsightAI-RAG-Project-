@@ -108,12 +108,46 @@ CLASS_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 
-def is_leafsense_online(host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.6) -> bool:
-    """Probe if the LeafSense vision service is actively listening on its port."""
+_last_online_check: float = 0.0
+_last_online_status: bool = False
+_ONLINE_CHECK_TTL: float = 5.0
+
+_vision_client: httpx.Client | None = None
+_ORIGINAL_HTTPX_POST = httpx.post
+
+
+def _get_vision_client() -> httpx.Client:
+    """Return a persistent, reusable httpx.Client session for LeafSense calls."""
+    global _vision_client
+    if _vision_client is None or _vision_client.is_closed:
+        _vision_client = httpx.Client(
+            timeout=15.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _vision_client
+
+
+def is_leafsense_online(
+    host: str = "127.0.0.1", port: int = 8001, timeout: float = 0.6, force_refresh: bool = False
+) -> bool:
+    """Probe if the LeafSense vision service is actively listening on its port.
+
+    Caches the online status with a 5-second TTL to avoid redundant 600ms TCP socket
+    pre-probes on high-frequency requests.
+    """
+    global _last_online_check, _last_online_status
+    now = time.monotonic()
+    if not force_refresh and (now - _last_online_check) < _ONLINE_CHECK_TTL:
+        return _last_online_status
+
     try:
         with socket.create_connection((host, port), timeout=timeout):
+            _last_online_status = True
+            _last_online_check = now
             return True
     except Exception:
+        _last_online_status = False
+        _last_online_check = now
         return False
 
 
@@ -157,7 +191,7 @@ def _try_auto_start_leafsense() -> bool:
         )
         for _ in range(15):
             time.sleep(0.4)
-            if is_leafsense_online():
+            if is_leafsense_online(force_refresh=True):
                 logger.info("leafsense_service_auto_started_successfully")
                 return True
     except Exception as exc:
@@ -235,6 +269,7 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
     Self-heals by automatically starting the local LeafSense background service
     if offline, and provides a seamless multimodal LLM fallback if uninstalled.
     """
+    global _last_online_check, _last_online_status
     start = time.perf_counter()
 
     # Self-healing: if offline, attempt to auto-launch local LeafSense service
@@ -246,15 +281,31 @@ def diagnose_image(contents: bytes, filename: str, content_type: str) -> VisionP
         headers["X-API-Key"] = settings.vision_service_api_key
 
     response = None
+    url = f"{settings.vision_service_url}/predict/{_MODEL_ID}"
+    files = {"file": (filename, contents, content_type)}
+    timeout = settings.vision_service_timeout_seconds
+
     try:
-        response = httpx.post(
-            f"{settings.vision_service_url}/predict/{_MODEL_ID}",
-            files={"file": (filename, contents, content_type)},
-            headers=headers,
-            timeout=settings.vision_service_timeout_seconds,
-        )
+        if httpx.post is not _ORIGINAL_HTTPX_POST:
+            response = httpx.post(
+                url,
+                files=files,
+                headers=headers,
+                timeout=timeout,
+            )
+        else:
+            client = _get_vision_client()
+            response = client.post(
+                url,
+                files=files,
+                headers=headers,
+                timeout=timeout,
+            )
         response.raise_for_status()
     except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError) as exc:
+        _last_online_status = False
+        _last_online_check = 0.0
+
         # Check secondary Gemini Vision fallback before erroring out
         fallback_prediction = _diagnose_with_gemini_fallback(contents, filename, content_type)
         if fallback_prediction is not None:
