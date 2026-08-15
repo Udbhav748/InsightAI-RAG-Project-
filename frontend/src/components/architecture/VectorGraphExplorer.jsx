@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
@@ -14,13 +14,16 @@ import {
   Zap,
   Layers,
   CheckCircle2,
-  HelpCircle,
+  Move,
+  Play,
+  Pause,
+  RotateCcw,
 } from 'lucide-react'
 import Card from '../ui/Card'
 import Button from '../ui/Button'
 
-// Pre-computed 2D UMAP/t-SNE projection coordinates of 384-dimensional all-MiniLM-L6-v2 embeddings
-const VECTOR_NODES = [
+// Initial baseline 2D coordinates for plant pathology concept embeddings
+const INITIAL_NODES = [
   // Fungal Solanaceae Cluster (Top-Left)
   {
     id: 'tomato_early_blight',
@@ -30,7 +33,9 @@ const VECTOR_NODES = [
     pathogen: 'Alternaria solani',
     x: 210,
     y: 150,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [0.142, -0.089, 0.312, 0.054, -0.221, 0.419],
     summary: 'Concentric dark target-like rings with chlorotic yellow halo on lower senescing leaves.',
     remedy: 'Chlorothalonil 720 SC (2.5 ml/L) or Mancozeb 75 WP on 7-day spray schedule.',
@@ -44,7 +49,9 @@ const VECTOR_NODES = [
     pathogen: 'Phytophthora infestans',
     x: 270,
     y: 130,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [0.151, -0.076, 0.328, 0.061, -0.208, 0.435],
     summary: 'Water-soaked irregular dark lesions rapidly expanding in high relative humidity (>90%).',
     remedy: 'Cymoxanil + Mancozeb (2.0 g/L) emergency tank mix with 5-day spray interval.',
@@ -58,7 +65,9 @@ const VECTOR_NODES = [
     pathogen: 'Alternaria solani',
     x: 180,
     y: 210,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [0.138, -0.092, 0.308, 0.049, -0.218, 0.412],
     summary: 'Brown to black necrotic lesions with concentric ridges on mature potato canopy.',
     remedy: 'Azoxystrobin 23% SC (1.0 ml/L) in rotation with Protectant Dithiocarbamates.',
@@ -72,7 +81,9 @@ const VECTOR_NODES = [
     pathogen: 'Phytophthora infestans',
     x: 250,
     y: 190,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [0.148, -0.081, 0.321, 0.057, -0.212, 0.428],
     summary: 'Devastating foliar necrosis with white sporulation on leaf underside in wet weather.',
     remedy: 'Mandipropamid 250 SC (0.8 ml/L) or Copper Hydroxide preventative shield.',
@@ -88,7 +99,9 @@ const VECTOR_NODES = [
     pathogen: 'Venturia inaequalis',
     x: 160,
     y: 350,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [0.089, 0.142, 0.281, -0.112, -0.098, 0.365],
     summary: 'Velvety olive-green to dark brown circular lesions on leaves and young fruit spurs.',
     remedy: 'Captan 50 WP (2.5 g/L) or Difenoconazole 25 EC (0.5 ml/L) at green tip stage.',
@@ -102,7 +115,9 @@ const VECTOR_NODES = [
     pathogen: 'Gymnosporangium juniperi-virginianae',
     x: 220,
     y: 380,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.076, 0.158, 0.274, -0.095, -0.104, 0.352],
     summary: 'Bright orange-yellow circular spots on upper leaf surface with aecia tubes underneath.',
     remedy: 'Myclobutanil 20 EW (0.6 ml/L) applied when cedar galls orange gelatinous horns appear.',
@@ -116,7 +131,9 @@ const VECTOR_NODES = [
     pathogen: 'Puccinia sorghi',
     x: 150,
     y: 430,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.062, 0.189, 0.261, -0.081, -0.119, 0.338],
     summary: 'Cinnamon-brown pustules scattered across both leaf surfaces erupting powdery spores.',
     remedy: 'Pyraclostrobin 20% WG (0.8 g/L) during early vegetative stages V6 to VT.',
@@ -130,7 +147,9 @@ const VECTOR_NODES = [
     pathogen: 'Guignardia bidwellii',
     x: 230,
     y: 450,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.091, 0.134, 0.289, -0.105, -0.089, 0.371],
     summary: 'Reddish-brown circular spots with tiny black pycnidia pimples arranged in rings.',
     remedy: 'Mancozeb 75 WP (2.0 g/L) from bud break until 4 weeks post-bloom.',
@@ -146,7 +165,9 @@ const VECTOR_NODES = [
     pathogen: 'Xanthomonas perforans',
     x: 440,
     y: 130,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [-0.182, -0.214, 0.112, 0.342, 0.089, -0.142],
     summary: 'Small, angular water-soaked dark lesions (<3mm) with greasy appearance and yellow halos.',
     remedy: 'Copper Hydroxide (2.0 g/L) + Mancozeb (1.5 g/L) tank mix for synergistic bactericidal action.',
@@ -160,7 +181,9 @@ const VECTOR_NODES = [
     pathogen: 'Xanthomonas euvesicatoria',
     x: 500,
     y: 150,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [-0.174, -0.208, 0.118, 0.336, 0.094, -0.136],
     summary: 'Water-soaked translucent foliar spots turning brown and causing premature leaf drop.',
     remedy: 'Streptomycin Sulfate 9% WP (0.5 g/L in transplant house) or Fixed Copper sprays.',
@@ -174,7 +197,9 @@ const VECTOR_NODES = [
     pathogen: 'Candidatus Liberibacter asiaticus',
     x: 430,
     y: 200,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [-0.198, -0.231, 0.098, 0.359, 0.078, -0.158],
     summary: 'Asymmetrical blotchy mottle leaf yellowing and vein corking transmitted by psyllids.',
     remedy: 'Psyllid insect vector control via Imidacloprid plus foliar micronutrient feeding.',
@@ -190,7 +215,9 @@ const VECTOR_NODES = [
     pathogen: 'TYLCV (Begomovirus)',
     x: 640,
     y: 140,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [-0.298, 0.089, -0.182, 0.284, 0.312, 0.104],
     summary: 'Upward cupping of leaflets, intense interveinal chlorosis, and severe plant stunting.',
     remedy: 'Control Bemisia tabaci whitefly vector using yellow sticky cards and Acetamiprid 20 SP.',
@@ -204,14 +231,16 @@ const VECTOR_NODES = [
     pathogen: 'ToMV (Tobamovirus)',
     x: 700,
     y: 170,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [-0.284, 0.097, -0.174, 0.278, 0.305, 0.112],
     summary: 'Alternating light and dark green mosaic mottling, distorted strap-like fern leaves.',
     remedy: 'No chemical cure. Rogue infected plants immediately and sanitize tools with 10% TSP.',
     citation: 'Purdue University Extension BP-153-W',
   },
 
-  // Chemical Fungicides & Bactericides Cluster (Center)
+  // Chemical Controls Cluster (Center)
   {
     id: 'chlorothalonil',
     label: 'Chlorothalonil 720 SC',
@@ -220,7 +249,9 @@ const VECTOR_NODES = [
     pathogen: 'Broad-Spectrum Fungal Multi-Site (FRAC M05)',
     x: 310,
     y: 280,
-    radius: 13,
+    vx: 0,
+    vy: 0,
+    radius: 15,
     embeddingSlice: [0.212, -0.042, 0.245, -0.012, -0.165, 0.312],
     summary: 'Multi-site contact protectant inhibiting thiol-dependent fungal enzymatic respiration.',
     remedy: 'Dosage: 2.0 - 2.5 ml per Liter water. Pre-Harvest Interval (PHI): 7 Days.',
@@ -234,7 +265,9 @@ const VECTOR_NODES = [
     pathogen: 'Ethylenebisdithiocarbamate Multi-Site (FRAC M03)',
     x: 260,
     y: 310,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [0.201, -0.038, 0.238, -0.009, -0.158, 0.304],
     summary: 'Protective broad-spectrum surface shield preventing fungal spore germination.',
     remedy: 'Dosage: 2.0 g per Liter water. Spray Interval: 7–10 Days.',
@@ -248,7 +281,9 @@ const VECTOR_NODES = [
     pathogen: 'Inorganic Copper (FRAC M01)',
     x: 390,
     y: 260,
-    radius: 13,
+    vx: 0,
+    vy: 0,
+    radius: 15,
     embeddingSlice: [-0.082, -0.142, 0.178, 0.218, 0.042, -0.089],
     summary: 'Broad-spectrum inorganic bactericide and fungicide disrupting protein cellular integrity.',
     remedy: 'Dosage: 1.5 - 2.0 g per Liter water. Compatible with IPM resistance management.',
@@ -262,14 +297,16 @@ const VECTOR_NODES = [
     pathogen: 'QoI Strobilurin Inhibitor (FRAC 11)',
     x: 270,
     y: 360,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [0.174, -0.012, 0.219, -0.034, -0.128, 0.289],
     summary: 'Systemic xylem-mobile strobilurin inhibiting mitochondrial respiration at complex III.',
     remedy: 'Dosage: 1.0 ml per Liter water. Maximum 2 consecutive applications.',
     citation: 'CropLife Fungicide Resistance Management Guide',
   },
 
-  // Organic IPM & Biological Controls Cluster (Center-Right)
+  // Organic IPM Cluster (Center-Right)
   {
     id: 'neem_oil',
     label: 'Cold-Pressed Neem Oil 0.5%',
@@ -278,7 +315,9 @@ const VECTOR_NODES = [
     pathogen: 'Azadirachtin Anti-Feedant & Anti-Fungal',
     x: 550,
     y: 310,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [-0.142, 0.048, -0.062, 0.182, 0.218, 0.064],
     summary: 'Botanical bio-pesticide suffocating soft-bodied vectors and disrupting ecdysone hormone.',
     remedy: 'Dosage: 5.0 ml/L with 1.0 ml horticultural soap emulsifier. 0-day harvest interval.',
@@ -289,10 +328,12 @@ const VECTOR_NODES = [
     label: 'Bacillus subtilis QST 713',
     crop: 'Multi-Crop',
     category: 'organic',
-    pathogen: 'Biological Antagonist & Induced Systemic Resistance',
+    pathogen: 'Biological Antagonist & Induced Resistance',
     x: 480,
     y: 340,
-    radius: 12,
+    vx: 0,
+    vy: 0,
+    radius: 14,
     embeddingSlice: [-0.098, -0.084, 0.089, 0.164, 0.098, -0.042],
     summary: 'Beneficial rhizobacteria colonizing leaf surfaces to outcompete foliar pathogens.',
     remedy: 'Dosage: 3.0 - 5.0 g per Liter water. Apply preventatively before rain events.',
@@ -306,14 +347,16 @@ const VECTOR_NODES = [
     pathogen: 'Contact pH Disruptor',
     x: 410,
     y: 360,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.082, -0.038, 0.142, 0.064, -0.042, 0.182],
     summary: 'Curative foliar spray elevating surface pH to 8.5+ to collapse fungal spore membranes.',
     remedy: 'Dosage: 3.0 - 4.0 g per Liter water. Certified for organic crop production.',
     citation: 'OMRI Listed Biopesticide Review',
   },
 
-  // Healthy Foliage Baselines Cluster (Bottom-Right)
+  // Healthy Baselines Cluster (Bottom-Right)
   {
     id: 'tomato_healthy',
     label: 'Tomato Healthy Foliage',
@@ -322,7 +365,9 @@ const VECTOR_NODES = [
     pathogen: 'None (Healthy Baseline)',
     x: 690,
     y: 360,
-    radius: 11,
+    vx: 0,
+    vy: 0,
+    radius: 13,
     embeddingSlice: [0.012, -0.008, -0.042, -0.018, -0.012, -0.031],
     summary: 'Vigorous turgid green leaflets without chlorosis, necrotic spotting, or vector damage.',
     remedy: 'Maintain balanced N-P-K (5-10-10) and drip irrigation to prevent moisture splash.',
@@ -336,7 +381,9 @@ const VECTOR_NODES = [
     pathogen: 'None (Healthy Baseline)',
     x: 740,
     y: 390,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.008, 0.014, -0.038, -0.021, -0.009, -0.028],
     summary: 'Uniform waxy cuticle leaves with intact epidermal cells and normal photosynthesis.',
     remedy: 'Standard orchard dormant oil maintenance and winter canopy pruning.',
@@ -350,7 +397,9 @@ const VECTOR_NODES = [
     pathogen: 'None (Healthy Baseline)',
     x: 670,
     y: 420,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.015, -0.004, -0.045, -0.015, -0.014, -0.034],
     summary: 'Dense green canopy with optimal leaf area index (LAI) supporting tuber bulking.',
     remedy: 'Proper hill cultivation and monitored furrow irrigation management.',
@@ -364,7 +413,9 @@ const VECTOR_NODES = [
     pathogen: 'None (Healthy Baseline)',
     x: 730,
     y: 450,
-    radius: 10,
+    vx: 0,
+    vy: 0,
+    radius: 12,
     embeddingSlice: [0.004, 0.018, -0.035, -0.025, -0.005, -0.024],
     summary: 'Clean linear leaves free from rust pustules or northern blight necrotic streaks.',
     remedy: 'Side-dress nitrogen application at V6 stage based on soil nitrate testing.',
@@ -372,28 +423,27 @@ const VECTOR_NODES = [
   },
 ]
 
-// Semantic graph connection edges (Cosine distance relationships in all-MiniLM-L6-v2 vector space)
 const VECTOR_EDGES = [
-  { source: 'tomato_early_blight', target: 'potato_early_blight', similarity: 0.89, label: 'Shared Alternaria solani' },
-  { source: 'tomato_early_blight', target: 'chlorothalonil', similarity: 0.85, label: 'Fungicide Target' },
-  { source: 'tomato_early_blight', target: 'mancozeb', similarity: 0.83, label: 'Protectant Shield' },
-  { source: 'tomato_late_blight', target: 'potato_late_blight', similarity: 0.94, label: 'Phytophthora infestans' },
-  { source: 'tomato_late_blight', target: 'chlorothalonil', similarity: 0.87, label: 'Foliar Protectant' },
-  { source: 'apple_scab', target: 'apple_cedar_rust', similarity: 0.82, label: 'Orchard Fungi' },
-  { source: 'apple_scab', target: 'mancozeb', similarity: 0.86, label: 'Pre-Bloom Spray' },
-  { source: 'corn_common_rust', target: 'azoxystrobin', similarity: 0.84, label: 'Strobilurin Target' },
-  { source: 'grape_black_rot', target: 'mancozeb', similarity: 0.88, label: 'Berry Protectant' },
-  { source: 'tomato_bacterial_spot', target: 'pepper_bacterial_spot', similarity: 0.92, label: 'Xanthomonas Strain' },
-  { source: 'tomato_bacterial_spot', target: 'copper_hydroxide', similarity: 0.91, label: 'Bactericide' },
-  { source: 'tomato_bacterial_spot', target: 'bacillus_subtilis', similarity: 0.79, label: 'Bio-Antagonist' },
-  { source: 'citrus_greening', target: 'neem_oil', similarity: 0.76, label: 'Vector Repellent' },
-  { source: 'tomato_yellow_leaf_curl', target: 'tomato_mosaic_virus', similarity: 0.88, label: 'Viral Stunting' },
-  { source: 'tomato_yellow_leaf_curl', target: 'neem_oil', similarity: 0.82, label: 'Whitefly Vector IPM' },
-  { source: 'chlorothalonil', target: 'mancozeb', similarity: 0.91, label: 'Contact Multi-Site' },
-  { source: 'copper_hydroxide', target: 'bacillus_subtilis', similarity: 0.78, label: 'IPM Rotation' },
-  { source: 'neem_oil', target: 'bacillus_subtilis', similarity: 0.81, label: 'Bio-Fungicide Tank' },
-  { source: 'tomato_healthy', target: 'potato_healthy', similarity: 0.92, label: 'Solanaceae Baseline' },
-  { source: 'apple_healthy', target: 'corn_healthy', similarity: 0.87, label: 'Photosynthesis Base' },
+  { source: 'tomato_early_blight', target: 'potato_early_blight', similarity: 0.89 },
+  { source: 'tomato_early_blight', target: 'chlorothalonil', similarity: 0.85 },
+  { source: 'tomato_early_blight', target: 'mancozeb', similarity: 0.83 },
+  { source: 'tomato_late_blight', target: 'potato_late_blight', similarity: 0.94 },
+  { source: 'tomato_late_blight', target: 'chlorothalonil', similarity: 0.87 },
+  { source: 'apple_scab', target: 'apple_cedar_rust', similarity: 0.82 },
+  { source: 'apple_scab', target: 'mancozeb', similarity: 0.86 },
+  { source: 'corn_common_rust', target: 'azoxystrobin', similarity: 0.84 },
+  { source: 'grape_black_rot', target: 'mancozeb', similarity: 0.88 },
+  { source: 'tomato_bacterial_spot', target: 'pepper_bacterial_spot', similarity: 0.92 },
+  { source: 'tomato_bacterial_spot', target: 'copper_hydroxide', similarity: 0.91 },
+  { source: 'tomato_bacterial_spot', target: 'bacillus_subtilis', similarity: 0.79 },
+  { source: 'citrus_greening', target: 'neem_oil', similarity: 0.76 },
+  { source: 'tomato_yellow_leaf_curl', target: 'tomato_mosaic_virus', similarity: 0.88 },
+  { source: 'tomato_yellow_leaf_curl', target: 'neem_oil', similarity: 0.82 },
+  { source: 'chlorothalonil', target: 'mancozeb', similarity: 0.91 },
+  { source: 'copper_hydroxide', target: 'bacillus_subtilis', similarity: 0.78 },
+  { source: 'neem_oil', target: 'bacillus_subtilis', similarity: 0.81 },
+  { source: 'tomato_healthy', target: 'potato_healthy', similarity: 0.92 },
+  { source: 'apple_healthy', target: 'corn_healthy', similarity: 0.87 },
 ]
 
 const SAMPLE_QUERIES = [
@@ -466,27 +516,35 @@ const CATEGORY_META = {
 }
 
 export default function VectorGraphExplorer() {
+  const [nodes, setNodes] = useState(INITIAL_NODES)
   const [selectedNodeId, setSelectedNodeId] = useState('tomato_early_blight')
   const [activeCategory, setActiveCategory] = useState('all')
   const [activeCrop, setActiveCrop] = useState('all')
   const [activeQueryIndex, setActiveQueryIndex] = useState(0)
-  const [customQueryText, setCustomQueryText] = useState('')
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
-  const [zoomLevel, setZoomLevel] = useState(1)
+  const [isPhysicsActive, setIsPhysicsActive] = useState(false)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+
+  const isDraggingCanvas = useRef(false)
+  const isDraggingNode = useRef(null)
+  const dragStart = useRef({ x: 0, y: 0 })
+  const svgRef = useRef(null)
+  const animFrameId = useRef(null)
 
   const activeQuery = SAMPLE_QUERIES[activeQueryIndex]
   const selectedNode = useMemo(() => {
-    return VECTOR_NODES.find((n) => n.id === selectedNodeId) || VECTOR_NODES[0]
-  }, [selectedNodeId])
+    return nodes.find((n) => n.id === selectedNodeId) || nodes[0]
+  }, [nodes, selectedNodeId])
 
   // Filter nodes based on category and crop filters
   const visibleNodes = useMemo(() => {
-    return VECTOR_NODES.filter((n) => {
+    return nodes.filter((n) => {
       if (activeCategory !== 'all' && n.category !== activeCategory) return false
       if (activeCrop !== 'all' && n.crop !== activeCrop && n.crop !== 'Multi-Crop') return false
       return true
     })
-  }, [activeCategory, activeCrop])
+  }, [nodes, activeCategory, activeCrop])
 
   // Top ranked matches for the active cosine probe query
   const queryRankings = useMemo(() => {
@@ -494,18 +552,177 @@ export default function VectorGraphExplorer() {
     const scores = activeQuery.targetScores || {}
     return Object.entries(scores)
       .map(([nodeId, score]) => {
-        const node = VECTOR_NODES.find((n) => n.id === nodeId)
+        const node = nodes.find((n) => n.id === nodeId)
         return node ? { ...node, score } : null
       })
       .filter(Boolean)
       .sort((a, b) => b.score - a.score)
-  }, [activeQuery])
+  }, [nodes, activeQuery])
 
   // Get active edges connected to visible nodes
   const visibleEdges = useMemo(() => {
     const nodeIds = new Set(visibleNodes.map((n) => n.id))
     return VECTOR_EDGES.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
   }, [visibleNodes])
+
+  // Reset positions to original cluster baselines
+  const resetPositions = () => {
+    setNodes(INITIAL_NODES)
+    setPan({ x: 0, y: 0 })
+    setZoom(1)
+  }
+
+  // Smooth force-directed physics step
+  const updatePhysics = useCallback(() => {
+    setNodes((prevNodes) => {
+      const next = prevNodes.map((n) => ({ ...n }))
+      const damping = 0.85
+      const repulsion = 1800
+      const springLength = 100
+      const springStrength = 0.03
+
+      // Repulsion between all nodes
+      for (let i = 0; i < next.length; i++) {
+        for (let j = i + 1; j < next.length; j++) {
+          const dx = next[j].x - next[i].x
+          const dy = next[j].y - next[i].y
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1
+          if (dist < 220) {
+            const force = repulsion / (dist * dist)
+            const fx = (dx / dist) * force
+            const fy = (dy / dist) * force
+            if (isDraggingNode.current !== next[i].id) {
+              next[i].vx -= fx
+              next[i].vy -= fy
+            }
+            if (isDraggingNode.current !== next[j].id) {
+              next[j].vx += fx
+              next[j].vy += fy
+            }
+          }
+        }
+      }
+
+      // Spring attraction along edges
+      VECTOR_EDGES.forEach((edge) => {
+        const s = next.find((n) => n.id === edge.source)
+        const t = next.find((n) => n.id === edge.target)
+        if (s && t) {
+          const dx = t.x - s.x
+          const dy = t.y - s.y
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1
+          const force = (dist - springLength) * springStrength
+          const fx = (dx / dist) * force
+          const fy = (dy / dist) * force
+          if (isDraggingNode.current !== s.id) {
+            s.vx += fx
+            s.vy += fy
+          }
+          if (isDraggingNode.current !== t.id) {
+            t.vx -= fx
+            t.vy -= fy
+          }
+        }
+      })
+
+      // Apply velocity and boundary constraints
+      return next.map((n) => {
+        if (isDraggingNode.current === n.id) {
+          return { ...n, vx: 0, vy: 0 }
+        }
+        let nx = n.x + n.vx
+        let ny = n.y + n.vy
+
+        // Keep inside canvas bounds (padding 40px)
+        nx = Math.max(60, Math.min(760, nx))
+        ny = Math.max(60, Math.min(460, ny))
+
+        return {
+          ...n,
+          x: nx,
+          y: ny,
+          vx: n.vx * damping,
+          vy: n.vy * damping,
+        }
+      })
+    })
+  }, [])
+
+  // Physics animation loop
+  useEffect(() => {
+    if (!isPhysicsActive) {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current)
+      return
+    }
+
+    const loop = () => {
+      updatePhysics()
+      animFrameId.current = requestAnimationFrame(loop)
+    }
+    animFrameId.current = requestAnimationFrame(loop)
+
+    return () => {
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current)
+    }
+  }, [isPhysicsActive, updatePhysics])
+
+  // Mouse & Touch Drag Event Handlers for Canvas and Nodes
+  const handleNodeMouseDown = (e, nodeId) => {
+    e.stopPropagation()
+    isDraggingNode.current = nodeId
+    setSelectedNodeId(nodeId)
+    const clientX = e.clientX || e.touches?.[0]?.clientX
+    const clientY = e.clientY || e.touches?.[0]?.clientY
+    dragStart.current = { x: clientX, y: clientY }
+  }
+
+  const handleCanvasMouseDown = (e) => {
+    if (e.button !== 0 && !e.touches) return
+    isDraggingCanvas.current = true
+    const clientX = e.clientX || e.touches?.[0]?.clientX
+    const clientY = e.clientY || e.touches?.[0]?.clientY
+    dragStart.current = { x: clientX - pan.x, y: clientY - pan.y }
+  }
+
+  const handleMouseMove = (e) => {
+    const clientX = e.clientX || e.touches?.[0]?.clientX
+    const clientY = e.clientY || e.touches?.[0]?.clientY
+    if (!clientX || !clientY) return
+
+    // Dragging a specific Node
+    if (isDraggingNode.current) {
+      const svg = svgRef.current
+      if (!svg) return
+      const rect = svg.getBoundingClientRect()
+      // Compute SVG viewbox coordinates with pan and zoom
+      const svgX = ((clientX - rect.left - pan.x) / (rect.width * zoom)) * 820
+      const svgY = ((clientY - rect.top - pan.y) / (rect.height * zoom)) * 500
+
+      setNodes((prev) =>
+        prev.map((n) => (n.id === isDraggingNode.current ? { ...n, x: svgX, y: svgY, vx: 0, vy: 0 } : n))
+      )
+      return
+    }
+
+    // Panning the Canvas
+    if (isDraggingCanvas.current) {
+      setPan({
+        x: clientX - dragStart.current.x,
+        y: clientY - dragStart.current.y,
+      })
+    }
+  }
+
+  const handleMouseUp = () => {
+    isDraggingNode.current = null
+    isDraggingCanvas.current = false
+  }
+
+  const handleWheel = (e) => {
+    e.preventDefault()
+    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92
+    setZoom((z) => Math.max(0.6, Math.min(2.5, z * zoomFactor)))
+  }
 
   return (
     <div className="space-y-6">
@@ -522,7 +739,7 @@ export default function VectorGraphExplorer() {
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-500 dark:text-ink-muted">
-              Interactive 2D manifold projection of 384-dimensional <code className="font-mono text-accent-600 dark:text-accent-400">all-MiniLM-L6-v2</code> dense vectors. Demonstrates real-time Cosine Similarity and semantic clustering across plant pathology concepts.
+              Interactive 2D manifold projection of 384-dimensional <code className="font-mono text-accent-600 dark:text-accent-400">all-MiniLM-L6-v2</code> dense vectors. <strong>Drag any node</strong> to test elastic physics, pan the canvas, or click a probe query below.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -591,30 +808,62 @@ export default function VectorGraphExplorer() {
 
       {/* Main Grid: Interactive Vector Canvas + Live Query Probe */}
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* Left 8 Cols: Interactive Vector Manifold Canvas */}
+        {/* Left 8 Cols: Interactive Vector Manifold Canvas with Real Mouse Drag & Zoom */}
         <div className="lg:col-span-8 space-y-3">
-          <div className="panel relative overflow-hidden rounded-panel border border-border-light bg-slate-950 p-4 dark:border-border">
-            {/* Canvas Header Legend */}
+          <div
+            className="panel relative overflow-hidden rounded-panel border border-border-light bg-slate-950 p-4 dark:border-border cursor-grab active:cursor-grabbing select-none"
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onTouchStart={handleCanvasMouseDown}
+            onTouchMove={handleMouseMove}
+            onTouchEnd={handleMouseUp}
+            onWheel={handleWheel}
+          >
+            {/* Canvas Header Controls */}
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="font-mono text-xs font-medium text-slate-300">
-                  Vector Space Topology (384-d → 2D Projection)
+                  Interactive Physics Manifold (Drag nodes · Pan · Zoom)
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                <span>{visibleNodes.length} Active Nodes</span>
-                <span>·</span>
-                <span>{visibleEdges.length} Semantic Edges</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPhysicsActive((p) => !p)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                    isPhysicsActive
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold'
+                      : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                  }`}
+                >
+                  {isPhysicsActive ? <Pause size={13} /> : <Play size={13} />}
+                  {isPhysicsActive ? 'Physics Running' : 'Start Physics'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetPositions}
+                  className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2 py-1 text-xs text-slate-300 hover:bg-white/15"
+                  title="Reset positions"
+                >
+                  <RotateCcw size={12} />
+                  Reset
+                </button>
               </div>
             </div>
 
-            {/* SVG Vector Space Graph */}
-            <div className="relative mt-3 flex justify-center overflow-x-auto">
+            {/* SVG Vector Space Graph with Pan & Zoom Transform */}
+            <div className="relative mt-2 flex justify-center overflow-hidden">
               <svg
+                ref={svgRef}
                 viewBox="0 0 820 500"
-                className="h-[460px] w-full min-w-[700px] select-none"
-                style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center' }}
+                className="h-[470px] w-full min-w-[700px]"
+                style={{
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transformOrigin: 'center center',
+                  transition: isDraggingCanvas.current || isDraggingNode.current ? 'none' : 'transform 0.15s ease-out',
+                }}
               >
                 <defs>
                   {/* Radial Background Gradients for Clusters */}
@@ -640,8 +889,8 @@ export default function VectorGraphExplorer() {
                   </radialGradient>
 
                   {/* Node Glow Filters */}
-                  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur stdDeviation="4" result="blur" />
+                  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+                    <feGaussianBlur stdDeviation="5" result="blur" />
                     <feComposite in="SourceGraphic" in2="blur" operator="over" />
                   </filter>
                 </defs>
@@ -654,26 +903,26 @@ export default function VectorGraphExplorer() {
                 <rect x="620" y="320" width="180" height="160" rx="40" fill="url(#healthyGlow)" />
 
                 {/* Cluster Region Watermark Labels */}
-                <text x="140" y="110" fill="#f43f5e" opacity="0.4" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                <text x="130" y="110" fill="#f43f5e" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                   CLUSTER 1: FUNGAL SOLANACEAE
                 </text>
-                <text x="420" y="105" fill="#f59e0b" opacity="0.4" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                <text x="410" y="105" fill="#f59e0b" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                   CLUSTER 2: BACTERIAL
                 </text>
-                <text x="630" y="105" fill="#6366f1" opacity="0.4" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                <text x="610" y="105" fill="#6366f1" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                   CLUSTER 3: VIRAL
                 </text>
-                <text x="250" y="265" fill="#0284c7" opacity="0.4" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                <text x="250" y="265" fill="#0284c7" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                   CLUSTER 4: CHEMICAL PROTECTANTS
                 </text>
-                <text x="650" y="345" fill="#14b8a6" opacity="0.4" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                <text x="630" y="345" fill="#14b8a6" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                   CLUSTER 5: HEALTHY BASELINES
                 </text>
 
-                {/* Semantic Connection Edges */}
+                {/* Semantic Connection Edges with live springs */}
                 {visibleEdges.map((edge) => {
-                  const sNode = VECTOR_NODES.find((n) => n.id === edge.source)
-                  const tNode = VECTOR_NODES.find((n) => n.id === edge.target)
+                  const sNode = nodes.find((n) => n.id === edge.source)
+                  const tNode = nodes.find((n) => n.id === edge.target)
                   if (!sNode || !tNode) return null
 
                   const isHighlighted =
@@ -682,15 +931,15 @@ export default function VectorGraphExplorer() {
                     hoveredNodeId === edge.source ||
                     hoveredNodeId === edge.target
 
-                  const opacity = isHighlighted ? 0.85 : 0.25
-                  const strokeWidth = isHighlighted ? 2 : 1
+                  const opacity = isHighlighted ? 0.9 : 0.25
+                  const strokeWidth = isHighlighted ? 2.2 : 1
                   const strokeColor = isHighlighted ? '#38bdf8' : '#64748b'
 
                   const midX = (sNode.x + tNode.x) / 2
                   const midY = (sNode.y + tNode.y) / 2
 
                   return (
-                    <g key={`${edge.source}-${edge.target}`} className="transition-all duration-300">
+                    <g key={`${edge.source}-${edge.target}`}>
                       <line
                         x1={sNode.x}
                         y1={sNode.y}
@@ -730,11 +979,11 @@ export default function VectorGraphExplorer() {
                   )
                 })}
 
-                {/* Vector Probe Rays (from Query Vector to Top Matches) */}
+                {/* Vector Probe Laser Rays (from Query Vector to Top Matches) */}
                 {queryRankings.slice(0, 4).map((match, idx) => {
                   const queryPoint = { x: 410, y: 250 }
                   return (
-                    <g key={`query-ray-${match.id}`} className="animate-pulse">
+                    <g key={`query-ray-${match.id}`}>
                       <line
                         x1={queryPoint.x}
                         y1={queryPoint.y}
@@ -742,7 +991,7 @@ export default function VectorGraphExplorer() {
                         y2={match.y}
                         stroke="#f59e0b"
                         strokeWidth={2.5 - idx * 0.5}
-                        strokeOpacity={0.8 - idx * 0.15}
+                        strokeOpacity={0.85 - idx * 0.15}
                         strokeDasharray="4 4"
                       />
                     </g>
@@ -758,7 +1007,7 @@ export default function VectorGraphExplorer() {
                   </text>
                 </g>
 
-                {/* Vector Nodes */}
+                {/* Interactive Vector Nodes (Mouse & Touch Draggable) */}
                 {visibleNodes.map((node) => {
                   const isSelected = selectedNodeId === node.id
                   const isHovered = hoveredNodeId === node.id
@@ -769,8 +1018,9 @@ export default function VectorGraphExplorer() {
                     <g
                       key={node.id}
                       transform={`translate(${node.x}, ${node.y})`}
-                      className="cursor-pointer transition-all duration-200"
-                      onClick={() => setSelectedNodeId(node.id)}
+                      className="cursor-move"
+                      onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                      onTouchStart={(e) => handleNodeMouseDown(e, node.id)}
                       onMouseEnter={() => setHoveredNodeId(node.id)}
                       onMouseLeave={() => setHoveredNodeId(null)}
                     >
@@ -779,7 +1029,7 @@ export default function VectorGraphExplorer() {
                         <circle
                           r={node.radius + 8}
                           fill={meta.stroke}
-                          fillOpacity="0.25"
+                          fillOpacity="0.3"
                           className="animate-pulse"
                         />
                       )}
@@ -789,7 +1039,7 @@ export default function VectorGraphExplorer() {
                         r={node.radius}
                         fill={isSelected ? '#ffffff' : meta.stroke}
                         stroke={isSelected ? meta.stroke : '#0f172a'}
-                        strokeWidth={isSelected ? 3 : 2}
+                        strokeWidth={isSelected ? 3.5 : 2}
                         filter={isSelected ? 'url(#glow)' : undefined}
                       />
 
@@ -828,7 +1078,7 @@ export default function VectorGraphExplorer() {
                         fill={isSelected ? '#ffffff' : '#cbd5e1'}
                         fontSize="10"
                         fontWeight={isSelected ? 'bold' : 'normal'}
-                        className="drop-shadow"
+                        className="drop-shadow pointer-events-none"
                       >
                         {node.label}
                       </text>
@@ -849,23 +1099,24 @@ export default function VectorGraphExplorer() {
                 ))}
               </div>
               <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-400">Zoom: {Math.round(zoom * 100)}%</span>
                 <button
                   type="button"
-                  onClick={() => setZoomLevel((z) => Math.min(z + 0.1, 1.4))}
+                  onClick={() => setZoom((z) => Math.min(z + 0.15, 2.5))}
                   className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
                 >
                   +
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZoomLevel(1)}
+                  onClick={() => setZoom(1)}
                   className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
                 >
                   100%
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZoomLevel((z) => Math.max(z - 0.1, 0.8))}
+                  onClick={() => setZoom((z) => Math.max(z - 0.15, 0.6))}
                   className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
                 >
                   -
