@@ -5,6 +5,8 @@ import {
   Calculator,
   Check,
   Droplets,
+  FileDown,
+  FileText,
   FlaskConical,
   Gauge,
   HelpCircle,
@@ -15,6 +17,8 @@ import {
   Shield,
   Wind,
 } from 'lucide-react'
+import Button from '../ui/Button'
+import PrescriptionWorkOrderModal from './PrescriptionWorkOrderModal'
 import {
   AREA_UNITS,
   CHEMICAL_PRESETS,
@@ -33,6 +37,7 @@ export default function SprayDosageCalculator({ defaultDisease = '', defaultCrop
   const [customRate, setCustomRate] = useState('2.0')
   const [customUnit, setCustomUnit] = useState('g')
   const [equipmentId, setEquipmentId] = useState('knapsack')
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false)
 
   // Calculate results on the fly
   const results = useMemo(() => {
@@ -280,6 +285,20 @@ export default function SprayDosageCalculator({ defaultDisease = '', defaultCrop
                 Add <strong className="font-semibold text-slate-800 dark:text-ink-primary">{results.chemicalPerTank} {results.chemUnit}</strong> of {results.chemicalName} per full {results.tankCapacityLiters}L tank fill.
               </p>
             </div>
+
+            {/* Action button to generate prescription work order */}
+            <div className="pt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={FileText}
+                onClick={() => setShowPrescriptionModal(true)}
+                className="w-full justify-center"
+              >
+                Generate Spray Work Order Document
+              </Button>
+            </div>
           </div>
 
           {/* Meteorological & Application Advisory */}
@@ -296,6 +315,18 @@ export default function SprayDosageCalculator({ defaultDisease = '', defaultCrop
           </div>
         </div>
       </div>
+
+      <PrescriptionWorkOrderModal
+        isOpen={showPrescriptionModal}
+        onClose={() => setShowPrescriptionModal(false)}
+        diagnosis={{
+          crop: defaultCrop || 'Field Crop',
+          disease: defaultDisease || 'Foliar Treatment',
+          confidence: 0.95,
+        }}
+        severity={{ level: 'Moderate', description: 'Preventative / targeted intervention' }}
+        dosageInfo={results}
+      />
     </div>
   )
 }

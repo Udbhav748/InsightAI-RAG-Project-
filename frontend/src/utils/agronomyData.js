@@ -488,3 +488,145 @@ export function calculateSprayDosage({
     chemicalName: chem.name,
   }
 }
+
+export const REGULATORY_JURISDICTIONS = [
+  { id: 'EPA', label: 'USA (EPA)', region: 'United States', agency: 'EPA' },
+  { id: 'EFSA', label: 'European Union (EFSA)', region: 'European Union', agency: 'EFSA' },
+  { id: 'CIBRC', label: 'India (CIBRC)', region: 'India', agency: 'CIBRC' },
+  { id: 'OMRI', label: 'Global Organic (OMRI Only)', region: 'Global Organic', agency: 'OMRI' },
+]
+
+/**
+ * Retrieve chemical regulatory compliance status and badges by regional jurisdiction.
+ */
+export function getChemicalRegulatoryStatus(chemicalName = '', jurisdictionId = 'EPA') {
+  const name = (chemicalName || '').toLowerCase()
+  const jur = (jurisdictionId || 'EPA').toUpperCase()
+
+  // 1. Global Organic (OMRI)
+  if (jur === 'OMRI' || jur.includes('ORGANIC')) {
+    const isOrganic =
+      name.includes('copper') ||
+      name.includes('bacillus') ||
+      name.includes('neem') ||
+      name.includes('bicarbonate') ||
+      name.includes('sulfur') ||
+      name.includes('trichoderma') ||
+      name.includes('kelp') ||
+      name.includes('seaweed') ||
+      name.includes('peroxyacetic') ||
+      name.includes('bacteriophage') ||
+      name.includes('botanical') ||
+      name.includes('milk')
+
+    if (isOrganic) {
+      return {
+        jurisdiction: 'OMRI',
+        status: 'approved',
+        isRestricted: false,
+        badge: 'OMRI Listed / Organic Approved',
+        badgeClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+        note: 'Approved for USDA NOP & OMRI certified organic production.',
+      }
+    }
+
+    return {
+      jurisdiction: 'OMRI',
+      status: 'prohibited',
+      isRestricted: true,
+      badge: 'Prohibited (OMRI Organic)',
+      badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+      note: 'Synthetic chemical active ingredient prohibited under OMRI organic standards. Use biological/botanical alternatives.',
+    }
+  }
+
+  // 2. European Union (EFSA)
+  if (jur === 'EFSA' || jur.includes('EU') || jur.includes('EUROPE')) {
+    if (name.includes('chlorothalonil')) {
+      return {
+        jurisdiction: 'EFSA',
+        status: 'restricted',
+        isRestricted: true,
+        badge: 'Non-Renewed in EU / Restricted',
+        badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+        note: 'Approval non-renewed under EC 1107/2009. Prohibited for open field use in the EU.',
+      }
+    }
+
+    if (name.includes('mancozeb')) {
+      return {
+        jurisdiction: 'EFSA',
+        status: 'restricted',
+        isRestricted: true,
+        badge: 'Phase-out in EU',
+        badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+        note: 'EU Commission Implementing Regulation 2020/2087 phase-out due to endocrine classification.',
+      }
+    }
+
+    if (name.includes('streptomycin')) {
+      return {
+        jurisdiction: 'EFSA',
+        status: 'restricted',
+        isRestricted: true,
+        badge: 'EU Restricted (Antibiotic)',
+        badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+        note: 'Agricultural antibiotic usage strictly prohibited in EU member states.',
+      }
+    }
+
+    return {
+      jurisdiction: 'EFSA',
+      status: 'approved',
+      isRestricted: false,
+      badge: 'EFSA Compliant',
+      badgeClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+      note: 'Registered for approved plant protection use within the European Union.',
+    }
+  }
+
+  // 3. India (CIBRC)
+  if (jur === 'CIBRC' || jur.includes('INDIA')) {
+    if (name.includes('streptomycin')) {
+      return {
+        jurisdiction: 'CIBRC',
+        status: 'restricted',
+        isRestricted: true,
+        badge: 'CIBRC Regulated / Restricted',
+        badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+        note: 'Restricted formulation under the Insecticides Act, 1968.',
+      }
+    }
+
+    return {
+      jurisdiction: 'CIBRC',
+      status: 'approved',
+      isRestricted: false,
+      badge: 'CIBRC Registered',
+      badgeClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+      note: 'Registered and approved under the Insecticides Act, 1968 by CIB&RC India.',
+    }
+  }
+
+  // 4. USA (EPA - Default)
+  if (name.includes('streptomycin')) {
+    return {
+      jurisdiction: 'EPA',
+      status: 'restricted',
+      isRestricted: true,
+      badge: 'EPA Restricted Use',
+      badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+      note: 'EPA designated Restricted Use Pesticide (RUP). Certified applicator license required.',
+    }
+  }
+
+  return {
+    jurisdiction: 'EPA',
+    status: 'approved',
+    isRestricted: false,
+    badge: 'EPA Approved / Registered',
+    badgeClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+    note: 'Registered with the US EPA. Complies with FIFRA label guidelines.',
+  }
+}
+

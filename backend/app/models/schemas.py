@@ -105,6 +105,30 @@ class DiagnosisInfo(BaseModel):
     )
 
 
+class CurrentWeather(BaseModel):
+    temperature_c: float = Field(..., description="Current temperature in degrees Celsius.")
+    humidity_pct: float = Field(..., description="Current relative humidity percentage (0-100).")
+    precipitation_mm: float = Field(..., description="Current precipitation in mm.")
+    wind_kmh: float = Field(..., description="Current wind speed in km/h at 10m.")
+
+
+class WeatherRiskResponse(BaseModel):
+    location: dict[str, Any] = Field(..., description="Geographic coordinates and timezone metadata.")
+    current: CurrentWeather = Field(..., description="Current atmospheric weather readings.")
+    risk_level: Literal["Low", "Moderate", "High", "Critical"] = Field(
+        ..., description="Categorical microclimate disease infection risk level."
+    )
+    risk_score: float = Field(
+        ..., ge=0.0, le=1.0, description="Normalized pathogen infection risk score (0.0 to 1.0)."
+    )
+    favorable_conditions_summary: str = Field(
+        ..., description="Detailed explanation of environmental conditions driving pathogen pressure."
+    )
+    spray_advisory: str = Field(
+        ..., description="Actionable agronomical spray window and wind drift guidance."
+    )
+
+
 class ChatResponse(BaseModel):
     answer: str
     retrieved_chunks: list[RetrievedChunk]
@@ -161,6 +185,11 @@ class ChatResponse(BaseModel):
         "retrieved context (0..1), when the grounding check ran. Higher is better-grounded; "
         "below Settings.hallucination_grounding_threshold is what sets "
         "hallucination_detected.",
+    )
+    weather_risk: WeatherRiskResponse | None = Field(
+        None,
+        description="Present when field coordinates (latitude/longitude) are supplied — "
+        "the microclimate pathogen infection risk assessment and spray advisory.",
     )
 
 

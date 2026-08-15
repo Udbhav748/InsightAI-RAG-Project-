@@ -5,9 +5,15 @@ import * as useChatHook from '../hooks/useChat'
 
 const mockNavigate = vi.fn()
 let mockLocationState = null
+let mockLocationSearch = ''
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
-  useLocation: () => ({ state: mockLocationState, pathname: '/chat', key: 'chat-key-1' }),
+  useLocation: () => ({
+    state: mockLocationState,
+    search: mockLocationSearch,
+    pathname: '/chat',
+    key: 'chat-key-1',
+  }),
 }))
 
 const mockShowToast = vi.fn()
@@ -43,6 +49,7 @@ describe('Chat Page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockLocationState = null
+    mockLocationSearch = ''
 
     // Default useChat implementation
     vi.spyOn(useChatHook, 'default').mockReturnValue({
@@ -56,7 +63,7 @@ describe('Chat Page', () => {
     })
   })
 
-  it('renders empty state with suggestion pills when no messages exist', () => {
+  it('renders empty state with suggestion pills when no messages exist and no query params', () => {
     render(<Chat />)
 
     expect(screen.getByText('Ask anything about your documents')).toBeInTheDocument()
@@ -68,7 +75,40 @@ describe('Chat Page', () => {
     expect(suggestionBtn).toBeInTheDocument()
 
     fireEvent.click(suggestionBtn)
-    expect(mockAsk).toHaveBeenCalledWith('Summarize the key points of my uploaded document.')
+    expect(mockAsk).toHaveBeenCalledWith('Summarize the key points of my uploaded document.', '')
+  })
+
+  it('hydrates diagnostic context from URL query params and displays active banner and pre-filled suggestion pill', () => {
+    mockLocationSearch = '?crop=tomato&disease=early%20blight&severity=Severe'
+
+    render(<Chat />)
+
+    // Check Diagnostic Context Active banner
+    expect(screen.getByTestId('diagnostic-context-banner')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Diagnosed Leaf Context Active:\s*Tomato\s*-\s*Early Blight\s*\(Severe\)/i)
+    ).toBeInTheDocument()
+
+    // Pre-filled suggestion pill
+    const suggestionPills = screen.getAllByText(/What is the organic spray rotation schedule for this Early Blight\?/i)
+    expect(suggestionPills.length).toBeGreaterThan(0)
+
+    // Click suggestion pill
+    fireEvent.click(suggestionPills[0])
+    expect(mockAsk).toHaveBeenCalledWith('What is the organic spray rotation schedule for this Early Blight?', '')
+  })
+
+  it('allows user to dismiss the diagnostic context banner', () => {
+    mockLocationSearch = '?crop=apple&disease=apple%20scab&severity=Moderate'
+
+    render(<Chat />)
+
+    expect(screen.getByTestId('diagnostic-context-banner')).toBeInTheDocument()
+
+    const dismissBtn = screen.getByLabelText(/Dismiss diagnostic context banner/i)
+    fireEvent.click(dismissBtn)
+
+    expect(screen.queryByTestId('diagnostic-context-banner')).not.toBeInTheDocument()
   })
 
   it('submits a new query from ChatInput with selected persona', () => {

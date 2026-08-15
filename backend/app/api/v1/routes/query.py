@@ -21,6 +21,7 @@ from app.models.schemas import (
     FeedbackListResponse,
     FeedbackRequest,
     FeedbackResponse,
+    WeatherRiskResponse,
 )
 from app.services.faiss_vector_store import FAISSVectorStore
 from app.services.feedback_service import list_feedback as list_feedback_events
@@ -36,6 +37,7 @@ from app.services.session_repository import (
 from app.services.session_store import get_session_store
 from app.services.validation_service import validate_image_upload
 from app.services.vector_store import VectorStore
+from app.services.weather_service import WeatherService
 
 router = APIRouter(tags=["Chat"], dependencies=[Depends(require_auth)])
 logger = logging.getLogger(__name__)
@@ -289,6 +291,18 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
+@router.get("/weather/risk", response_model=WeatherRiskResponse)
+async def get_weather_risk(
+    lat: float,
+    lon: float,
+    crop: str | None = None,
+    disease: str | None = None,
+) -> WeatherRiskResponse:
+    """Assess field microclimate pathogen infection risk and chemical spray advisory from Open-Meteo data."""
+    weather_service = WeatherService()
+    return await weather_service.get_weather_risk(lat=lat, lon=lon, crop=crop, disease=disease)
+
+
 @router.post("/chat/diagnose", response_model=ChatResponse)
 async def diagnose(
     request: Request,
@@ -297,6 +311,8 @@ async def diagnose(
     session_id: str | None = Form(None),
     confirm_web_search: bool = Form(False),
     engine: str = Form("hybrid"),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
 ) -> ChatResponse:
     chat_service = get_chat_service()
     session_store = get_session_store()
@@ -310,6 +326,21 @@ async def diagnose(
     set_session_title_if_unset(session_id, query or "Leaf diagnosis")
     history = session_store.get_history(session_id)
 
+    weather_risk: WeatherRiskResponse | None = None
+    if latitude is not None and longitude is not None:
+        try:
+            weather_service = WeatherService()
+            weather_risk = await weather_service.get_weather_risk(
+                lat=latitude, lon=longitude
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch microclimate risk for (%s, %s): %s",
+                latitude,
+                longitude,
+                exc,
+            )
+
     logger.info(
         "diagnose_request_received",
         extra={
@@ -320,6 +351,7 @@ async def diagnose(
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
                 "engine": engine,
+                "has_weather": weather_risk is not None,
             }
         },
     )
@@ -335,6 +367,7 @@ async def diagnose(
         confirm_web_search=confirm_web_search,
         tenant_id=tenant_id,
         engine=engine,
+        weather_risk=weather_risk,
     )
 
     # Append this turn to server-side history, same shape /chat uses. The
@@ -386,6 +419,8 @@ async def diagnose_stream(
     session_id: str | None = Form(None),
     confirm_web_search: bool = Form(False),
     engine: str = Form("hybrid"),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
 ) -> StreamingResponse:
     """Streamed SSE endpoint for plant leaf photo diagnosis and treatment recommendations.
 
@@ -404,6 +439,21 @@ async def diagnose_stream(
     set_session_title_if_unset(session_id, query or "Leaf diagnosis")
     history = session_store.get_history(session_id)
 
+    weather_risk: WeatherRiskResponse | None = None
+    if latitude is not None and longitude is not None:
+        try:
+            weather_service = WeatherService()
+            weather_risk = await weather_service.get_weather_risk(
+                lat=latitude, lon=longitude
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch microclimate risk for (%s, %s): %s",
+                latitude,
+                longitude,
+                exc,
+            )
+
     logger.info(
         "diagnose_stream_request_received",
         extra={
@@ -414,6 +464,7 @@ async def diagnose_stream(
                 "session_id": session_id,
                 "history_turns": len(history) if history else 0,
                 "engine": engine,
+                "has_weather": weather_risk is not None,
             }
         },
     )
@@ -434,6 +485,7 @@ async def diagnose_stream(
             confirm_web_search=confirm_web_search,
             tenant_id=tenant_id,
             engine=engine,
+            weather_risk=weather_risk,
         ):
             if event.get("type") == "answer_chunk":
                 token = (

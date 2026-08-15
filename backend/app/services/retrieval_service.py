@@ -130,6 +130,7 @@ def _retrieve_core(
     document_ids: list[str] | None = None,
     image_vector_store: VectorStore | None = None,
     collection: str | None = None,
+    rerank_candidates: bool | None = None,
 ) -> list[RetrievedChunk]:
     """Inner retrieval implementation shared by retrieve() and the dynamic
     tool registry.
@@ -150,7 +151,10 @@ def _retrieve_core(
         except Exception:
             resolved_doc_ids = None
 
-    fetch_k = settings.retrieval_candidate_k if settings.reranking_enabled else resolved_top_k
+    reranking_active = (
+        rerank_candidates if rerank_candidates is not None else settings.reranking_enabled
+    )
+    fetch_k = settings.retrieval_candidate_k if reranking_active else resolved_top_k
 
     results = _search_with_timeout(
         query,
@@ -163,7 +167,7 @@ def _retrieve_core(
     )
 
     reranked = False
-    if settings.reranking_enabled:
+    if reranking_active:
         try:
             results = rerank(query, results, top_k=resolved_top_k)
             reranked = True
@@ -244,6 +248,7 @@ def retrieve(
     document_ids: list[str] | None = None,
     image_vector_store: VectorStore | None = None,
     collection: str | None = None,
+    rerank: bool | None = None,
 ) -> list[RetrievedChunk]:
     """Public, instrumented retrieval entry point — the inline ChatService
     path. Validates args, runs _retrieve_core, and logs one
@@ -260,4 +265,5 @@ def retrieve(
         document_ids=document_ids,
         image_vector_store=image_vector_store,
         collection=collection,
+        rerank_candidates=rerank,
     )

@@ -45,12 +45,22 @@ def grade_retrieval(
         grade, top_score = "insufficient", None
     else:
         top_score = max(chunk.score for chunk in chunks)
-        effective_thresh = (
-            (thresh / (getattr(settings, "hybrid_rrf_k", 60) + 1))
-            if settings.hybrid_search_enabled and top_score < 0.1
-            else thresh
-        )
-        grade = "good" if top_score >= effective_thresh else "weak"
+        rerank_scores = [
+            chunk.metadata["rerank_score"]
+            for chunk in chunks
+            if isinstance(getattr(chunk, "metadata", None), dict)
+            and "rerank_score" in chunk.metadata
+        ]
+        if rerank_scores:
+            top_rerank = max(rerank_scores)
+            grade = "good" if (top_rerank >= thresh or top_score >= thresh) else "weak"
+        else:
+            effective_thresh = (
+                (thresh / (getattr(settings, "hybrid_rrf_k", 60) + 1))
+                if settings.hybrid_search_enabled and top_score < 0.1
+                else thresh
+            )
+            grade = "good" if top_score >= effective_thresh else "weak"
 
     logger.info(
         "retrieval_graded",

@@ -34,7 +34,12 @@ from app.core.config import settings
 from app.core.exceptions import AppError, ChatServiceError, WebSearchError
 from app.core.metrics import get_metrics
 from app.core.usage_tracking import current_usage, reset_usage
-from app.models.schemas import ChatResponse, DiagnosisInfo, SourceReference
+from app.models.schemas import (
+    ChatResponse,
+    DiagnosisInfo,
+    SourceReference,
+    WeatherRiskResponse,
+)
 from app.services.agent_events import log_agent_handoff
 from app.services.cache_service import cache_service
 from app.services.local_research_agent import LocalResearchAgent
@@ -500,6 +505,26 @@ def _build_diagnosis_query(
     disease = prediction.disease
     base = f"{disease} on {crop}" if disease != "healthy" else f"healthy {crop}"
     return f"{base}. {user_query}" if user_query else base
+
+
+def _format_weather_instruction(weather_risk: WeatherRiskResponse) -> str:
+    """Format structured microclimate intelligence into an agronomy prompt directive."""
+    loc = (
+        weather_risk.location
+        if isinstance(weather_risk.location, dict)
+        else weather_risk.location.model_dump()
+    )
+    lat = loc.get("latitude", loc.get("lat", 0.0))
+    lon = loc.get("longitude", loc.get("lon", 0.0))
+    return (
+        f"[LOCAL FIELD MICROCLIMATE & WEATHER INTELLIGENCE]\n"
+        f"- Location Coordinates: Latitude {lat}, Longitude {lon}\n"
+        f"- Atmospheric Conditions: {weather_risk.current.temperature_c}°C, {weather_risk.current.humidity_pct}% Relative Humidity, {weather_risk.current.precipitation_mm}mm Precipitation, Wind {weather_risk.current.wind_kmh} km/h\n"
+        f"- Pathogen Infection Risk Assessment: {weather_risk.risk_level} (Score: {weather_risk.risk_score})\n"
+        f"- Meteorological Analysis: {weather_risk.favorable_conditions_summary}\n"
+        f"- Chemical Spray Advisory: {weather_risk.spray_advisory}\n\n"
+        f"AGRONOMY DIRECTIVE: Ground your diagnostic advice in this local field weather context. Explicitly advise the grower on pathogen pressure under these conditions and whether current wind/rain conditions permit immediate spraying or require waiting for an optimal window."
+    )
 
 
 @dataclass
@@ -1064,12 +1089,29 @@ class ChatService:
             grade, top_score = "insufficient", None
         else:
             top_score = max(chunk.score for chunk in chunks)
-            effective_thresh = (
-                (settings.retrieval_grade_threshold / (getattr(settings, "hybrid_rrf_k", 60) + 1))
-                if settings.hybrid_search_enabled and top_score < 0.1
-                else settings.retrieval_grade_threshold
-            )
-            grade = "good" if top_score >= effective_thresh else "weak"
+            rerank_scores = [
+                chunk.metadata["rerank_score"]
+                for chunk in chunks
+                if isinstance(getattr(chunk, "metadata", None), dict)
+                and "rerank_score" in chunk.metadata
+            ]
+            if rerank_scores:
+                top_rerank = max(rerank_scores)
+                grade = (
+                    "good"
+                    if (
+                        top_rerank >= settings.retrieval_grade_threshold
+                        or top_score >= settings.retrieval_grade_threshold
+                    )
+                    else "weak"
+                )
+            else:
+                effective_thresh = (
+                    (settings.retrieval_grade_threshold / (getattr(settings, "hybrid_rrf_k", 60) + 1))
+                    if settings.hybrid_search_enabled and top_score < 0.1
+                    else settings.retrieval_grade_threshold
+                )
+                grade = "good" if top_score >= effective_thresh else "weak"
 
         logger.info(
             "retrieval_graded",
@@ -1558,6 +1600,8 @@ class ChatService:
                 retrieve_kwargs["document_ids"] = document_ids
             elif plan.collection:
                 retrieve_kwargs["collection"] = plan.collection
+            if plan.crop is not None or plan.collection is not None:
+                retrieve_kwargs["rerank"] = True
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
 
             steps_taken += 1  # grading
@@ -1876,6 +1920,8 @@ class ChatService:
                 retrieve_kwargs["document_ids"] = document_ids
             elif plan.collection:
                 retrieve_kwargs["collection"] = plan.collection
+            if plan.crop is not None or plan.collection is not None:
+                retrieve_kwargs["rerank"] = True
             chunks = retrieve(retrieval_query, self._vector_store, **retrieve_kwargs)
             yield _trace_event("retrieval", {"chunk_count": len(chunks)})
 
@@ -2081,6 +2127,7 @@ class ChatService:
         tenant_id: int | None = None,
         persona: str | None = "agronomist",
         engine: str = "hybrid",
+        weather_risk: WeatherRiskResponse | None = None,
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense or Gemini, then run the predicted
         disease through the same corrective RAG loop handle_query uses."""
@@ -2116,6 +2163,7 @@ class ChatService:
                 tenant_id=tenant_id,
                 image_vector_store=self._image_vector_store,
                 collection=crop_context,
+                rerank=True,
             )
 
             steps_taken += 1  # grading
@@ -2149,6 +2197,7 @@ class ChatService:
                                 low_confidence=prediction.low_confidence,
                             ),
                             session_id=session_id,
+                            weather_risk=weather_risk,
                         )
                 if settings.web_search_enabled and not research_attempted:
                     web_results = self._search_web(
@@ -2157,8 +2206,14 @@ class ChatService:
                     web_search_attempted = True
                     steps_taken += 1  # web search
 
+            extra_instruction = _format_weather_instruction(weather_risk) if weather_risk else None
             answer = self._generate(
-                diagnosis_query, chunks, recent_history, web_results=web_results, persona=persona
+                diagnosis_query,
+                chunks,
+                recent_history,
+                extra_instruction=extra_instruction,
+                web_results=web_results,
+                persona=persona,
             )
             llm_calls = 1
             steps_taken += 1  # generation
@@ -2202,6 +2257,7 @@ class ChatService:
                 low_confidence=prediction.low_confidence,
             ),
             session_id=session_id,
+            weather_risk=weather_risk,
         )
 
     def stream_diagnose(
@@ -2216,6 +2272,7 @@ class ChatService:
         tenant_id: int | None = None,
         persona: str | None = "agronomist",
         engine: str = "hybrid",
+        weather_risk: WeatherRiskResponse | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streamed counterpart to handle_diagnose, for POST /chat/diagnose/stream."""
         start = time.perf_counter()
@@ -2241,6 +2298,22 @@ class ChatService:
             "detail": {"filename": filename, "engine": engine},
         }
 
+        if weather_risk is not None:
+            yield {
+                "type": "trace",
+                "event": "weather_assessed",
+                "stage": "weather_assessed",
+                "payload": (
+                    weather_risk.model_dump()
+                    if hasattr(weather_risk, "model_dump")
+                    else weather_risk
+                ),
+                "detail": {
+                    "risk_level": weather_risk.risk_level,
+                    "risk_score": weather_risk.risk_score,
+                },
+            }
+
         try:
             steps_taken += 1  # vision inference
             prediction = diagnose_image(image_bytes, filename, content_type, engine=engine)
@@ -2263,6 +2336,7 @@ class ChatService:
                 tenant_id=tenant_id,
                 image_vector_store=self._image_vector_store,
                 collection=crop_context,
+                rerank=True,
             )
 
             yield {
@@ -2313,6 +2387,7 @@ class ChatService:
                                 low_confidence=prediction.low_confidence,
                             ),
                             session_id=session_id,
+                            weather_risk=weather_risk,
                         )
                         yield {"type": "done", "payload": response}
                         return
@@ -2326,8 +2401,14 @@ class ChatService:
 
             yield _trace_event("generating", {})
             answer = ""
+            extra_instruction = _format_weather_instruction(weather_risk) if weather_risk else None
             for is_final, value in self._generate_streamed(
-                diagnosis_query, chunks, recent_history, web_results=web_results, persona=persona
+                diagnosis_query,
+                chunks,
+                recent_history,
+                extra_instruction=extra_instruction,
+                web_results=web_results,
+                persona=persona,
             ):
                 if is_final:
                     answer = value
@@ -2433,6 +2514,7 @@ class ChatService:
             session_id=session_id,
             retrieval_confidence=grade,
             follow_up_questions=follow_up_questions,
+            weather_risk=weather_risk,
         )
         yield {"type": "done", "payload": response}
 
@@ -2452,6 +2534,7 @@ class ChatService:
         retrieval_confidence: str = "good",
         is_clarifying_question: bool = False,
         follow_up_questions: list[str] | None = None,
+        weather_risk: WeatherRiskResponse | None = None,
     ) -> ChatResponse:
         processing_duration = time.perf_counter() - start
         web_results = web_results or []
@@ -2510,6 +2593,13 @@ class ChatService:
                     "diagnosis_low_confidence": diagnosis.low_confidence,
                 }
             )
+        if weather_risk is not None:
+            log_fields.update(
+                {
+                    "weather_risk_level": weather_risk.risk_level,
+                    "weather_risk_score": weather_risk.risk_score,
+                }
+            )
         logger.info("chat_query_handled", extra={"extra_fields": log_fields})
 
         # Agent memory: record this exchange (turns, and — when fact
@@ -2532,4 +2622,5 @@ class ChatService:
             follow_up_questions=follow_up_questions or [],
             hallucination_detected=hallucination_detected,
             grounding_score=grounding_score,
+            weather_risk=weather_risk,
         )

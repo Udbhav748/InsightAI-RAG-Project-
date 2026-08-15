@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   AlertCircle,
+  AlertTriangle,
   BookOpen,
   Calendar,
   CheckCircle2,
@@ -10,9 +11,11 @@ import {
   ExternalLink,
   FileText,
   FlaskConical,
+  Globe2,
   Info,
   Leaf,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sprout,
@@ -20,7 +23,11 @@ import {
 } from 'lucide-react'
 import CitedAnswer from '../chat/CitedAnswer'
 import SourceReferences from '../chat/SourceReferences'
-import { getAgronomicGuide } from '../../utils/agronomyData'
+import {
+  REGULATORY_JURISDICTIONS,
+  getAgronomicGuide,
+  getChemicalRegulatoryStatus,
+} from '../../utils/agronomyData'
 
 const TABS = [
   { id: 'overview', label: 'Overview & Symptoms', icon: BookOpen },
@@ -32,7 +39,7 @@ const TABS = [
 
 /**
  * 5-Tab Treatment Plan Hub providing structured agronomic management,
- * bio-remedies, chemical dosages, seasonal schedule, and RAG citations.
+ * bio-remedies, chemical dosages, regional regulatory filtering, seasonal schedule, and RAG citations.
  */
 export default function TreatmentPlanTabs({
   diagnosis,
@@ -42,6 +49,8 @@ export default function TreatmentPlanTabs({
   isStreaming = false,
 }) {
   const [activeTab, setActiveTab] = useState('overview')
+  const [jurisdiction, setJurisdiction] = useState('EPA')
+
   const crop = diagnosis?.crop || ''
   const disease = diagnosis?.disease || ''
   const guide = getAgronomicGuide(disease, crop)
@@ -255,6 +264,63 @@ export default function TreatmentPlanTabs({
               transition={{ duration: 0.15 }}
               className="space-y-4"
             >
+              {/* Regional Chemical Regulation Filter Bar */}
+              <div className="rounded-xl border border-border-light bg-slate-900/[0.02] p-3.5 dark:border-border dark:bg-white/[0.02]">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-ink-secondary">
+                    <Globe2 size={15} className="text-accent-500" />
+                    <span>Regional Regulatory Jurisdiction:</span>
+                  </div>
+
+                  {/* Jurisdiction Selector Dropdown / Buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <select
+                      id="regulatory-jurisdiction-select"
+                      data-testid="regulatory-jurisdiction-select"
+                      value={jurisdiction}
+                      onChange={(e) => setJurisdiction(e.target.value)}
+                      className="rounded-lg border border-border-light bg-white px-3 py-1.5 text-xs font-medium text-slate-800 shadow-sm outline-none transition-colors focus:border-accent-500 focus:ring-1 focus:ring-accent-500 dark:border-border dark:bg-card dark:text-ink-primary"
+                    >
+                      {REGULATORY_JURISDICTIONS.map((reg) => (
+                        <option key={reg.id} value={reg.id}>
+                          {reg.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Regulation Description / Summary Notice */}
+                <div className="mt-2.5 text-[11px] text-slate-500 dark:text-ink-muted">
+                  {jurisdiction === 'EFSA' && (
+                    <p className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                      <AlertTriangle size={13} className="shrink-0" />
+                      <span>
+                        <strong>European Union (EFSA) Active:</strong> Substances like Chlorothalonil and Mancozeb are non-renewed or phased-out in the EU. Compliant alternatives are badged in green.
+                      </span>
+                    </p>
+                  )}
+                  {jurisdiction === 'OMRI' && (
+                    <p className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                      <Leaf size={13} className="shrink-0" />
+                      <span>
+                        <strong>Global Organic (OMRI Only) Active:</strong> Synthetic chemicals are prohibited. Refer to Tab 2 (Organic Remedies) for certified biological controls.
+                      </span>
+                    </p>
+                  )}
+                  {jurisdiction === 'EPA' && (
+                    <p>
+                      <strong>USA (EPA FIFRA) Active:</strong> Standard label rates and worker protection standards apply.
+                    </p>
+                  )}
+                  {jurisdiction === 'CIBRC' && (
+                    <p>
+                      <strong>India (CIBRC) Active:</strong> Formulations registered under the Insecticides Act, 1968.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {/* Active Ingredients Table */}
               <div className="space-y-2">
                 <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-ink-muted">
@@ -266,6 +332,7 @@ export default function TreatmentPlanTabs({
                     <thead className="border-b border-border-light bg-slate-900/[0.03] text-slate-500 dark:border-border dark:bg-white/[0.03] dark:text-ink-muted">
                       <tr>
                         <th className="px-3.5 py-2.5 font-semibold">Active Formulation</th>
+                        <th className="px-3.5 py-2.5 font-semibold">Regulatory Status</th>
                         <th className="px-3.5 py-2.5 font-semibold">Dilution Rate</th>
                         <th className="px-3.5 py-2.5 font-semibold">Per Acre Rate</th>
                         <th className="px-3.5 py-2.5 font-semibold">Pre-Harvest (PHI)</th>
@@ -273,15 +340,50 @@ export default function TreatmentPlanTabs({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border-light dark:divide-border">
-                      {guide.chemicalControl.activeIngredients.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-900/[0.01] dark:hover:bg-white/[0.01]">
-                          <td className="px-3.5 py-2.5 font-medium text-slate-800 dark:text-ink-primary">{item.name}</td>
-                          <td className="px-3.5 py-2.5 font-mono text-accent-600 dark:text-accent-400">{item.rate}</td>
-                          <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">{item.perAcre}</td>
-                          <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">{item.phi}</td>
-                          <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">{item.rei}</td>
-                        </tr>
-                      ))}
+                      {guide.chemicalControl.activeIngredients.map((item, idx) => {
+                        const regStatus = getChemicalRegulatoryStatus(item.name, jurisdiction)
+                        return (
+                          <tr
+                            key={idx}
+                            className={`hover:bg-slate-900/[0.01] dark:hover:bg-white/[0.01] ${
+                              regStatus.isRestricted ? 'bg-rose-500/[0.03] dark:bg-rose-500/[0.05]' : ''
+                            }`}
+                          >
+                            <td className="px-3.5 py-2.5 font-medium text-slate-800 dark:text-ink-primary">
+                              {item.name}
+                            </td>
+                            <td className="px-3.5 py-2.5">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  regStatus.badgeClass ||
+                                  (regStatus.isRestricted
+                                    ? 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300')
+                                }`}
+                              >
+                                {regStatus.isRestricted ? (
+                                  <ShieldAlert size={11} className="shrink-0" />
+                                ) : (
+                                  <ShieldCheck size={11} className="shrink-0" />
+                                )}
+                                <span>{regStatus.badge}</span>
+                              </span>
+                            </td>
+                            <td className="px-3.5 py-2.5 font-mono text-accent-600 dark:text-accent-400">
+                              {item.rate}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">
+                              {item.perAcre}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">
+                              {item.phi}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-slate-600 dark:text-ink-secondary">
+                              {item.rei}
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

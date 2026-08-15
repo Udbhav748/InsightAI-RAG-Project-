@@ -13,6 +13,7 @@ import {
   Leaf,
   RefreshCw,
   ScanLine,
+  ShieldAlert,
   Sparkles,
   Sprout,
   UploadCloud,
@@ -46,6 +47,13 @@ export default function Diagnose() {
   } = useDiagnose()
 
   const [showStandaloneCalculator, setShowStandaloneCalculator] = useState(false)
+
+  const isLowConfidenceOrOOD =
+    (result?.diagnosis?.confidence != null && result?.diagnosis?.confidence < 0.45) ||
+    Boolean(result?.diagnosis?.low_confidence) ||
+    Boolean(result?.diagnosis?.is_non_leaf) ||
+    Boolean(result?.diagnosis?.is_uncertain) ||
+    (result?.diagnosis?.disease && /uncertain|non-leaf|non_leaf|unknown|invalid/i.test(result.diagnosis.disease))
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 py-4">
@@ -169,6 +177,24 @@ export default function Diagnose() {
             exit={{ opacity: 0, y: -8 }}
             className="space-y-6"
           >
+            {/* OOD Non-Leaf Gatekeeper Warning Banner */}
+            {isLowConfidenceOrOOD && (
+              <div
+                data-testid="ood-nonleaf-banner"
+                className="flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-950 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200"
+              >
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" />
+                <div className="space-y-1">
+                  <p className="font-bold text-rose-900 dark:text-rose-100">
+                    Low Visual Confidence / Non-Plant Detected. Please ensure the photo is well-lit and clearly shows an infected crop leaf.
+                  </p>
+                  <p className="text-[11px] text-rose-800/80 dark:text-rose-200/80">
+                    The leaf diagnosis confidence is below 45% or the image was flagged as non-plant. For critical field decisions, re-take the photo under natural diffuse lighting.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <DiagnosisResult
               result={result}
               onReset={reset}
@@ -181,5 +207,3 @@ export default function Diagnose() {
     </div>
   )
 }
-
-

@@ -35,6 +35,7 @@ from app.services.embedding_service import embed_query
 if TYPE_CHECKING:
     from app.models.document import RetrievedChunk
     from app.services.faiss_vector_store import FAISSVectorStore
+    from app.services.reranker import CrossEncoderReranker
     from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -265,3 +266,56 @@ def hybrid_search(
     )
 
     return results
+
+
+def hybrid_search_with_rerank(
+    query: str,
+    vector_store: FAISSVectorStore,
+    top_k: int = 5,
+    candidate_pool: int = 20,
+    tenant_id: int | None = None,
+    document_ids: list[str] | None = None,
+    image_vector_store: VectorStore | None = None,
+    rrf_k: int = 60,
+    reranker: CrossEncoderReranker | None = None,
+    **kwargs: Any,
+) -> list[RetrievedChunk]:
+    """Retrieve top candidates using hybrid search (RRF over dense FAISS + sparse BM25)
+    and precision re-rank them using a CrossEncoderReranker.
+
+    1. Uses Reciprocal Rank Fusion (RRF k=60) over dense FAISS + sparse BM25
+       to retrieve the top candidate_pool (default 20) documents.
+    2. Passes the top candidates into CrossEncoderReranker.rerank(query, candidates, top_k=top_k).
+    3. Returns the top top_k precision-ranked chunks.
+    """
+    resolved_candidate_pool = candidate_pool if candidate_pool > 0 else 20
+    resolved_top_k = top_k if top_k > 0 else 5
+
+    candidates = hybrid_search(
+        query=query,
+        vector_store=vector_store,
+        top_k=resolved_candidate_pool,
+        candidate_k=resolved_candidate_pool,
+        tenant_id=tenant_id,
+        document_ids=document_ids,
+        image_vector_store=image_vector_store,
+        rrf_k=rrf_k,
+    )
+
+    if not candidates:
+        return []
+
+    if reranker is None:
+        from app.services.reranker import get_reranker
+
+        active_reranker = get_reranker()
+    else:
+        active_reranker = reranker
+
+    reranked = active_reranker.rerank(
+        query=query,
+        chunks=candidates,
+        top_k=resolved_top_k,
+    )
+
+    return reranked

@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Download, FileDown, MessageCircle, Plus, Printer, UploadCloud } from 'lucide-react'
+import {
+  Download,
+  FileDown,
+  Leaf,
+  MessageCircle,
+  Plus,
+  Printer,
+  Sparkles,
+  Sprout,
+  UploadCloud,
+  X,
+} from 'lucide-react'
 import ChatBubble from '../components/chat/ChatBubble'
 import ChatInput from '../components/chat/ChatInput'
 import EmptyState from '../components/ui/EmptyState'
@@ -11,7 +22,7 @@ import useUpload from '../hooks/useUpload'
 import useToast from '../hooks/useToast'
 import { getDocumentName } from '../services/documentService'
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   'Summarize the key points of my uploaded document.',
   'What are the main findings mentioned?',
   'List any dates or figures referenced in the document.',
@@ -37,13 +48,39 @@ function conversationToMarkdown(messages) {
 }
 
 export default function Chat() {
-  // Opened from the History page with { sessionId } in navigation state
-  // resumes that conversation; otherwise unchanged (localStorage-tracked
-  // session, or a fresh one). A second piece of state, { documentIds },
-  // is set when the user clicks "Chat about this collection" on the
-  // Documents page — scoping every retrieval in this conversation to
-  // just those documents.
   const location = useLocation()
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search])
+
+  const cropParam = searchParams.get('crop') || location.state?.crop
+  const diseaseParam = searchParams.get('disease') || location.state?.disease
+  const severityParam = searchParams.get('severity') || location.state?.severity
+
+  const [dismissedContext, setDismissedContext] = useState(false)
+
+  const hasDiagnosticContext = Boolean((cropParam || diseaseParam) && !dismissedContext)
+
+  const formattedCrop = cropParam
+    ? cropParam.charAt(0).toUpperCase() + cropParam.slice(1)
+    : 'Plant'
+  const formattedDisease = diseaseParam
+    ? diseaseParam
+        .split(' ')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+    : 'Diagnosed Condition'
+  const formattedSeverity = severityParam
+    ? severityParam.charAt(0).toUpperCase() + severityParam.slice(1)
+    : 'Moderate'
+
+  const diagnosticSuggestions = useMemo(() => {
+    if (!hasDiagnosticContext) return DEFAULT_SUGGESTIONS
+    return [
+      `What is the organic spray rotation schedule for this ${formattedDisease}?`,
+      `What are the chemical rate dosages and REI intervals for ${formattedDisease} on ${formattedCrop}?`,
+      `How do I prevent ${formattedDisease} from recurring next season?`,
+    ]
+  }, [hasDiagnosticContext, formattedDisease, formattedCrop])
+
   const { messages, isSending, isLoadingSession, ask, regenerate, clearSession } = useChat(
     location.state?.sessionId,
     location.state?.documentIds
@@ -51,10 +88,6 @@ export default function Chat() {
   const [persona, setPersona] = useState('')
   const bottomRef = useRef(null)
   const containerRef = useRef(null)
-  // Whether the user is (roughly) scrolled to the bottom of the chat — when
-  // true we auto-follow new messages; when they've scrolled up to read prior
-  // turns, the per-chunk append during streaming no longer yanks them back
-  // down (the original [messages, isSending] effect scrolled on every chunk).
   const isAtBottomRef = useRef(true)
 
   const handleScroll = () => {
@@ -102,11 +135,6 @@ export default function Chat() {
     window.print()
   }
 
-  // Drag-and-drop a PDF anywhere on this page to upload it into the same
-  // knowledge base /upload writes to — the vector store is a single
-  // process-wide index (see faiss_vector_store.py), so nothing here scopes
-  // the upload to "this conversation"; it's just a same-effect shortcut for
-  // not leaving the chat you're already in.
   const { file, progress, status: uploadStatus, selectFile, startUpload, reset: resetUpload } = useUpload()
   const { showToast } = useToast()
   const [isDragging, setIsDragging] = useState(false)
@@ -121,9 +149,6 @@ export default function Chat() {
 
   useEffect(() => {
     if (uploadStatus === 'success' || uploadStatus === 'error') {
-      // useUpload's own toast already reported the outcome — this just
-      // clears local state so a second drop isn't blocked by "already
-      // uploading" from the previous one.
       const timeout = setTimeout(resetUpload, 400)
       return () => clearTimeout(timeout)
     }
@@ -139,8 +164,6 @@ export default function Chat() {
   }
 
   const handleDragOver = (event) => {
-    // Required for onDrop to fire at all — browsers reject a drop on any
-    // element that doesn't cancel dragover's default.
     event.preventDefault()
   }
 
@@ -166,11 +189,6 @@ export default function Chat() {
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
 
-  // For keyword highlighting in citation excerpts: each assistant message
-  // is paired with the user question that produced it (the nearest
-  // preceding user message). Precomputed once per messages change rather
-  // than re-walked per rendered bubble, which was O(n^2) over the
-  // conversation.
   const precedingUserQuery = useMemo(() => {
     const map = new Map()
     let lastUserContent = ''
@@ -217,6 +235,59 @@ export default function Chat() {
         </div>
       )}
 
+      {/* Diagnostic Context Active Banner */}
+      {hasDiagnosticContext && (
+        <div
+          data-testid="diagnostic-context-banner"
+          className="mb-2 rounded-xl border border-accent-500/30 bg-accent-500/10 p-3 text-xs text-accent-950 dark:border-accent-500/30 dark:bg-accent-500/15 dark:text-accent-200 print:hidden"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-500/20 text-accent-700 dark:text-accent-300">
+                <Sprout size={13} />
+              </span>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2 font-semibold text-slate-900 dark:text-ink-primary">
+                  <span>
+                    Diagnosed Leaf Context Active: {formattedCrop} - {formattedDisease} ({formattedSeverity})
+                  </span>
+                  <span className="rounded bg-accent-500/20 px-1.5 py-0.2 text-[10px] font-bold text-accent-800 dark:text-accent-300">
+                    Live Memory Bridge
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-ink-secondary">
+                  Your questions are grounded in this specific leaf diagnosis and agronomic pathology data.
+                </p>
+
+                {/* Quick Action Suggestion Pill */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      ask(`What is the organic spray rotation schedule for this ${formattedDisease}?`, persona)
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-full border border-accent-500/40 bg-white/80 px-3 py-1 text-[11px] font-medium text-accent-800 transition-colors hover:bg-white dark:border-accent-500/30 dark:bg-card dark:text-accent-300 dark:hover:bg-white/10"
+                  >
+                    <Sparkles size={11} className="text-accent-500" />
+                    <span>What is the organic spray rotation schedule for this {formattedDisease}?</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setDismissedContext(true)}
+              className="rounded p-1 text-slate-400 hover:bg-slate-200/50 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-ink-primary"
+              title="Dismiss diagnostic context"
+              aria-label="Dismiss diagnostic context banner"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div ref={containerRef} onScroll={handleScroll} className="flex-1 space-y-5 overflow-y-auto px-1 py-4 sm:px-3 print:hidden">
         {isLoadingSession ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400 dark:text-ink-muted">
@@ -225,16 +296,24 @@ export default function Chat() {
           </div>
         ) : messages.length === 0 ? (
           <EmptyState
-            icon={MessageCircle}
-            title="Ask anything about your documents"
-            description="Upload a PDF, then ask questions here. Answers are grounded in the content you've uploaded."
+            icon={hasDiagnosticContext ? Sprout : MessageCircle}
+            title={
+              hasDiagnosticContext
+                ? `Ask about your ${formattedCrop} ${formattedDisease}`
+                : 'Ask anything about your documents'
+            }
+            description={
+              hasDiagnosticContext
+                ? `InsightAI has loaded the active diagnostic context for ${formattedCrop} (${formattedDisease}). Ask about organic treatments, chemical rates, or prevention schedules.`
+                : "Upload a PDF, then ask questions here. Answers are grounded in the content you've uploaded."
+            }
             action={
               <div className="flex flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((suggestion) => (
+                {diagnosticSuggestions.map((suggestion) => (
                   <button
                     key={suggestion}
                     type="button"
-                    onClick={() => ask(suggestion)}
+                    onClick={() => ask(suggestion, persona)}
                     className="rounded-full border border-border-light bg-white/60 px-3.5 py-1.5 text-xs text-slate-600 transition-colors hover:bg-white dark:border-border dark:bg-white/[0.03] dark:text-ink-secondary dark:hover:bg-white/[0.06]"
                   >
                     {suggestion}

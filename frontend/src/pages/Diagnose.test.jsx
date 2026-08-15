@@ -131,7 +131,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     })
   })
 
-  it('submits leaf photo, displays analyzing state, and renders prediction hero card', async () => {
+  it('submits leaf photo, displays analyzing state, and renders prediction hero card with memory bridge', async () => {
     render(<Diagnose />)
 
     const file = new File(['fake-leaf-bytes'], 'tomato_leaf.png', { type: 'image/png' })
@@ -171,15 +171,74 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     expect(screen.getByText('Tomato___Early_blight')).toBeInTheDocument()
 
     // Action buttons
-    expect(screen.getByRole('button', { name: /Consult in AI Chat/i })).toBeInTheDocument()
+    const chatBtn = screen.getByTestId('continue-in-chat-button')
+    expect(chatBtn).toBeInTheDocument()
+    expect(screen.getByTestId('download-prescription-button')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Diagnose Another Leaf/i })).toBeInTheDocument()
 
-    // Test navigating to chat with sessionId
-    const chatBtn = screen.getByRole('button', { name: /Consult in AI Chat/i })
+    // Test navigating to chat with URL search parameters and state memory bridge
     fireEvent.click(chatBtn)
-    expect(mockNavigate).toHaveBeenCalledWith('/chat', {
-      state: { sessionId: 'session-agri-test-123' },
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/chat?crop=tomato&disease=early+blight&severity=Severe',
+      expect.objectContaining({
+        state: expect.objectContaining({
+          sessionId: 'session-agri-test-123',
+          crop: 'tomato',
+          disease: 'early blight',
+        }),
+      })
+    )
+  })
+
+  it('displays OOD Non-Leaf Gatekeeper warning banner when confidence is low or flagged uncertain', async () => {
+    const oodResult = {
+      ...mockDiagnosisResult,
+      diagnosis: {
+        raw_class: 'background_non_leaf',
+        crop: 'non-leaf',
+        disease: 'uncertain condition',
+        confidence: 0.34,
+        low_confidence: true,
+        is_non_leaf: true,
+      },
+    }
+
+    diagnoseService.diagnoseImageStream.mockImplementationOnce(async (file, query, onEvent) => {
+      onEvent?.({
+        type: 'diagnosis',
+        diagnosis: oodResult.diagnosis,
+      })
+      onEvent?.({
+        type: 'answer_chunk',
+        text: oodResult.answer,
+      })
+      onEvent?.({
+        type: 'done',
+        payload: oodResult,
+      })
     })
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-random-object-bytes'], 'random_desk_photo.jpg', { type: 'image/jpeg' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(/Low Visual Confidence \/ Non-Plant Detected/i).length
+      ).toBeGreaterThan(0)
+    })
+
+    expect(
+      screen.getAllByText(/Please ensure the photo is well-lit and clearly shows an infected crop leaf/i).length
+    ).toBeGreaterThan(0)
   })
 
   it('progressively streams diagnosis: immediately displays hero card on diagnosis event, streams tokens, and finalizes on done', async () => {
@@ -272,6 +331,122 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
 
     await waitFor(() => {
       expect(screen.queryByText(/Streaming response\.\.\./i)).not.toBeInTheDocument()
+    })
+  })
+
+  it('filters active chemical ingredients dynamically based on regional regulatory jurisdiction (EFSA & OMRI)', async () => {
+    diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('early blight')).toBeInTheDocument()
+    })
+
+    // Navigate to Tab 3: Chemical Control & Dosages
+    const tabChemical = screen.getByRole('tab', { name: /Chemical Control & Dosages/i })
+    fireEvent.click(tabChemical)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('regulatory-jurisdiction-select')).toBeInTheDocument()
+    })
+
+    const jurisdictionSelect = screen.getByTestId('regulatory-jurisdiction-select')
+
+    // 1. Select European Union (EFSA)
+    fireEvent.change(jurisdictionSelect, { target: { value: 'EFSA' } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Non-Renewed in EU \/ Restricted/i)).toBeInTheDocument()
+      expect(screen.getByText(/Phase-out in EU/i)).toBeInTheDocument()
+    })
+
+    // Approved synthetic like Azoxystrobin is compliant under EFSA
+    expect(screen.getAllByText(/EFSA Compliant/i).length).toBeGreaterThan(0)
+
+    // 2. Select Global Organic (OMRI Only)
+    fireEvent.change(jurisdictionSelect, { target: { value: 'OMRI' } })
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Prohibited \(OMRI Organic\)/i).length).toBeGreaterThan(0)
+      expect(screen.getByText(/Global Organic \(OMRI Only\) Active/i)).toBeInTheDocument()
+    })
+  })
+
+  it('opens and formats downloadable/printable spray prescription work order with PPE, REI/PHI, and Agronomist verification', async () => {
+    diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('download-prescription-button')).toBeInTheDocument()
+    })
+
+    // Click Download Spray Prescription Work Order button
+    const prescriptionBtn = screen.getByTestId('download-prescription-button')
+    fireEvent.click(prescriptionBtn)
+
+    // Modal should be open
+    await waitFor(() => {
+      expect(screen.getByTestId('prescription-work-order-document')).toBeInTheDocument()
+    })
+
+    // Verify key prescription sections:
+    // 1. Patient / Crop
+    expect(screen.getAllByText(/tomato/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/early blight/i).length).toBeGreaterThan(0)
+
+    // 2. Dosage Calculations
+    expect(screen.getByText('Total Spray Volume')).toBeInTheDocument()
+    expect(screen.getByText('Total Chemical Concentrate')).toBeInTheDocument()
+
+    // 3. Safety PPE Checklist
+    expect(screen.getByText(/Chemical-resistant nitrile \/ neoprene gloves/i)).toBeInTheDocument()
+    expect(screen.getByText(/N95 \/ organic vapor particle respirator mask/i)).toBeInTheDocument()
+    expect(screen.getByText(/Protective chemical splash goggles/i)).toBeInTheDocument()
+
+    // 4. REI & PHI Compliance Warnings
+    expect(screen.getByText(/Restricted Entry Interval \(REI\): 12 - 24 Hours/i)).toBeInTheDocument()
+    expect(screen.getByText(/Pre-Harvest Interval \(PHI\): 0 - 5 Days/i)).toBeInTheDocument()
+
+    // 5. Official Agronomist Verification Signature Section
+    expect(screen.getByText(/Certified Agronomist:/i)).toBeInTheDocument()
+    expect(screen.getByText(/Dr\. J\. Henderson, Ph\.D\., CCA/i)).toBeInTheDocument()
+    expect(screen.getByText(/Agronomist Signature:/i)).toBeInTheDocument()
+
+    // Test Download action
+    const downloadBtn = screen.getByRole('button', { name: /Download \(\.txt\)/i })
+    expect(downloadBtn).toBeInTheDocument()
+    fireEvent.click(downloadBtn)
+
+    expect(globalThis.URL.createObjectURL).toHaveBeenCalled()
+
+    // Test Close Modal
+    const closeBtn = screen.getByLabelText(/Close prescription modal/i)
+    fireEvent.click(closeBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('prescription-work-order-document')).not.toBeInTheDocument()
     })
   })
 

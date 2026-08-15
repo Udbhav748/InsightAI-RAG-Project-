@@ -12,6 +12,7 @@ from app.services.hybrid_search import (
     BM25Okapi,
     _min_max_normalize,
     hybrid_search,
+    hybrid_search_with_rerank,
     reciprocal_rank_fusion,
 )
 
@@ -183,3 +184,33 @@ class TestHybridSearch:
 
         assert [chunk.chunk_id for chunk in results] == ["high", "low"]
         assert results[0].score > results[1].score
+
+
+class TestHybridSearchWithRerank:
+    def test_reranks_and_narrows_candidate_pool_to_top_k(self, monkeypatch):
+        monkeypatch.setattr("app.services.hybrid_search.embed_query", lambda query: [0.1, 0.2])
+
+        store = FakeVectorStore(
+            semantic_results=[
+                make_chunk("c1", text="Potato late blight phytophthora infestans treatment", score=0.9),
+                make_chunk("c2", text="Irrigation management in arid regions", score=0.8),
+                make_chunk("c3", text="Potato storage conditions and temperature", score=0.7),
+            ],
+            bm25_results=[
+                make_chunk("c1", text="Potato late blight phytophthora infestans treatment", score=8.0),
+                make_chunk("c4", text="Soil organic matter enhancement", score=4.0),
+            ],
+        )
+
+        results = hybrid_search_with_rerank(
+            query="late blight potato",
+            vector_store=store,
+            top_k=2,
+            candidate_pool=5,
+        )
+
+        assert len(results) == 2
+        assert results[0].chunk_id == "c1"
+        assert "rerank_score" in results[0].metadata
+        assert results[0].metadata["rerank_score"] > 0.5
+
