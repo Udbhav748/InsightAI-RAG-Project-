@@ -75,7 +75,18 @@ A chat message doesn't go straight to the LLM — it goes through a small hand-r
 
 ## Features
 
+- **Visual Explainability Heatmap & Lesion Saliency** — Computer vision color segmentation in HSV and LAB spaces isolates foliar tissue, segments necrotic lesion centers and chlorotic halo margins, computes infected area percentage and lesion counts, and renders an interactive alpha-blended overlay with opacity controls.
+- **Multilingual Agronomic Localization & Vernacular Voice I/O** — Complete UI and prompt localization across 6 global agricultural languages (English, Spanish, Hindi, Portuguese, French, Swahili), integrated with hands-free browser Speech-to-Text (STT) and 24-48h emergency field protocol Text-to-Speech (TTS) audio narration.
+- **Multi-Agent StateGraph Execution Visualizer** — Live execution topology visualization for `POST /chat/agent-graph/stream` displaying active node transitions (`planner`, `document_analyst`, `fact_checker`, `synthesizer`), latency metrics (ms), and intermediate state drawer inspection.
+- **Open-Meteo Microclimate Engine & Pathogen Risk** — Real-time microclimate forecasting integrated with epidemiology models (e.g. Smith Periods for Late Blight, powdery mildew humidity windows, and wind drift spray advisories) via `GET /weather/risk`.
+- **Official Agronomic Prescription PDF Work Order** — Formatted chemical and biological spray work orders with calculated tank mix dosages, Worker Protection Standard (WPS) PPE checklist, REI/PHI safety intervals, and Agronomist verification seals.
+- **GPS Field Scouting Log & Outbreak History** — Local field scouting record with pathogen timeline distributions, outbreak severity filters, and CSV/JSON export.
+- **PWA Offline Field Resilience** — Full offline service worker caching for field workers and rural farm connectivity transitions with active offline status banners.
+- **Thread-Safe Semantic Query Cache** — In-memory LRU cache with embedding cosine similarity matching for sub-50ms instant repeated query responses.
+- **Quantitative RAG Evaluation Harness** — Standalone evaluation CLI benchmarking Faithfulness, Context Recall, Context Precision, and Answer Relevance over 20 golden plant pathology Q&A pairs.
+- **Prometheus Observability** — Standard Prometheus metrics exporter (`GET /metrics`) tracking request counts, latencies, retrieval chunk distributions, rerank scores, and vision inferences.
 - **Drag-and-drop PDF ingestion** — validated for type and size, chunked with configurable overlap, embedded, and indexed in one request. Pages with no extractable text layer (scanned/image-only PDFs) fall back to OCR (`document_service.py`, pytesseract/tesseract) automatically — no separate upload path or user action needed.
+- **Layout-Aware Tabular Parser** — Preserves row-column semantic associations across multi-column structured tables and CSV chemical dosage matrices.
 - **Grounded chat** — every answer is generated only from retrieved chunks, with the source document and matched excerpts shown alongside the response.
 - **Streamed, visible agent progress** — `POST /chat/stream` (Server-Sent Events) fans out each pipeline stage (planning, retrieval, grading, web search, generating, reflecting) as it happens, plus the answer token-by-token, instead of one response at the end. The chat UI renders this as a live "agent trace" strip above the forming answer, collapsing into an expandable summary once done.
 - **Plant disease diagnosis from a photo** — `POST /chat/diagnose` classifies an uploaded leaf image via [LeafSense](#running-with-leafsense-image-diagnosis) (a separate vision service) and runs the predicted disease through the same grounded retrieval pipeline as a text question.
