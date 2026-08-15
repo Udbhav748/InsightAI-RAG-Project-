@@ -20,15 +20,15 @@ describe('Architecture Page - System Architecture & Production AI Design Review'
     // Architecture topology diagram is present by default
     expect(screen.getByText('Interactive System Architecture Topology')).toBeInTheDocument()
     expect(screen.getByText('Frontend Client & Native Mobile PWA')).toBeInTheDocument()
-    expect(screen.getByText('FastAPI Async Gateway & Multi-Tenant Security Hub')).toBeInTheDocument()
-    expect(screen.getByText('Reciprocal Rank Fusion (RRF k=60)')).toBeInTheDocument()
+    expect(screen.getByText('FastAPI Async Gateway & Security Core')).toBeInTheDocument()
+    expect(screen.getByText('Hybrid Fusion (RRF)')).toBeInTheDocument()
   })
 
   it('allows clicking different architecture nodes to inspect technical specifications', () => {
     render(<Architecture />)
 
     // Click LeafSense Vision node
-    const visionNode = screen.getByText('LeafSense (Port 8001)')
+    const visionNode = screen.getByText('LeafSense Vision')
     fireEvent.click(visionNode)
 
     expect(screen.getAllByText('LeafSense Deep Vision Microservice').length).toBeGreaterThanOrEqual(1)

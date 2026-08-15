@@ -612,73 +612,73 @@ export default function Architecture() {
             </div>
 
             {/* Architecture Grid Topology Diagram */}
-            <div className="space-y-4">
+            <div className="space-y-3.5">
               {/* Tier 1: Client Layer */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
                   Tier 1: Client & Presentation
                 </span>
                 <div
                   onClick={() => setSelectedNodeId('frontend')}
-                  className={`group relative cursor-pointer rounded-xl border p-4 transition-all ${
+                  className={`group relative cursor-pointer rounded-xl border p-3.5 transition-all ${
                     selectedNodeId === 'frontend'
-                      ? 'border-emerald-500 bg-emerald-500/10 shadow-md dark:border-emerald-400 dark:bg-emerald-500/15'
-                      : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                      ? 'border-emerald-500 bg-emerald-500/10 shadow-md ring-1 ring-emerald-500/30'
+                      : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                         <Smartphone size={18} />
                       </span>
                       <div>
-                        <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
+                        <p className="font-display text-sm font-bold text-slate-900 dark:text-ink-primary">
                           Frontend Client & Native Mobile PWA
                         </p>
-                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">
-                          React 18 · Vite · HTML5 Camera (<code className="font-mono">capture=&quot;environment&quot;</code>) · SSE EventSource
+                        <p className="text-xs text-slate-500 dark:text-ink-muted">
+                          React 18 · Vite · HTML5 Camera · SSE EventSource
                         </p>
                       </div>
                     </div>
-                    <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-                      Port 5173 / Mobile Web
+                    <span className="rounded-md bg-emerald-500/15 px-2.5 py-1 font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                      Port 5173
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className="flex justify-center">
-                <ArrowDown size={16} className="text-slate-400" />
+                <ArrowDown size={14} className="text-slate-400" />
               </div>
 
               {/* Tier 2: API Gateway */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
                   Tier 2: API Gateway & Security Hub
                 </span>
                 <div
                   onClick={() => setSelectedNodeId('gateway')}
-                  className={`group relative cursor-pointer rounded-xl border p-4 transition-all ${
+                  className={`group relative cursor-pointer rounded-xl border p-3.5 transition-all ${
                     selectedNodeId === 'gateway'
-                      ? 'border-accent-500 bg-accent-500/10 shadow-md dark:border-accent-400 dark:bg-accent-500/15'
-                      : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                      ? 'border-accent-500 bg-accent-500/10 shadow-md ring-1 ring-accent-500/30'
+                      : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-500/20 text-accent-600 dark:text-accent-400">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500/15 text-accent-600 dark:text-accent-400">
                         <Server size={18} />
                       </span>
                       <div>
-                        <p className="font-display text-sm font-semibold text-slate-900 dark:text-ink-primary">
-                          FastAPI Async Gateway & Multi-Tenant Security Hub
+                        <p className="font-display text-sm font-bold text-slate-900 dark:text-ink-primary">
+                          FastAPI Async Gateway & Security Core
                         </p>
-                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">
-                          JWT Auth · Tenant Vector Partitioning · Async Ingestion Queue · SSE Stream Router
+                        <p className="text-xs text-slate-500 dark:text-ink-muted">
+                          JWT Auth · Multi-Tenant Partitions · Async Ingestion Queue
                         </p>
                       </div>
                     </div>
-                    <span className="rounded-md bg-accent-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent-700 dark:text-accent-300">
+                    <span className="rounded-md bg-accent-500/15 px-2.5 py-1 font-mono text-xs font-semibold text-accent-700 dark:text-accent-300">
                       Port 8000
                     </span>
                   </div>
@@ -686,11 +686,11 @@ export default function Architecture() {
               </div>
 
               <div className="flex justify-center">
-                <ArrowDown size={16} className="text-slate-400" />
+                <ArrowDown size={14} className="text-slate-400" />
               </div>
 
               {/* Tier 3: Agentic Intelligence & Caching Layer */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
                   Tier 3: Agentic Intelligence & Semantic Caching
                 </span>
@@ -699,118 +699,141 @@ export default function Architecture() {
                     onClick={() => setSelectedNodeId('router')}
                     className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
                       selectedNodeId === 'router'
-                        ? 'border-accent-500 bg-accent-500/10 shadow-md dark:border-accent-400 dark:bg-accent-500/15'
-                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                        ? 'border-accent-500 bg-accent-500/10 shadow-md ring-1 ring-accent-500/30'
+                        : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <Workflow size={16} className="text-accent-500" />
-                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
-                        Router & StateGraph Agent
-                      </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-500/15 text-accent-600 dark:text-accent-400">
+                          <Workflow size={16} />
+                        </span>
+                        <div>
+                          <p className="font-display text-xs font-bold text-slate-900 dark:text-ink-primary">
+                            Router & StateGraph Agent
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-ink-muted">Intent Classifier & Self-RAG</p>
+                        </div>
+                      </div>
+                      <span className="rounded bg-accent-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent-700 dark:text-accent-300">
+                        Agentic
+                      </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-                      Intent Classifier · Crop Extraction · Multi-Agent Cycles · Reflection Loop
-                    </p>
                   </div>
 
                   <div
                     onClick={() => setSelectedNodeId('cache')}
                     className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
                       selectedNodeId === 'cache'
-                        ? 'border-amber-500 bg-amber-500/10 shadow-md dark:border-amber-400 dark:bg-amber-500/15'
-                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                        ? 'border-amber-500 bg-amber-500/10 shadow-md ring-1 ring-amber-500/30'
+                        : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <Zap size={16} className="text-amber-500" />
-                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
-                        Adaptive Redis / In-Memory Cache
-                      </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                          <Zap size={16} />
+                        </span>
+                        <div>
+                          <p className="font-display text-xs font-bold text-slate-900 dark:text-ink-primary">
+                            Adaptive Semantic Cache
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-ink-muted">Redis (:6379) / In-Memory TTL</p>
+                        </div>
+                      </div>
+                      <span className="rounded bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                        &lt; 2ms
+                      </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-                      Redis Cluster (Port 6379) · In-Memory Fallback · Tenant Hash Keys · Monotonic TTL
-                    </p>
                   </div>
                 </div>
               </div>
 
               <div className="flex justify-center">
-                <ArrowDown size={16} className="text-slate-400" />
+                <ArrowDown size={14} className="text-slate-400" />
               </div>
 
               {/* Tier 4 & 5: Retrieval and Vision/LLM Engines */}
-              <div className="grid gap-4 lg:grid-cols-2">
-                {/* Tier 4: Retrieval */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
-                    Tier 4: Hybrid RRF Retrieval
-                  </span>
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
+                  Tier 4 & 5: Retrieval, Deep Vision & LLM Engines
+                </span>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {/* Tier 4: Retrieval */}
                   <div
                     onClick={() => setSelectedNodeId('retrieval')}
-                    className={`cursor-pointer rounded-xl border p-4 transition-all h-full ${
+                    className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
                       selectedNodeId === 'retrieval'
-                        ? 'border-emerald-500 bg-emerald-500/10 shadow-md dark:border-emerald-400 dark:bg-emerald-500/15'
-                        : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                        ? 'border-emerald-500 bg-emerald-500/10 shadow-md ring-1 ring-emerald-500/30'
+                        : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <Database size={16} className="text-emerald-500" />
-                      <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
-                        Reciprocal Rank Fusion (RRF k=60)
-                      </p>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                        <Database size={16} />
+                      </span>
+                      <div>
+                        <p className="font-display text-xs font-bold text-slate-900 dark:text-ink-primary">
+                          Hybrid Fusion (RRF)
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">FAISS / Pgvector + BM25</p>
+                      </div>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500 dark:text-ink-muted">
-                      Dense Vectors (all-MiniLM-L6-v2 in FAISS/Pgvector) + Lexical BM25Okapi Inverted Index
-                    </p>
-                    <div className="mt-2 rounded bg-slate-100 p-1.5 font-mono text-[10px] text-slate-700 dark:bg-white/5 dark:text-ink-secondary">
-                      RRF Score = Dense / (60 + Rank) + BM25 / (60 + Rank)
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border-light pt-2 dark:border-border">
+                      <span className="text-[10px] text-slate-400">Dense + Lexical</span>
+                      <span className="font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">k=60</span>
                     </div>
                   </div>
-                </div>
 
-                {/* Tier 5: Inference Engines */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-ink-muted">
-                    Tier 5: Deep Vision & LLM Inference
-                  </span>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div
-                      onClick={() => setSelectedNodeId('vision')}
-                      className={`cursor-pointer rounded-xl border p-3 transition-all ${
-                        selectedNodeId === 'vision'
-                          ? 'border-rose-500 bg-rose-500/10 shadow-md dark:border-rose-400 dark:bg-rose-500/15'
-                          : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <Camera size={14} className="text-rose-500" />
-                        <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
-                          LeafSense (Port 8001)
+                  {/* Tier 5a: LeafSense Vision */}
+                  <div
+                    onClick={() => setSelectedNodeId('vision')}
+                    className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+                      selectedNodeId === 'vision'
+                        ? 'border-rose-500 bg-rose-500/10 shadow-md ring-1 ring-rose-500/30'
+                        : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                        <Camera size={16} />
+                      </span>
+                      <div>
+                        <p className="font-display text-xs font-bold text-slate-900 dark:text-ink-primary">
+                          LeafSense Vision
                         </p>
+                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">CBAM + ViT (38 Classes)</p>
                       </div>
-                      <p className="mt-1 text-[10px] text-slate-500 dark:text-ink-muted">
-                        CBAM + ViT (38 Classes) + Gemini Multimodal Arbiter
-                      </p>
                     </div>
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border-light pt-2 dark:border-border">
+                      <span className="text-[10px] text-slate-400">Port 8001 / Gemini</span>
+                      <span className="font-mono text-[10px] font-semibold text-rose-700 dark:text-rose-300">98.2% Acc</span>
+                    </div>
+                  </div>
 
-                    <div
-                      onClick={() => setSelectedNodeId('llm')}
-                      className={`cursor-pointer rounded-xl border p-3 transition-all ${
-                        selectedNodeId === 'llm'
-                          ? 'border-amber-500 bg-amber-500/10 shadow-md dark:border-amber-400 dark:bg-amber-500/15'
-                          : 'border-border-light bg-slate-50/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <Sparkles size={14} className="text-amber-500" />
-                        <p className="font-display text-xs font-semibold text-slate-900 dark:text-ink-primary">
+                  {/* Tier 5b: LLM Foundation */}
+                  <div
+                    onClick={() => setSelectedNodeId('llm')}
+                    className={`cursor-pointer rounded-xl border p-3.5 transition-all ${
+                      selectedNodeId === 'llm'
+                        ? 'border-amber-500 bg-amber-500/10 shadow-md ring-1 ring-amber-500/30'
+                        : 'border-border-light bg-white/70 hover:border-slate-300 dark:border-border dark:bg-white/[0.02] dark:hover:border-white/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                        <Sparkles size={16} />
+                      </span>
+                      <div>
+                        <p className="font-display text-xs font-bold text-slate-900 dark:text-ink-primary">
                           LLM Foundation Engine
                         </p>
+                        <p className="text-[11px] text-slate-500 dark:text-ink-muted">Groq LLaMA 3.3 / Gemini</p>
                       </div>
-                      <p className="mt-1 text-[10px] text-slate-500 dark:text-ink-muted">
-                        Groq LLaMA 3.3 70B / Gemini Pro + Safety Reflection
-                      </p>
+                    </div>
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border-light pt-2 dark:border-border">
+                      <span className="text-[10px] text-slate-400">Streaming SSE</span>
+                      <span className="font-mono text-[10px] font-semibold text-amber-700 dark:text-amber-300">Self-RAG</span>
                     </div>
                   </div>
                 </div>
