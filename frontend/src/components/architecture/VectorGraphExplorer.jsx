@@ -18,6 +18,8 @@ import {
   Play,
   Pause,
   RotateCcw,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import Card from '../ui/Card'
 import Button from '../ui/Button'
@@ -507,12 +509,12 @@ const SAMPLE_QUERIES = [
 ]
 
 const CATEGORY_META = {
-  fungal: { label: 'Fungal Pathogens', color: 'rose', stroke: '#f43f5e', fill: '#f43f5e25', badge: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30' },
-  bacterial: { label: 'Bacterial Diseases', color: 'amber', stroke: '#f59e0b', fill: '#f59e0b25', badge: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' },
-  viral: { label: 'Viral Pathogens', color: 'indigo', stroke: '#6366f1', fill: '#6366f125', badge: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30' },
-  chemical: { label: 'Chemical Controls', color: 'sky', stroke: '#0284c7', fill: '#0284c725', badge: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30' },
-  organic: { label: 'Organic IPM', color: 'emerald', stroke: '#10b981', fill: '#10b98125', badge: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' },
-  healthy: { label: 'Healthy Baselines', color: 'teal', stroke: '#14b8a6', fill: '#14b8a625', badge: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/30' },
+  fungal: { label: 'Fungal Pathogens', color: 'rose', stroke: '#f43f5e', fill: 'rgba(244, 63, 94, 0.18)', badge: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30' },
+  bacterial: { label: 'Bacterial Diseases', color: 'amber', stroke: '#f59e0b', fill: 'rgba(245, 158, 11, 0.18)', badge: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' },
+  viral: { label: 'Viral Pathogens', color: 'indigo', stroke: '#6366f1', fill: 'rgba(99, 102, 241, 0.18)', badge: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30' },
+  chemical: { label: 'Chemical Controls', color: 'sky', stroke: '#0284c7', fill: 'rgba(2, 132, 199, 0.18)', badge: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30' },
+  organic: { label: 'Organic IPM', color: 'emerald', stroke: '#10b981', fill: 'rgba(16, 185, 129, 0.18)', badge: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' },
+  healthy: { label: 'Healthy Baselines', color: 'teal', stroke: '#14b8a6', fill: 'rgba(20, 184, 166, 0.18)', badge: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/30' },
 }
 
 export default function VectorGraphExplorer() {
@@ -526,11 +528,12 @@ export default function VectorGraphExplorer() {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
 
+  const canvasContainerRef = useRef(null)
   const isDraggingCanvas = useRef(false)
   const isDraggingNode = useRef(null)
-  const dragStart = useRef({ x: 0, y: 0 })
-  const svgRef = useRef(null)
+  const dragStartPos = useRef({ x: 0, y: 0 })
   const animFrameId = useRef(null)
+  const pulsePhase = useRef(0)
 
   const activeQuery = SAMPLE_QUERIES[activeQueryIndex]
   const selectedNode = useMemo(() => {
@@ -565,7 +568,7 @@ export default function VectorGraphExplorer() {
     return VECTOR_EDGES.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
   }, [visibleNodes])
 
-  // Reset positions to original cluster baselines
+  // Reset positions and viewport
   const resetPositions = () => {
     setNodes(INITIAL_NODES)
     setPan({ x: 0, y: 0 })
@@ -576,10 +579,10 @@ export default function VectorGraphExplorer() {
   const updatePhysics = useCallback(() => {
     setNodes((prevNodes) => {
       const next = prevNodes.map((n) => ({ ...n }))
-      const damping = 0.85
-      const repulsion = 1800
-      const springLength = 100
-      const springStrength = 0.03
+      const damping = 0.86
+      const repulsion = 1900
+      const springLength = 105
+      const springStrength = 0.025
 
       // Repulsion between all nodes
       for (let i = 0; i < next.length; i++) {
@@ -633,9 +636,9 @@ export default function VectorGraphExplorer() {
         let nx = n.x + n.vx
         let ny = n.y + n.vy
 
-        // Keep inside canvas bounds (padding 40px)
-        nx = Math.max(60, Math.min(760, nx))
-        ny = Math.max(60, Math.min(460, ny))
+        // Keep inside canvas bounds
+        nx = Math.max(50, Math.min(770, nx))
+        ny = Math.max(50, Math.min(460, ny))
 
         return {
           ...n,
@@ -657,6 +660,7 @@ export default function VectorGraphExplorer() {
 
     const loop = () => {
       updatePhysics()
+      pulsePhase.current = (pulsePhase.current + 0.05) % (Math.PI * 2)
       animFrameId.current = requestAnimationFrame(loop)
     }
     animFrameId.current = requestAnimationFrame(loop)
@@ -666,35 +670,73 @@ export default function VectorGraphExplorer() {
     }
   }, [isPhysicsActive, updatePhysics])
 
-  // Mouse & Touch Drag Event Handlers for Canvas and Nodes
-  const handleNodeMouseDown = (e, nodeId) => {
+  // NON-PASSIVE wheel event listener to TRAP mouse wheel zoom inside the canvas container
+  // This guarantees the parent browser page and window NEVER zoom!
+  useEffect(() => {
+    const container = canvasContainerRef.current
+    if (!container) return
+
+    const handleWheel = (e) => {
+      // PREVENT BROWSER WINDOW ZOOM
+      e.preventDefault()
+      e.stopPropagation()
+
+      const rect = container.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      // Smooth zoom centered directly on cursor
+      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89
+      setZoom((prevZoom) => {
+        const nextZoom = Math.max(0.5, Math.min(3.0, prevZoom * zoomFactor))
+        // Adjust pan so the point under cursor remains fixed
+        setPan((prevPan) => {
+          const worldX = (mouseX - prevPan.x) / prevZoom
+          const worldY = (mouseY - prevPan.y) / prevZoom
+          return {
+            x: mouseX - worldX * nextZoom,
+            y: mouseY - worldY * nextZoom,
+          }
+        })
+        return nextZoom
+      })
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
+    }
+  }, [])
+
+  // Mouse & Touch Dragging Handlers
+  const handleNodePointerDown = (e, nodeId) => {
     e.stopPropagation()
     isDraggingNode.current = nodeId
     setSelectedNodeId(nodeId)
     const clientX = e.clientX || e.touches?.[0]?.clientX
     const clientY = e.clientY || e.touches?.[0]?.clientY
-    dragStart.current = { x: clientX, y: clientY }
+    dragStartPos.current = { x: clientX, y: clientY }
   }
 
-  const handleCanvasMouseDown = (e) => {
+  const handleCanvasPointerDown = (e) => {
     if (e.button !== 0 && !e.touches) return
     isDraggingCanvas.current = true
     const clientX = e.clientX || e.touches?.[0]?.clientX
     const clientY = e.clientY || e.touches?.[0]?.clientY
-    dragStart.current = { x: clientX - pan.x, y: clientY - pan.y }
+    dragStartPos.current = { x: clientX - pan.x, y: clientY - pan.y }
   }
 
-  const handleMouseMove = (e) => {
+  const handlePointerMove = (e) => {
     const clientX = e.clientX || e.touches?.[0]?.clientX
     const clientY = e.clientY || e.touches?.[0]?.clientY
     if (!clientX || !clientY) return
 
     // Dragging a specific Node
     if (isDraggingNode.current) {
-      const svg = svgRef.current
-      if (!svg) return
-      const rect = svg.getBoundingClientRect()
-      // Compute SVG viewbox coordinates with pan and zoom
+      const container = canvasContainerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      // Convert client coordinates to virtual 820x500 space
       const svgX = ((clientX - rect.left - pan.x) / (rect.width * zoom)) * 820
       const svgY = ((clientY - rect.top - pan.y) / (rect.height * zoom)) * 500
 
@@ -704,24 +746,26 @@ export default function VectorGraphExplorer() {
       return
     }
 
-    // Panning the Canvas
+    // Panning the Canvas Viewport
     if (isDraggingCanvas.current) {
       setPan({
-        x: clientX - dragStart.current.x,
-        y: clientY - dragStart.current.y,
+        x: clientX - dragStartPos.current.x,
+        y: clientY - dragStartPos.current.y,
       })
     }
   }
 
-  const handleMouseUp = () => {
+  const handlePointerUp = () => {
     isDraggingNode.current = null
     isDraggingCanvas.current = false
   }
 
-  const handleWheel = (e) => {
-    e.preventDefault()
-    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92
-    setZoom((z) => Math.max(0.6, Math.min(2.5, z * zoomFactor)))
+  // Zoom In / Out Buttons
+  const zoomIn = () => {
+    setZoom((z) => Math.min(z * 1.2, 3.0))
+  }
+  const zoomOut = () => {
+    setZoom((z) => Math.max(z / 1.2, 0.5))
   }
 
   return (
@@ -739,7 +783,7 @@ export default function VectorGraphExplorer() {
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-500 dark:text-ink-muted">
-              Interactive 2D manifold projection of 384-dimensional <code className="font-mono text-accent-600 dark:text-accent-400">all-MiniLM-L6-v2</code> dense vectors. <strong>Drag any node</strong> to test elastic physics, pan the canvas, or click a probe query below.
+              Interactive 2D manifold projection of 384-dimensional <code className="font-mono text-accent-600 dark:text-accent-400">all-MiniLM-L6-v2</code> dense vectors. <strong>Drag any node</strong> with your mouse or finger, pan the canvas, or scroll to zoom smoothly.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -808,24 +852,24 @@ export default function VectorGraphExplorer() {
 
       {/* Main Grid: Interactive Vector Canvas + Live Query Probe */}
       <div className="grid gap-6 lg:grid-cols-12">
-        {/* Left 8 Cols: Interactive Vector Manifold Canvas with Real Mouse Drag & Zoom */}
+        {/* Left 8 Cols: Interactive Vector Manifold Canvas with isolated non-passive mouse wheel zoom */}
         <div className="lg:col-span-8 space-y-3">
           <div
-            className="panel relative overflow-hidden rounded-panel border border-border-light bg-slate-950 p-4 dark:border-border cursor-grab active:cursor-grabbing select-none"
-            onMouseDown={handleCanvasMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onTouchStart={handleCanvasMouseDown}
-            onTouchMove={handleMouseMove}
-            onTouchEnd={handleMouseUp}
-            onWheel={handleWheel}
+            ref={canvasContainerRef}
+            className="panel relative h-[500px] w-full overflow-hidden rounded-panel border border-border-light bg-slate-950 p-4 dark:border-border cursor-grab active:cursor-grabbing select-none touch-none"
+            onMouseDown={handleCanvasPointerDown}
+            onMouseMove={handlePointerMove}
+            onMouseUp={handlePointerUp}
+            onTouchStart={handleCanvasPointerDown}
+            onTouchMove={handlePointerMove}
+            onTouchEnd={handlePointerUp}
           >
             {/* Canvas Header Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3 pointer-events-auto">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="font-mono text-xs font-medium text-slate-300">
-                  Interactive Physics Manifold (Drag nodes · Pan · Zoom)
+                  Vector Space Topology (384-d → 2D Projection)
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -839,7 +883,7 @@ export default function VectorGraphExplorer() {
                   }`}
                 >
                   {isPhysicsActive ? <Pause size={13} /> : <Play size={13} />}
-                  {isPhysicsActive ? 'Physics Running' : 'Start Physics'}
+                  {isPhysicsActive ? 'Physics Active' : 'Start Physics'}
                 </button>
                 <button
                   type="button"
@@ -854,43 +898,41 @@ export default function VectorGraphExplorer() {
             </div>
 
             {/* SVG Vector Space Graph with Pan & Zoom Transform */}
-            <div className="relative mt-2 flex justify-center overflow-hidden">
+            <div className="absolute inset-0 top-12 flex items-center justify-center overflow-hidden">
               <svg
-                ref={svgRef}
                 viewBox="0 0 820 500"
-                className="h-[470px] w-full min-w-[700px]"
+                className="h-full w-full select-none"
                 style={{
                   transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transformOrigin: 'center center',
-                  transition: isDraggingCanvas.current || isDraggingNode.current ? 'none' : 'transform 0.15s ease-out',
+                  transformOrigin: '0 0',
                 }}
               >
                 <defs>
                   {/* Radial Background Gradients for Clusters */}
                   <radialGradient id="fungalGlow" cx="25%" cy="30%" r="35%">
-                    <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.15" />
+                    <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.18" />
                     <stop offset="100%" stopColor="#f43f5e" stopOpacity="0" />
                   </radialGradient>
                   <radialGradient id="bacterialGlow" cx="55%" cy="25%" r="30%">
-                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.15" />
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.18" />
                     <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
                   </radialGradient>
                   <radialGradient id="viralGlow" cx="80%" cy="25%" r="30%">
-                    <stop offset="0%" stopColor="#6366f1" stopOpacity="0.15" />
+                    <stop offset="0%" stopColor="#6366f1" stopOpacity="0.18" />
                     <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
                   </radialGradient>
                   <radialGradient id="chemicalGlow" cx="40%" cy="65%" r="35%">
-                    <stop offset="0%" stopColor="#0284c7" stopOpacity="0.15" />
+                    <stop offset="0%" stopColor="#0284c7" stopOpacity="0.18" />
                     <stop offset="100%" stopColor="#0284c7" stopOpacity="0" />
                   </radialGradient>
                   <radialGradient id="healthyGlow" cx="85%" cy="80%" r="30%">
-                    <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.15" />
+                    <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.18" />
                     <stop offset="100%" stopColor="#14b8a6" stopOpacity="0" />
                   </radialGradient>
 
                   {/* Node Glow Filters */}
-                  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-                    <feGaussianBlur stdDeviation="5" result="blur" />
+                  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+                    <feGaussianBlur stdDeviation="6" result="blur" />
                     <feComposite in="SourceGraphic" in2="blur" operator="over" />
                   </filter>
                 </defs>
@@ -931,8 +973,8 @@ export default function VectorGraphExplorer() {
                     hoveredNodeId === edge.source ||
                     hoveredNodeId === edge.target
 
-                  const opacity = isHighlighted ? 0.9 : 0.25
-                  const strokeWidth = isHighlighted ? 2.2 : 1
+                  const opacity = isHighlighted ? 0.95 : 0.25
+                  const strokeWidth = isHighlighted ? 2.5 : 1
                   const strokeColor = isHighlighted ? '#38bdf8' : '#64748b'
 
                   const midX = (sNode.x + tNode.x) / 2
@@ -1000,7 +1042,7 @@ export default function VectorGraphExplorer() {
 
                 {/* Simulated Query Vector Origin Point */}
                 <g transform="translate(410, 250)">
-                  <circle r="14" fill="#f59e0b" fillOpacity="0.2" className="animate-ping" />
+                  <circle r="14" fill="#f59e0b" fillOpacity="0.25" className="animate-ping" />
                   <circle r="8" fill="#f59e0b" stroke="#ffffff" strokeWidth="2" />
                   <text x="0" y="22" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold" fontFamily="monospace">
                     QUERY VECTOR (q)
@@ -1019,15 +1061,15 @@ export default function VectorGraphExplorer() {
                       key={node.id}
                       transform={`translate(${node.x}, ${node.y})`}
                       className="cursor-move"
-                      onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
-                      onTouchStart={(e) => handleNodeMouseDown(e, node.id)}
+                      onMouseDown={(e) => handleNodePointerDown(e, node.id)}
+                      onTouchStart={(e) => handleNodePointerDown(e, node.id)}
                       onMouseEnter={() => setHoveredNodeId(node.id)}
                       onMouseLeave={() => setHoveredNodeId(null)}
                     >
                       {/* Pulse halo if selected or top query match */}
                       {(isSelected || (queryScore && queryScore > 0.85)) && (
                         <circle
-                          r={node.radius + 8}
+                          r={node.radius + 9}
                           fill={meta.stroke}
                           fillOpacity="0.3"
                           className="animate-pulse"
@@ -1089,7 +1131,7 @@ export default function VectorGraphExplorer() {
             </div>
 
             {/* Bottom Floating Canvas Bar */}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs text-slate-400">
+            <div className="absolute inset-x-4 bottom-3 z-10 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2 text-xs text-slate-400 pointer-events-auto bg-slate-950/80 backdrop-blur-sm px-2 rounded-lg">
               <div className="flex flex-wrap items-center gap-3">
                 {Object.entries(CATEGORY_META).map(([catKey, meta]) => (
                   <div key={catKey} className="flex items-center gap-1.5 text-[11px]">
@@ -1099,25 +1141,31 @@ export default function VectorGraphExplorer() {
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-400">Zoom: {Math.round(zoom * 100)}%</span>
+                <span className="text-[11px] text-slate-400 font-mono">Zoom: {Math.round(zoom * 100)}%</span>
                 <button
                   type="button"
-                  onClick={() => setZoom((z) => Math.min(z + 0.15, 2.5))}
-                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
+                  onClick={zoomIn}
+                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20 text-white"
+                  title="Zoom In"
                 >
                   +
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZoom(1)}
-                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
+                  onClick={() => {
+                    setZoom(1)
+                    setPan({ x: 0, y: 0 })
+                  }}
+                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20 text-white"
+                  title="Reset Zoom"
                 >
                   100%
                 </button>
                 <button
                   type="button"
-                  onClick={() => setZoom((z) => Math.max(z - 0.15, 0.6))}
-                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20"
+                  onClick={zoomOut}
+                  className="rounded bg-white/10 px-2 py-0.5 font-mono text-xs hover:bg-white/20 text-white"
+                  title="Zoom Out"
                 >
                   -
                 </button>
