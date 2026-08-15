@@ -603,4 +603,85 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
       expect(screen.getByText(/LeafSense Vision Engine Active/i)).toBeInTheDocument()
     })
   })
+
+  it('provides hands-free speech-to-text dictation button for field context input', async () => {
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    // Microphone button should be rendered next to context input
+    const micButton = screen.getByTestId('speech-to-text-mic-button')
+    expect(micButton).toBeInTheDocument()
+    expect(micButton).toHaveAttribute('aria-label', 'Start hands-free voice dictation')
+
+    // Click microphone to toggle listening
+    fireEvent.click(micButton)
+
+    // Status pill should appear
+    await waitFor(() => {
+      expect(screen.getByText(/Listening\.\.\. Speak clearly/i)).toBeInTheDocument()
+    })
+  })
+
+  it('renders emergency 24h field protocol audio player and triggers speech synthesis voice narration with playback controls', async () => {
+    diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('early blight')).toBeInTheDocument()
+    })
+
+    // Verify 24h Field Protocol audio player is present
+    expect(screen.getByTestId('field-protocol-audio-player')).toBeInTheDocument()
+    expect(screen.getByTestId('audio-soundwave-bars')).toBeInTheDocument()
+
+    const playBtn = screen.getByTestId('voice-play-protocol-button')
+    expect(playBtn).toBeInTheDocument()
+    expect(playBtn).toHaveTextContent(/Listen to 24h Field Protocol/i)
+
+    // Click play button to start speech synthesis
+    fireEvent.click(playBtn)
+
+    expect(window.speechSynthesis.speak).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringMatching(/Emergency 24 to 48-Hour Field Protocol.*tomato.*early blight/i),
+      })
+    )
+
+    // Verify Pause button is rendered and clickable
+    await waitFor(() => {
+      expect(screen.getByTestId('voice-pause-protocol-button')).toBeInTheDocument()
+    })
+
+    const pauseBtn = screen.getByTestId('voice-pause-protocol-button')
+    fireEvent.click(pauseBtn)
+    expect(window.speechSynthesis.pause).toHaveBeenCalled()
+
+    // Resume playback
+    const resumeBtn = screen.getByTestId('voice-play-protocol-button')
+    expect(resumeBtn).toHaveTextContent('Resume')
+    fireEvent.click(resumeBtn)
+    expect(window.speechSynthesis.resume).toHaveBeenCalled()
+
+    // Stop playback
+    const stopBtn = screen.getByTestId('voice-stop-protocol-button')
+    fireEvent.click(stopBtn)
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled()
+  })
 })

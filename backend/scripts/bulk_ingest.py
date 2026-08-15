@@ -34,6 +34,11 @@ from app.core.config import settings
 from app.core.exceptions import AppError, VectorStoreNotFoundError
 from app.core.logging import configure_logging
 from app.models.document import DocumentChunk, EmbeddedChunk
+from app.services.document_parser import (
+    LayoutAwareDocumentParser,
+    parse_csv_content,
+    parse_layout_aware_markdown,
+)
 from app.services.embedding_service import get_embedding_model
 from app.services.faiss_vector_store import (
     DEFAULT_INDEX_PATH,
@@ -136,46 +141,21 @@ def parse_markdown_file(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ) -> list[DocumentChunk]:
-    """Parse Markdown file and split into semantic chunks with rich metadata."""
+    """Parse Markdown file with layout awareness, preserving tabular row structures."""
     content = file_path.read_text(encoding="utf-8", errors="replace").strip()
     if not content:
         return []
 
-    c_size = chunk_size or settings.chunk_size
-    c_overlap = chunk_overlap or settings.chunk_overlap
-
-    try:
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=c_size,
-            chunk_overlap=c_overlap,
-            separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " ", ""],
-        )
-        texts = splitter.split_text(content)
-    except (ImportError, Exception):
-        texts = _fallback_split_text(content, c_size, c_overlap)
-
-    return [
-        DocumentChunk(
-            chunk_id=str(uuid.uuid4()),
-            document_id=document_id,
-            chunk_index=i,
-            text=text_piece,
-            metadata={
-                "document_id": document_id,
-                "chunk_index": i,
-                "total_chunks": len(texts),
-                "source": "markdown",
-                "content_type": "text/markdown",
-                "file_name": file_path.name,
-                "file_path": str(file_path),
-                "collection": collection,
-                "tenant_id": tenant_id,
-            },
-        )
-        for i, text_piece in enumerate(texts)
-    ]
+    return parse_layout_aware_markdown(
+        content=content,
+        document_id=document_id,
+        collection=collection,
+        tenant_id=tenant_id,
+        file_name=file_path.name,
+        file_path=str(file_path),
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
 
 
 def parse_csv_file(
@@ -186,102 +166,21 @@ def parse_csv_file(
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
 ) -> list[DocumentChunk]:
-    """Parse CSV into semantic disease/treatment fact cards and markdown table chunks."""
+    """Parse CSV into layout-aware atomic table row chunks and structured table slices."""
     content = file_path.read_text(encoding="utf-8", errors="replace").strip()
     if not content:
         return []
 
-    chunks: list[DocumentChunk] = []
-    reader = list(csv.DictReader(content.splitlines()))
-
-    if not reader:
-        return []
-
-    headers = [h for h in reader[0].keys() if h is not None]
-
-    # 1. Generate rich natural-language fact card per row for semantic search
-    for i, row in enumerate(reader):
-        row_crop = str(row.get("crop", collection) or collection).strip()
-        row_disease = str(row.get("disease", "") or "").strip()
-
-        # Build natural-language text representation
-        parts = []
-        for col_name, val in row.items():
-            if col_name and val is not None and str(val).strip():
-                label = str(col_name).replace("_", " ").title()
-                parts.append(f"{label}: {str(val).strip()}")
-
-        card_text = " | ".join(parts)
-        title = f"Agricultural Treatment & Dosage Reference: {row_crop.title()} - {row_disease.title()}\n"
-        full_chunk_text = title + card_text
-
-        chunks.append(
-            DocumentChunk(
-                chunk_id=str(uuid.uuid4()),
-                document_id=document_id,
-                chunk_index=len(chunks),
-                text=full_chunk_text,
-                metadata={
-                    "document_id": document_id,
-                    "chunk_index": len(chunks),
-                    "source": "csv",
-                    "content_type": "text/csv-record",
-                    "file_name": file_path.name,
-                    "file_path": str(file_path),
-                    "collection": row_crop.lower().replace(" ", "_") or collection,
-                    "row_index": i,
-                    "crop": row_crop,
-                    "disease": row_disease,
-                    "tenant_id": tenant_id,
-                },
-            )
-        )
-
-    # 2. Also generate grouped Markdown table representations for tabular queries
-    header_line = "| " + " | ".join(headers) + " |"
-    separator_line = "| " + " | ".join(["---"] * len(headers)) + " |"
-
-    # Batch rows into table slices (e.g. 5-10 rows per table chunk)
-    table_slice_size = 8
-    for start_idx in range(0, len(reader), table_slice_size):
-        slice_rows = reader[start_idx : start_idx + table_slice_size]
-        table_lines = [
-            f"# Treatment & Dosage Matrix Table (Records {start_idx + 1}-{start_idx + len(slice_rows)})",
-            header_line,
-            separator_line,
-        ]
-        for row in slice_rows:
-            table_lines.append(
-                "| " + " | ".join(str(row.get(h, "")).strip().replace("|", "/") for h in headers) + " |"
-            )
-        table_text = "\n".join(table_lines)
-
-        chunks.append(
-            DocumentChunk(
-                chunk_id=str(uuid.uuid4()),
-                document_id=document_id,
-                chunk_index=len(chunks),
-                text=table_text,
-                metadata={
-                    "document_id": document_id,
-                    "chunk_index": len(chunks),
-                    "source": "csv",
-                    "content_type": "text/markdown-table",
-                    "file_name": file_path.name,
-                    "file_path": str(file_path),
-                    "collection": collection,
-                    "tenant_id": tenant_id,
-                    "table_slice_start": start_idx,
-                },
-            )
-        )
-
-    # Update total_chunks for consistency
-    total_count = len(chunks)
-    for c in chunks:
-        c.metadata["total_chunks"] = total_count
-
-    return chunks
+    return parse_csv_content(
+        content=content,
+        document_id=document_id,
+        collection=collection,
+        tenant_id=tenant_id,
+        file_name=file_path.name,
+        file_path=str(file_path),
+        table_type="dosage_matrix",
+        include_table_slices=True,
+    )
 
 
 def parse_pdf_file(

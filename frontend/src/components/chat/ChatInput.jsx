@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowUp } from 'lucide-react'
+import { SpeechToTextButton } from '../diagnose/VoiceInteractionBar'
 
 const MAX_HEIGHT = 200
 
@@ -30,6 +31,10 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
     }
   }
 
+  const handleVoiceTranscript = (spokenText) => {
+    setValue((prev) => (prev ? `${prev} ${spokenText}` : spokenText))
+  }
+
   const canSend = value.trim() && !disabled
 
   return (
@@ -46,6 +51,13 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
         placeholder="Ask a question about your documents..."
         className="min-w-0 max-h-[200px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none dark:text-ink-primary dark:placeholder-ink-muted"
       />
+      {/* Speech-to-Text Microphone Button */}
+      <SpeechToTextButton
+        onTranscript={handleVoiceTranscript}
+        disabled={disabled}
+        size="md"
+      />
+
       {/* Fixed (not w-auto) so the closed control can't balloon to its
           widest option's content width — on a narrow mobile viewport that
           was squeezing the textarea enough to wrap its placeholder onto
@@ -76,3 +88,4 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
     </form>
   )
 }
+

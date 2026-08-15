@@ -18,6 +18,7 @@ import {
 import Button from '../ui/Button'
 import { getSeverityInfo } from '../../utils/agronomyData'
 import PrescriptionWorkOrderModal from './PrescriptionWorkOrderModal'
+import { FieldProtocolAudioPlayer } from './VoiceInteractionBar'
 
 function confidenceColor(confidence) {
   if (confidence >= 0.85) return 'text-emerald-600 dark:text-emerald-400'
@@ -199,6 +200,12 @@ export default function PredictionHeroCard({
               </div>
             )}
           </div>
+
+          {/* Emergency 24-48h Field Protocol Voice Narration Player */}
+          <FieldProtocolAudioPlayer
+            diagnosis={diagnosis}
+            title="24h Field Emergency Protocol Audio"
+          />
 
           {/* Fast Action Buttons */}
           <div className="flex flex-wrap items-center gap-3 pt-1">

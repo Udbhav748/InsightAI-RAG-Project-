@@ -244,4 +244,15 @@ describe('Chat Page', () => {
     fireEvent.click(newChatBtn)
     expect(mockClearSession).toHaveBeenCalled()
   })
+
+  it('provides speech-to-text dictation button in ChatInput and enables hands-free voice prompt entry', () => {
+    render(<Chat />)
+
+    const micBtn = screen.getByTestId('speech-to-text-mic-button')
+    expect(micBtn).toBeInTheDocument()
+    expect(micBtn).toHaveAttribute('aria-label', 'Start hands-free voice dictation')
+
+    fireEvent.click(micBtn)
+    expect(screen.getByText(/Listening\.\.\. Speak clearly/i)).toBeInTheDocument()
+  })
 })

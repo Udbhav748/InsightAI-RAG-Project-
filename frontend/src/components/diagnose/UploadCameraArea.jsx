@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Camera, Cpu, ImagePlus, Leaf, RefreshCw, ScanLine, UploadCloud, X, HelpCircle, Check, Sparkles } from 'lucide-react'
 import Button from '../ui/Button'
 import CameraCapture from './CameraCapture'
+import { SpeechToTextButton } from './VoiceInteractionBar'
 import { MAX_IMAGE_SIZE_MB } from '../../constants'
 
 const QUERY_MAX_HEIGHT = 160
@@ -286,13 +287,28 @@ export default function UploadCameraArea({
 
             {/* Context / Follow-up Query Textarea */}
             <div className="panel rounded-panel p-4">
-              <label
-                htmlFor="diagnose-query-input"
-                className="mb-1.5 flex items-center justify-between text-xs font-medium text-slate-600 dark:text-ink-secondary"
-              >
-                <span>Optional context or symptoms observed</span>
-                <span className="text-[11px] text-slate-400 dark:text-ink-muted">e.g. &quot;Appeared after 3 days of rain&quot;</span>
-              </label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label
+                  htmlFor="diagnose-query-input"
+                  className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-ink-secondary"
+                >
+                  <span>Optional context or symptoms observed</span>
+                  <span className="hidden text-[11px] text-slate-400 sm:inline dark:text-ink-muted">e.g. &quot;Appeared after 3 days of rain&quot;</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="hidden text-[10px] text-slate-400 md:inline dark:text-ink-muted">
+                    Voice Dictation
+                  </span>
+                  <SpeechToTextButton
+                    size="sm"
+                    disabled={status === 'analyzing' || disabled}
+                    onTranscript={(spokenText) => {
+                      const updated = query ? `${query} ${spokenText}` : spokenText
+                      onQueryChange?.(updated)
+                    }}
+                  />
+                </div>
+              </div>
               <textarea
                 ref={queryRef}
                 id="diagnose-query-input"
@@ -300,7 +316,7 @@ export default function UploadCameraArea({
                 value={query}
                 onChange={(e) => onQueryChange(e.target.value)}
                 disabled={status === 'analyzing'}
-                placeholder="Add any specific context, crop stage, or question..."
+                placeholder="Add any specific context, crop stage, or question (or use mic)..."
                 className="max-h-[160px] w-full resize-none rounded-lg border border-border-light bg-white/60 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none transition-colors focus:border-accent-500 focus:ring-2 focus:ring-accent-500/30 dark:border-border dark:bg-white/[0.03] dark:text-ink-primary dark:placeholder-ink-muted"
               />
             </div>
