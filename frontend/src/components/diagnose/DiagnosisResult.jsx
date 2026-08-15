@@ -9,7 +9,15 @@ import SprayDosageCalculator from './SprayDosageCalculator'
  * - 5-Tab Treatment & Agronomic Plan
  * - Interactive Spray Dosage & Mix Volume Calculator Widget
  */
-export default function DiagnosisResult({ result, onReset, query, isStreaming = false }) {
+export default function DiagnosisResult({
+  result,
+  previewUrl,
+  onReset,
+  query,
+  isStreaming = false,
+  language = 'en',
+  onLanguageChange,
+}) {
   const { diagnosis, answer, sources, processing_time, session_id } = result
 
   return (
@@ -22,9 +30,12 @@ export default function DiagnosisResult({ result, onReset, query, isStreaming = 
       {/* 1. Prediction Hero Card */}
       <PredictionHeroCard
         diagnosis={diagnosis}
+        previewUrl={previewUrl}
         sessionId={session_id}
         processingTime={processing_time}
         onReset={onReset}
+        language={language}
+        onLanguageChange={onLanguageChange}
       />
 
       {/* 2. Tabbed Treatment Plan */}

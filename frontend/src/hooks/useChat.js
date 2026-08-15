@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamChatMessage, deleteChatSession, getSession } from '../services/chatService'
+import {
+  streamChatMessage,
+  streamAgentGraphChatMessage,
+  deleteChatSession,
+  getSession,
+} from '../services/chatService'
 import getErrorMessage from '../utils/errorMessage'
+
+export const DEFAULT_GRAPH_NODE_STATES = {
+  planner: { status: 'idle', duration_ms: null, output: null },
+  document_analyst: { status: 'idle', duration_ms: null, output: null },
+  synthesizer: { status: 'idle', duration_ms: null, output: null },
+  fact_checker: { status: 'idle', duration_ms: null, output: null },
+}
 
 let idCounter = 0
 const nextId = () => `msg-${++idCounter}-${Date.now()}`
@@ -67,6 +79,9 @@ export default function useChat(initialSessionId, initialDocumentIds) {
   const [messages, setMessages] = useState([])
   const [isSending, setIsSending] = useState(false)
   const [isLoadingSession, setIsLoadingSession] = useState(Boolean(initialSessionId))
+  const [isGraphMode, setIsGraphMode] = useState(false)
+  const [graphNodeStates, setGraphNodeStates] = useState(DEFAULT_GRAPH_NODE_STATES)
+  const [activeGraphNode, setActiveGraphNode] = useState(null)
   const lastQueryRef = useRef('')
   const messagesRef = useRef([])
   const sessionIdRef = useRef(null)
@@ -129,7 +144,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
   }, [])
 
   const fetchAnswer = useCallback(
-    async (query, history, persona) => {
+    async (query, history, persona, language) => {
       setIsSending(true)
       const assistantId = nextId()
       setMessages((current) => [
@@ -144,61 +159,139 @@ export default function useChat(initialSessionId, initialDocumentIds) {
       let reachedTerminal = false
 
       try {
-        await streamChatMessage(
-          query,
-          { history, sessionId: sessionIdRef.current, persona, documentIds: documentIdsRef.current },
-          {
-            onTrace: (stage, detail) => {
-              updateMessage(assistantId, (message) => ({
-                ...message,
-                // A "reflecting" stage means the pipeline is discarding
-                // the current attempt and starting a fresh generation —
-                // any text streamed so far belongs to that discarded
-                // attempt, so the visible answer resets alongside it
-                // (see backend rag_service.py's stream_query docstring).
-                content: stage === 'reflecting' ? '' : message.content,
-                trace: [...message.trace, { stage, detail }],
-              }))
-            },
-            onChunk: (text) => {
-              updateMessage(assistantId, (message) => ({ ...message, content: message.content + text }))
-            },
-            onDone: (payload) => {
-              reachedTerminal = true
-              // Persist session_id returned by server (new or echoed)
-              if (payload.session_id) {
-                sessionIdRef.current = payload.session_id
-                localStorage.setItem(SESSION_KEY, payload.session_id)
-              }
-              updateMessage(assistantId, (message) => ({
-                ...message,
-                content: payload.answer,
-                sources: payload.sources ?? [],
-                retrievalConfidence: payload.retrieval_confidence,
-                answerSource: payload.answer_source ?? 'documents',
-                hallucinationDetected: payload.hallucination_detected ?? false,
-                groundingScore: payload.grounding_score ?? null,
-                isClarifyingQuestion: payload.is_clarifying_question ?? false,
-                followUpQuestions: payload.follow_up_questions ?? [],
-                isStreaming: false,
-              }))
-            },
-            onError: (detail) => {
-              reachedTerminal = true
-              updateMessage(assistantId, (message) => ({
-                ...message,
-                content: getErrorMessage(
-                  { response: { data: { detail: detail?.message } } },
-                  "I couldn't answer that — please try again."
-                ),
-                isError: true,
-                isStreaming: false,
-              }))
-            },
-          }
-        )
+        if (isGraphMode) {
+          setGraphNodeStates(DEFAULT_GRAPH_NODE_STATES)
+          setActiveGraphNode('planner')
+
+          await streamAgentGraphChatMessage(
+            query,
+            { history, sessionId: sessionIdRef.current, persona, documentIds: documentIdsRef.current, language },
+            {
+              onNodeStart: (node, timestamp) => {
+                setActiveGraphNode(node)
+                setGraphNodeStates((current) => ({
+                  ...current,
+                  [node]: { ...(current[node] || {}), status: 'running', timestamp },
+                }))
+              },
+              onNodeComplete: (node, output, duration_ms) => {
+                const isFailed = Boolean(output?.error)
+                setGraphNodeStates((current) => ({
+                  ...current,
+                  [node]: {
+                    ...(current[node] || {}),
+                    status: isFailed ? 'failed' : 'completed',
+                    output,
+                    duration_ms,
+                  },
+                }))
+              },
+              onChunk: (text) => {
+                updateMessage(assistantId, (message) => ({ ...message, content: message.content + text }))
+              },
+              onDone: (finalState) => {
+                reachedTerminal = true
+                setActiveGraphNode(null)
+                if (finalState.session_id) {
+                  sessionIdRef.current = finalState.session_id
+                  localStorage.setItem(SESSION_KEY, finalState.session_id)
+                }
+                const answer = finalState.draft_answer || finalState.final_response?.answer || ''
+                const sources = finalState.final_response?.sources ?? []
+                const factCheck = finalState.fact_check_result ?? {}
+                const score =
+                  typeof factCheck === 'object' && factCheck !== null && factCheck.score != null
+                    ? factCheck.score
+                    : null
+                const isGrounded =
+                  typeof factCheck === 'object' && factCheck !== null
+                    ? factCheck.verified ?? true
+                    : Boolean(factCheck)
+
+                updateMessage(assistantId, (message) => ({
+                  ...message,
+                  content: answer,
+                  sources,
+                  retrievalConfidence: finalState.final_response?.retrieval_confidence,
+                  answerSource: finalState.final_response?.answer_source ?? 'documents',
+                  hallucinationDetected: !isGrounded,
+                  groundingScore: score,
+                  isStreaming: false,
+                }))
+              },
+              onError: (detail) => {
+                reachedTerminal = true
+                setActiveGraphNode(null)
+                updateMessage(assistantId, (message) => ({
+                  ...message,
+                  content: getErrorMessage(
+                    { response: { data: { detail: detail?.message } } },
+                    "I couldn't answer that — please try again."
+                  ),
+                  isError: true,
+                  isStreaming: false,
+                }))
+              },
+            }
+          )
+        } else {
+          await streamChatMessage(
+            query,
+            { history, sessionId: sessionIdRef.current, persona, documentIds: documentIdsRef.current, language },
+            {
+              onTrace: (stage, detail) => {
+                updateMessage(assistantId, (message) => ({
+                  ...message,
+                  // A "reflecting" stage means the pipeline is discarding
+                  // the current attempt and starting a fresh generation —
+                  // any text streamed so far belongs to that discarded
+                  // attempt, so the visible answer resets alongside it
+                  // (see backend rag_service.py's stream_query docstring).
+                  content: stage === 'reflecting' ? '' : message.content,
+                  trace: [...message.trace, { stage, detail }],
+                }))
+              },
+              onChunk: (text) => {
+                updateMessage(assistantId, (message) => ({ ...message, content: message.content + text }))
+              },
+              onDone: (payload) => {
+                reachedTerminal = true
+                // Persist session_id returned by server (new or echoed)
+                if (payload.session_id) {
+                  sessionIdRef.current = payload.session_id
+                  localStorage.setItem(SESSION_KEY, payload.session_id)
+                }
+                updateMessage(assistantId, (message) => ({
+                  ...message,
+                  content: payload.answer,
+                  sources: payload.sources ?? [],
+                  retrievalConfidence: payload.retrieval_confidence,
+                  answerSource: payload.answer_source ?? 'documents',
+                  hallucinationDetected: payload.hallucination_detected ?? false,
+                  groundingScore: payload.grounding_score ?? null,
+                  isClarifyingQuestion: payload.is_clarifying_question ?? false,
+                  followUpQuestions: payload.follow_up_questions ?? [],
+                  isStreaming: false,
+                }))
+              },
+              onError: (detail) => {
+                reachedTerminal = true
+                updateMessage(assistantId, (message) => ({
+                  ...message,
+                  content: getErrorMessage(
+                    { response: { data: { detail: detail?.message } } },
+                    "I couldn't answer that — please try again."
+                  ),
+                  isError: true,
+                  isStreaming: false,
+                }))
+              },
+            }
+          )
+        }
       } catch (error) {
         reachedTerminal = true
+        setActiveGraphNode(null)
         updateMessage(assistantId, (message) => ({
           ...message,
           content: getErrorMessage(error, "I couldn't answer that — please try again."),
@@ -207,6 +300,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
         }))
       } finally {
         setIsSending(false)
+        setActiveGraphNode(null)
         // Stream ended without a done/error event: stop the spinner and,
         // if nothing at all was received, show a degraded notice instead
         // of a permanently-empty bubble.
@@ -226,20 +320,20 @@ export default function useChat(initialSessionId, initialDocumentIds) {
         }
       }
     },
-    [updateMessage]
+    [updateMessage, isGraphMode]
   )
 
   const ask = useCallback(
-    (query, persona) => {
+    (query, persona, language) => {
       lastQueryRef.current = query
       const history = toHistory(messagesRef.current)
       setMessages((current) => [...current, { id: nextId(), role: 'user', content: query }])
-      fetchAnswer(query, history, persona)
+      fetchAnswer(query, history, persona, language)
     },
     [fetchAnswer]
   )
 
-  const regenerate = useCallback((persona) => {
+  const regenerate = useCallback((persona, language) => {
     if (!lastQueryRef.current || isSending) return
     const history = historyBeforeQuery(messagesRef.current, lastQueryRef.current)
     setMessages((current) => {
@@ -252,7 +346,7 @@ export default function useChat(initialSessionId, initialDocumentIds) {
     // Reuse the persona that was active for the original turn. ask() already
     // forwards it from ChatInput; regenerate did not, so a regenerate silently
     // dropped personality and fell back to the default prompt.
-    fetchAnswer(lastQueryRef.current, history, persona)
+    fetchAnswer(lastQueryRef.current, history, persona, language)
   }, [fetchAnswer, isSending])
 
   // Clear session (start fresh conversation)
@@ -269,7 +363,22 @@ export default function useChat(initialSessionId, initialDocumentIds) {
     localStorage.removeItem(SESSION_KEY)
     sessionIdRef.current = getOrCreateSessionId()
     setMessages([])
+    setGraphNodeStates(DEFAULT_GRAPH_NODE_STATES)
+    setActiveGraphNode(null)
   }, [])
 
-  return { messages, isSending, isLoadingSession, ask, regenerate, clearSession, loadSession }
+  return {
+    messages,
+    isSending,
+    isLoadingSession,
+    ask,
+    regenerate,
+    clearSession,
+    loadSession,
+    isGraphMode,
+    setIsGraphMode,
+    graphNodeStates,
+    setGraphNodeStates,
+    activeGraphNode,
+  }
 }

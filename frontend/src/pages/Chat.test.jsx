@@ -123,7 +123,7 @@ describe('Chat Page', () => {
     const sendBtn = screen.getByRole('button', { name: 'Send message' })
     fireEvent.click(sendBtn)
 
-    expect(mockAsk).toHaveBeenCalledWith('How does multi-modal indexing work?', 'concise')
+    expect(mockAsk).toHaveBeenCalledWith('How does multi-modal indexing work?', 'concise', 'en')
   })
 
   it('renders streaming assistant message with loading indicator', () => {
@@ -203,7 +203,7 @@ describe('Chat Page', () => {
     const followUpBtn = screen.getByRole('button', { name: 'What overlap size is used?' })
     expect(followUpBtn).toBeInTheDocument()
     fireEvent.click(followUpBtn)
-    expect(mockAsk).toHaveBeenCalledWith('What overlap size is used?', '')
+    expect(mockAsk).toHaveBeenCalledWith('What overlap size is used?', '', 'en')
   })
 
   it('triggers regenerate when Regenerate button is clicked', () => {

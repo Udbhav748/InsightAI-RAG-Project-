@@ -1,32 +1,37 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, Cpu, ImagePlus, Leaf, RefreshCw, ScanLine, UploadCloud, X, HelpCircle, Check, Sparkles } from 'lucide-react'
+import { Camera, Cpu, ImagePlus, Leaf, RefreshCw, ScanLine, Sliders, UploadCloud, X, HelpCircle, Check, Sparkles } from 'lucide-react'
 import Button from '../ui/Button'
 import CameraCapture from './CameraCapture'
-import { SpeechToTextButton } from './VoiceInteractionBar'
+import { SpeechToTextButton, LanguageSelectorDropdown } from './VoiceInteractionBar'
 import { MAX_IMAGE_SIZE_MB } from '../../constants'
 
 const QUERY_MAX_HEIGHT = 160
 
 /**
  * Upload & Camera Capture Area with drag-and-drop, direct camera mode,
- * live leaf preview, image removal, context input, and vision engine selector.
+ * live leaf preview, heatmap overlay toggle, image removal, context input, and vision engine selector.
  */
 export default function UploadCameraArea({
   image,
   previewUrl,
+  heatmapUrl,
   query,
   engine = 'hybrid',
+  language = 'en',
   status,
   onSelectImage,
   onClearImage,
   onQueryChange,
   onEngineChange,
+  onLanguageChange,
   onAnalyze,
   disabled = false,
 }) {
   const [mode, setMode] = useState('upload') // 'upload' | 'camera'
   const [isDragging, setIsDragging] = useState(false)
+  const [previewViewMode, setPreviewViewMode] = useState('original') // 'original' | 'heatmap'
+  const [previewOverlayOpacity, setPreviewOverlayOpacity] = useState(80) // 0 to 100
   const fileInputRef = useRef(null)
   const cameraInputRef = useRef(null)
   const queryRef = useRef(null)
@@ -247,19 +252,74 @@ export default function UploadCameraArea({
                   )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={onClearImage}
-                  disabled={status === 'analyzing'}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-600 disabled:opacity-50 dark:hover:text-rose-400"
-                  aria-label="Remove image"
-                  title="Remove image"
-                >
-                  <X size={16} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onClearImage}
+                    disabled={status === 'analyzing'}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-600 disabled:opacity-50 dark:hover:text-rose-400"
+                    aria-label="Remove image"
+                    title="Remove image"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
-              {/* Image Preview */}
+              {/* Interactive Visual Toggle & Opacity Slider Toolbar (when heatmap is present) */}
+              {heatmapUrl && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light bg-slate-900/[0.02] px-4 py-2 text-xs dark:border-border dark:bg-white/[0.01]">
+                  <div className="flex items-center gap-1.5 rounded-lg border border-border-light bg-slate-900/5 p-0.5 dark:border-border dark:bg-white/5">
+                    <button
+                      type="button"
+                      data-testid="upload-toggle-original-photo"
+                      onClick={() => setPreviewViewMode('original')}
+                      className={`rounded px-2 py-0.5 text-xs font-medium transition-all ${
+                        previewViewMode === 'original'
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-accent-600 dark:text-white'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-ink-muted dark:hover:text-white'
+                      }`}
+                    >
+                      Original Photo
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="upload-toggle-heatmap-overlay"
+                      onClick={() => setPreviewViewMode('heatmap')}
+                      className={`rounded px-2 py-0.5 text-xs font-medium transition-all ${
+                        previewViewMode === 'heatmap'
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-accent-600 dark:text-white'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-ink-muted dark:hover:text-white'
+                      }`}
+                    >
+                      Heatmap Lesion Overlay
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Sliders size={13} className="text-accent-500 shrink-0" />
+                    <label htmlFor="upload-heatmap-opacity-slider" className="text-[11px] text-slate-500 dark:text-ink-muted">
+                      Opacity:
+                    </label>
+                    <input
+                      id="upload-heatmap-opacity-slider"
+                      data-testid="upload-heatmap-opacity-slider"
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={previewOverlayOpacity}
+                      onChange={(e) => setPreviewOverlayOpacity(Number(e.target.value))}
+                      disabled={previewViewMode === 'original'}
+                      className="h-1.5 w-20 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-accent-500 disabled:opacity-40 dark:bg-slate-700"
+                    />
+                    <span className="w-7 font-mono text-[10px] text-slate-500 dark:text-ink-muted">
+                      {previewViewMode === 'original' ? '0%' : `${previewOverlayOpacity}%`}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Image Preview Viewport */}
               <div className="relative flex max-h-80 items-center justify-center bg-slate-950/40 p-2">
                 <img
                   src={previewUrl}
@@ -268,6 +328,17 @@ export default function UploadCameraArea({
                     status === 'analyzing' ? 'opacity-50' : 'opacity-100'
                   }`}
                 />
+
+                {heatmapUrl && (
+                  <img
+                    src={heatmapUrl}
+                    alt="Plant leaf heatmap overlay"
+                    style={{
+                      opacity: previewViewMode === 'original' ? 0 : previewOverlayOpacity / 100,
+                    }}
+                    className="pointer-events-none absolute inset-0 m-auto max-h-72 w-full rounded-lg object-contain transition-opacity duration-200"
+                  />
+                )}
 
                 {status === 'analyzing' && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/60 text-white backdrop-blur-[2px]">
@@ -295,12 +366,15 @@ export default function UploadCameraArea({
                   <span>Optional context or symptoms observed</span>
                   <span className="hidden text-[11px] text-slate-400 sm:inline dark:text-ink-muted">e.g. &quot;Appeared after 3 days of rain&quot;</span>
                 </label>
-                <div className="flex items-center gap-1.5">
-                  <span className="hidden text-[10px] text-slate-400 md:inline dark:text-ink-muted">
-                    Voice Dictation
-                  </span>
+                <div className="flex items-center gap-2">
+                  <LanguageSelectorDropdown
+                    language={language}
+                    onChange={onLanguageChange}
+                    disabled={status === 'analyzing' || disabled}
+                  />
                   <SpeechToTextButton
                     size="sm"
+                    language={language}
                     disabled={status === 'analyzing' || disabled}
                     onTranscript={(spokenText) => {
                       const updated = query ? `${query} ${spokenText}` : spokenText

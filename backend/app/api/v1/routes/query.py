@@ -3,9 +3,18 @@
 import contextlib
 import json
 import logging
-from collections.abc import Iterator
+import re
+import time
+from collections.abc import AsyncIterator, Iterator
 from functools import lru_cache
 from typing import Any
+
+from app.services.agent_graph import (
+    END,
+    AgentState,
+    GraphContext,
+    create_rag_agent_graph,
+)
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -173,6 +182,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         tenant_id=tenant_id,
         persona=payload.persona,
         document_ids=payload.document_ids,
+        language=payload.language,
     )
 
     # Append this turn to server-side history
@@ -261,6 +271,7 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
             tenant_id=tenant_id,
             persona=payload.persona,
             document_ids=payload.document_ids,
+            language=payload.language,
         ):
             # Capture answer chunks to append to history after stream completes
             if event.get("type") == "answer_chunk":
@@ -291,6 +302,174 @@ def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
+def _extract_agent_graph_node_output(node_name: str, state: AgentState) -> dict[str, Any]:
+    """Extract node-specific output payload for agent graph streaming event."""
+    if node_name == "planner":
+        action = "retrieve"
+        if isinstance(state.plan, dict):
+            action = state.plan.get("action", "retrieve")
+        elif isinstance(state.plan, str):
+            action = state.plan
+        out: dict[str, Any] = {"action": action}
+        if isinstance(state.plan, dict):
+            if "document_id" in state.plan and state.plan["document_id"]:
+                out["document_id"] = state.plan["document_id"]
+            if "reason" in state.plan and state.plan["reason"]:
+                out["reason"] = state.plan["reason"]
+        return out
+
+    if node_name == "document_analyst":
+        out = {"chunks_retrieved": len(state.retrieved_chunks)}
+        if state.document_id:
+            out["document_id"] = state.document_id
+        return out
+
+    if node_name == "fact_checker":
+        grounded = state.is_fact_check_passed()
+        score = 1.0
+        if isinstance(state.fact_check_result, dict) and "score" in state.fact_check_result:
+            score = float(state.fact_check_result["score"])
+        elif isinstance(state.fact_check_result, bool):
+            score = 1.0 if state.fact_check_result else 0.0
+        out = {
+            "grounded": grounded,
+            "score": score,
+        }
+        if isinstance(state.fact_check_result, dict) and "details" in state.fact_check_result:
+            out["details"] = state.fact_check_result["details"]
+        return out
+
+    if node_name == "web_researcher":
+        return {"results_count": len(state.web_results)}
+
+    if node_name == "summarizer":
+        out = {"summary_length": len(state.draft_answer) if state.draft_answer else 0}
+        if state.document_id:
+            out["document_id"] = state.document_id
+        return out
+
+    if node_name == "synthesizer":
+        return {
+            "answer_length": len(state.draft_answer) if state.draft_answer else 0,
+            "sources_count": len(state.final_response.sources) if state.final_response else 0,
+        }
+
+    return {}
+
+
+@router.post("/chat/agent-graph/stream")
+async def chat_agent_graph_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
+    """Execute the StateGraph multi-agent pipeline and stream real-time node transitions and tokens."""
+    session_store = get_session_store()
+    tenant_id = getattr(request.state, "tenant_id", None)
+
+    session_id = session_store.get_or_create_session(payload.session_id, tenant_id=tenant_id)
+    set_session_title_if_unset(session_id, payload.query)
+
+    history = session_store.get_history(session_id)
+    if history is None:
+        history = payload.history
+
+    logger.info(
+        "chat_agent_graph_stream_request_received",
+        extra={
+            "extra_fields": {
+                "query_length": len(payload.query),
+                "client": getattr(request.state, "client_name", "unknown"),
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+
+    async def event_source() -> AsyncIterator[str]:
+        context = GraphContext(
+            llm_client=get_llm_client(),
+            vector_store=get_vector_store(),
+            image_vector_store=get_image_vector_store(),
+        )
+        graph = create_rag_agent_graph(context=context)
+
+        initial_state = AgentState(
+            query=payload.query,
+            history=history,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            confirm_web_search=payload.confirm_web_search,
+            persona=payload.persona,
+            document_id=payload.document_ids[0] if payload.document_ids else None,
+        )
+
+        current_state = initial_state
+        current_node = graph.entry_point
+        step_index = 0
+
+        while current_node != END and step_index < graph.max_steps:
+            step_index += 1
+            start_t = time.perf_counter()
+            timestamp = time.time()
+
+            yield _sse_line({
+                "type": "node_start",
+                "node": current_node,
+                "timestamp": timestamp,
+            })
+
+            try:
+                current_state = await graph._invoke_node(current_node, current_state, context)
+            except Exception as exc:
+                logger.error(
+                    "graph_node_execution_failed",
+                    extra={"extra_fields": {"node": current_node, "error": str(exc)}},
+                )
+                current_state = current_state.copy_with(error=f"{type(exc).__name__}: {exc}")
+                duration_ms = round((time.perf_counter() - start_t) * 1000, 2)
+                yield _sse_line({
+                    "type": "node_complete",
+                    "node": current_node,
+                    "output": {"error": str(exc)},
+                    "duration_ms": duration_ms,
+                })
+                break
+
+            duration_ms = round((time.perf_counter() - start_t) * 1000, 2)
+
+            # Stream token events if synthesizer produced/updated draft answer
+            if current_node == "synthesizer" and current_state.draft_answer:
+                tokens = re.findall(r"\S+|\s+", current_state.draft_answer)
+                for tok in tokens:
+                    yield _sse_line({"type": "token", "text": tok})
+
+            output = _extract_agent_graph_node_output(current_node, current_state)
+            yield _sse_line({
+                "type": "node_complete",
+                "node": current_node,
+                "output": output,
+                "duration_ms": duration_ms,
+            })
+
+            current_node = await graph._get_next_node(current_node, current_state, context)
+
+        # Append turn to session store
+        final_answer = current_state.draft_answer or (
+            current_state.final_response.answer if current_state.final_response else ""
+        )
+        if final_answer:
+            session_store.append_turn(session_id, "user", payload.query)
+            session_store.append_turn(session_id, "assistant", final_answer)
+
+        final_state_data = current_state.model_dump(mode="json")
+        if session_id and "session_id" in final_state_data:
+            final_state_data["session_id"] = session_id
+
+        yield _sse_line({
+            "type": "graph_done",
+            "final_state": final_state_data,
+        })
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
 @router.get("/weather/risk", response_model=WeatherRiskResponse)
 async def get_weather_risk(
     lat: float,
@@ -313,6 +492,7 @@ async def diagnose(
     engine: str = Form("hybrid"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    language: str = Form("en"),
 ) -> ChatResponse:
     chat_service = get_chat_service()
     session_store = get_session_store()
@@ -352,6 +532,7 @@ async def diagnose(
                 "history_turns": len(history) if history else 0,
                 "engine": engine,
                 "has_weather": weather_risk is not None,
+                "language": language,
             }
         },
     )
@@ -368,6 +549,7 @@ async def diagnose(
         tenant_id=tenant_id,
         engine=engine,
         weather_risk=weather_risk,
+        language=language,
     )
 
     # Append this turn to server-side history, same shape /chat uses. The
@@ -421,6 +603,7 @@ async def diagnose_stream(
     engine: str = Form("hybrid"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    language: str = Form("en"),
 ) -> StreamingResponse:
     """Streamed SSE endpoint for plant leaf photo diagnosis and treatment recommendations.
 
@@ -465,6 +648,7 @@ async def diagnose_stream(
                 "history_turns": len(history) if history else 0,
                 "engine": engine,
                 "has_weather": weather_risk is not None,
+                "language": language,
             }
         },
     )
@@ -486,6 +670,7 @@ async def diagnose_stream(
             tenant_id=tenant_id,
             engine=engine,
             weather_risk=weather_risk,
+            language=language,
         ):
             if event.get("type") == "answer_chunk":
                 token = (

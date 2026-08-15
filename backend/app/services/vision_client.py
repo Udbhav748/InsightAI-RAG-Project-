@@ -33,6 +33,7 @@ from tenacity import (
 from app.core.config import settings
 from app.core.exceptions import VisionServiceError
 from app.models.document import VisionPrediction
+from app.services.explainability import generate_leaf_saliency
 from app.services.tool_registry import track_tool
 
 logger = logging.getLogger(__name__)
@@ -291,12 +292,21 @@ def diagnose_image(
     global _last_online_check, _last_online_status
     start = time.perf_counter()
 
+    # Compute explainability saliency heatmap & metrics
+    saliency = generate_leaf_saliency(contents)
+    heatmap_base64 = saliency.get("heatmap_base64")
+    infected_area_percentage = saliency.get("infected_area_percentage")
+    lesion_count = saliency.get("lesion_count")
+
     # Direct Gemini engine route
     if engine == "gemini":
         gemini_pred = _diagnose_with_gemini_fallback(
             contents, filename, content_type, engine_tag="gemini_vision"
         )
         if gemini_pred is not None:
+            gemini_pred.heatmap_base64 = heatmap_base64
+            gemini_pred.infected_area_percentage = infected_area_percentage
+            gemini_pred.lesion_count = lesion_count
             return gemini_pred
 
     # Self-healing: if offline, attempt to auto-launch local LeafSense service
@@ -338,6 +348,9 @@ def diagnose_image(
             contents, filename, content_type, engine_tag="gemini_fallback"
         )
         if fallback_prediction is not None:
+            fallback_prediction.heatmap_base64 = heatmap_base64
+            fallback_prediction.infected_area_percentage = infected_area_percentage
+            fallback_prediction.lesion_count = lesion_count
             return fallback_prediction
 
         if isinstance(exc, httpx.TimeoutException):
@@ -373,6 +386,9 @@ def diagnose_image(
             contents, filename, content_type, engine_tag="hybrid_consensus"
         )
         if arbiter_pred is not None and not arbiter_pred.low_confidence:
+            arbiter_pred.heatmap_base64 = heatmap_base64
+            arbiter_pred.infected_area_percentage = infected_area_percentage
+            arbiter_pred.lesion_count = lesion_count
             logger.info(
                 "vision_hybrid_consensus_arbitrated",
                 extra={
@@ -408,4 +424,7 @@ def diagnose_image(
         confidence=confidence,
         low_confidence=low_confidence,
         engine="leafsense",
+        heatmap_base64=heatmap_base64,
+        infected_area_percentage=infected_area_percentage,
+        lesion_count=lesion_count,
     )

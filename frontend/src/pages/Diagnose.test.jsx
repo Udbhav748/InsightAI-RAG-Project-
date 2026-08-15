@@ -53,6 +53,9 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
       disease: 'early blight',
       confidence: 0.95,
       low_confidence: false,
+      heatmap_base64: 'fake_heatmap_base64_png_payload',
+      infected_area_percentage: 24.5,
+      lesion_count: 5,
     },
   }
 
@@ -180,12 +183,13 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     // Test navigating to chat with URL search parameters and state memory bridge
     fireEvent.click(chatBtn)
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/chat?crop=tomato&disease=early+blight&severity=Severe',
+      '/chat?crop=tomato&disease=early+blight&severity=Severe&lang=en',
       expect.objectContaining({
         state: expect.objectContaining({
           sessionId: 'session-agri-test-123',
           crop: 'tomato',
           disease: 'early blight',
+          language: 'en',
         }),
       })
     )
@@ -709,5 +713,158 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     const stopBtn = screen.getByTestId('voice-stop-protocol-button')
     fireEvent.click(stopBtn)
     expect(window.speechSynthesis.cancel).toHaveBeenCalled()
+  })
+
+  it('renders visual metric badges (Infected Leaf Area & Estimated Lesions) and interactive heatmap overlay toggle with opacity slider', async () => {
+    diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('early blight')).toBeInTheDocument()
+    })
+
+    // 1. Verify Visual Metric Badges
+    const infectedAreaBadge = screen.getByTestId('infected-area-badge')
+    expect(infectedAreaBadge).toBeInTheDocument()
+    expect(infectedAreaBadge).toHaveTextContent(/Infected Leaf Area:\s*24\.5%/i)
+
+    const lesionCountBadge = screen.getByTestId('lesion-count-badge')
+    expect(lesionCountBadge).toBeInTheDocument()
+    expect(lesionCountBadge).toHaveTextContent(/Estimated Lesions:\s*5\s*spots/i)
+
+    // 2. Verify Heatmap Overlay & Original Photo Toggle Buttons
+    const toggleOriginalBtn = screen.getByTestId('toggle-original-photo')
+    const toggleHeatmapBtn = screen.getByTestId('toggle-heatmap-overlay')
+    expect(toggleOriginalBtn).toBeInTheDocument()
+    expect(toggleHeatmapBtn).toBeInTheDocument()
+
+    // 3. Verify Opacity Slider
+    const opacitySlider = screen.getByTestId('heatmap-opacity-slider')
+    expect(opacitySlider).toBeInTheDocument()
+    expect(opacitySlider).toHaveValue('80')
+
+    // Change Opacity Slider value to 45%
+    fireEvent.change(opacitySlider, { target: { value: '45' } })
+    expect(opacitySlider).toHaveValue('45')
+    expect(screen.getByText('45%')).toBeInTheDocument()
+
+    // Switch to Original Photo mode
+    fireEvent.click(toggleOriginalBtn)
+    expect(screen.getByText('0%')).toBeInTheDocument()
+    expect(opacitySlider).toBeDisabled()
+
+    // Switch back to Heatmap Lesion Overlay mode
+    fireEvent.click(toggleHeatmapBtn)
+    expect(screen.getByText('45%')).toBeInTheDocument()
+    expect(opacitySlider).not.toBeDisabled()
+
+    // Verify Color Legend items
+    expect(screen.getByText('Healthy Tissue')).toBeInTheDocument()
+    expect(screen.getByText('Chlorotic Margins')).toBeInTheDocument()
+    expect(screen.getByText('Active Lesion Centers')).toBeInTheDocument()
+  })
+
+  it('handles language selector changes and assigns appropriate STT and TTS voice codes', async () => {
+    let capturedRecognitionInstance = null
+    class MockSpeechRecognition {
+      constructor() {
+        this.lang = 'en-US'
+        this.continuous = false
+        this.interimResults = false
+        this.onresult = null
+        this.onerror = null
+        this.onend = null
+        // eslint-disable-next-line consistent-this
+        capturedRecognitionInstance = this
+      }
+      start() {
+        if (this.onresult) {
+          this.onresult({
+            resultIndex: 0,
+            results: [[{ transcript: 'Hojas amarillas con manchas negras' }]],
+          })
+        }
+      }
+      stop() {
+        if (this.onend) this.onend()
+      }
+      abort() {}
+    }
+
+    window.SpeechRecognition = MockSpeechRecognition
+    window.webkitSpeechRecognition = MockSpeechRecognition
+
+    render(<Diagnose />)
+
+    const file = new File(['fake-bytes'], 'tomato_leaf.png', { type: 'image/png' })
+    selectTestFile(file)
+
+    await waitFor(() => {
+      expect(screen.getByAltText('Plant leaf preview')).toBeInTheDocument()
+    })
+
+    // 1. Language selector in upload preview area
+    const langSelect = screen.getByTestId('voice-language-selector')
+    expect(langSelect).toBeInTheDocument()
+    expect(langSelect).toHaveValue('en')
+
+    // Change language to Spanish (es)
+    fireEvent.change(langSelect, { target: { value: 'es' } })
+    expect(langSelect).toHaveValue('es')
+
+    // 2. Click mic button to test Speech Recognition language code assignment
+    const micButton = screen.getByTestId('speech-to-text-mic-button')
+    fireEvent.click(micButton)
+
+    expect(capturedRecognitionInstance).not.toBeNull()
+    expect(capturedRecognitionInstance.lang).toBe('es-ES')
+
+    // Context textarea should have received transcribed text
+    const queryInput = screen.getByLabelText(/Optional context or symptoms observed/i)
+    expect(queryInput).toHaveValue('Hojas amarillas con manchas negras')
+
+    // 3. Diagnose with Spanish language parameter
+    const diagnoseBtn = screen.getByRole('button', { name: /Diagnose Plant Leaf/i })
+    fireEvent.click(diagnoseBtn)
+
+    await waitFor(() => {
+      expect(diagnoseService.diagnoseImageStream).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({
+          language: 'es',
+        }),
+        expect.any(Function),
+        expect.any(Function)
+      )
+    })
+
+    // 4. Verify TTS Audio Player in Diagnosis Result
+    await waitFor(() => {
+      expect(screen.getByTestId('voice-play-protocol-button')).toBeInTheDocument()
+    })
+
+    let capturedUtterance = null
+    window.speechSynthesis.speak = vi.fn((utterance) => {
+      capturedUtterance = utterance
+    })
+
+    const playBtn = screen.getByTestId('voice-play-protocol-button')
+    fireEvent.click(playBtn)
+
+    expect(window.speechSynthesis.speak).toHaveBeenCalled()
+    expect(capturedUtterance).not.toBeNull()
+    expect(capturedUtterance.lang).toBe('es-ES')
+    expect(capturedUtterance.text).toContain('Protocolo de Campo')
   })
 })

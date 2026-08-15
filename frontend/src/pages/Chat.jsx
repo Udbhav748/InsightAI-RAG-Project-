@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Download,
   FileDown,
+  GitFork,
   Leaf,
   MessageCircle,
   Plus,
@@ -13,6 +14,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react'
+import AgentGraphVisualizer from '../components/chat/AgentGraphVisualizer'
 import ChatBubble from '../components/chat/ChatBubble'
 import ChatInput from '../components/chat/ChatInput'
 import EmptyState from '../components/ui/EmptyState'
@@ -81,11 +83,22 @@ export default function Chat() {
     ]
   }, [hasDiagnosticContext, formattedDisease, formattedCrop])
 
-  const { messages, isSending, isLoadingSession, ask, regenerate, clearSession } = useChat(
-    location.state?.sessionId,
-    location.state?.documentIds
-  )
+  const {
+    messages,
+    isSending,
+    isLoadingSession,
+    ask,
+    regenerate,
+    clearSession,
+    isGraphMode = false,
+    setIsGraphMode = () => {},
+    graphNodeStates = {},
+    activeGraphNode = null,
+  } = useChat(location.state?.sessionId, location.state?.documentIds)
   const [persona, setPersona] = useState('')
+  const [language, setLanguage] = useState(
+    searchParams.get('lang') || location.state?.language || 'en'
+  )
   const bottomRef = useRef(null)
   const containerRef = useRef(null)
   const isAtBottomRef = useRef(true)
@@ -235,6 +248,45 @@ export default function Chat() {
         </div>
       )}
 
+      {/* Top Header Controls / Multi-Agent Execution Graph Toggle */}
+      <div className="mb-2 flex items-center justify-between px-1 print:hidden">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="toggle-agent-graph"
+            onClick={() => setIsGraphMode((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+              isGraphMode
+                ? 'border border-accent-500/40 bg-accent-500/10 text-accent-700 dark:border-accent-500/30 dark:bg-accent-500/15 dark:text-accent-300 shadow-sm'
+                : 'border border-border-light bg-card-light text-slate-500 hover:bg-slate-100 dark:border-border dark:bg-card dark:text-ink-muted dark:hover:bg-white/[0.05]'
+            }`}
+            title="Toggle multi-agent execution StateGraph stream and visualization"
+          >
+            <GitFork size={13} className={isGraphMode ? 'text-accent-500' : 'text-slate-400 dark:text-ink-muted'} />
+            <span>Multi-Agent Execution Graph: {isGraphMode ? 'ON' : 'OFF'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Multi-Agent Graph Visualizer (when enabled) */}
+      <AnimatePresence>
+        {isGraphMode && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="mb-3 print:hidden"
+          >
+            <AgentGraphVisualizer
+              nodeStates={graphNodeStates}
+              activeNode={activeGraphNode}
+              isExecuting={isSending}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Diagnostic Context Active Banner */}
       {hasDiagnosticContext && (
         <div
@@ -329,9 +381,9 @@ export default function Chat() {
                 key={message.id}
                 message={message}
                 isLast={message.id === lastAssistantId}
-                onRegenerate={() => regenerate(persona)}
+                onRegenerate={() => regenerate(persona, language)}
                 isRegenerating={isSending}
-                onFollowUpClick={(q) => ask(q, persona)}
+                onFollowUpClick={(q) => ask(q, persona, language)}
                 query={precedingUserQuery.get(message.id) ?? ''}
               />
             ))}
@@ -359,7 +411,14 @@ export default function Chat() {
 
       <div className="sticky bottom-0 pt-2 print:hidden">
         <div className="flex items-center justify-between mb-2 px-1 sm:px-3">
-          <ChatInput onSend={ask} disabled={isSending} persona={persona} onPersonaChange={setPersona} />
+          <ChatInput
+            onSend={ask}
+            disabled={isSending}
+            persona={persona}
+            onPersonaChange={setPersona}
+            language={language}
+            onLanguageChange={setLanguage}
+          />
           <div className="flex items-center gap-1">
             <div className="relative" ref={exportMenuRef}>
               <button

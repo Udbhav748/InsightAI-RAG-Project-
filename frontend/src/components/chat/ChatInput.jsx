@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowUp } from 'lucide-react'
-import { SpeechToTextButton } from '../diagnose/VoiceInteractionBar'
+import { SpeechToTextButton, LanguageSelectorDropdown } from '../diagnose/VoiceInteractionBar'
 
 const MAX_HEIGHT = 200
 
-export default function ChatInput({ onSend, disabled, persona = '', onPersonaChange }) {
+export default function ChatInput({
+  onSend,
+  disabled,
+  persona = '',
+  onPersonaChange,
+  language = 'en',
+  onLanguageChange,
+}) {
   const [value, setValue] = useState('')
   const textareaRef = useRef(null)
 
@@ -20,7 +27,7 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
     event.preventDefault()
     const trimmed = value.trim()
     if (!trimmed || disabled) return
-    onSend(trimmed, persona)
+    onSend(trimmed, persona, language)
     setValue('')
   }
 
@@ -55,7 +62,15 @@ export default function ChatInput({ onSend, disabled, persona = '', onPersonaCha
       <SpeechToTextButton
         onTranscript={handleVoiceTranscript}
         disabled={disabled}
+        language={language}
         size="md"
+      />
+
+      {/* Language Selector Dropdown */}
+      <LanguageSelectorDropdown
+        language={language}
+        onChange={onLanguageChange}
+        disabled={disabled}
       />
 
       {/* Fixed (not w-auto) so the closed control can't balloon to its

@@ -975,6 +975,7 @@ class ChatService:
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
+        language: str | None = None,
     ) -> str:
         prompt = build_prompt(
             query,
@@ -983,6 +984,7 @@ class ChatService:
             extra_instruction=extra_instruction,
             web_results=web_results,
             persona=persona,
+            language=language,
         )
         _capture_prompt(prompt, variant="reflection" if extra_instruction else "standard")
         logger.info(
@@ -993,6 +995,7 @@ class ChatService:
                     "chunk_count": len(chunks),
                     "web_result_count": len(web_results) if web_results else 0,
                     "is_reflection": extra_instruction is not None,
+                    "language": language or "en",
                 }
             },
         )
@@ -1006,6 +1009,7 @@ class ChatService:
         extra_instruction: str | None = None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
+        language: str | None = None,
     ) -> Iterator[tuple[bool, str]]:
         """Streamed counterpart to _generate: same prompt-building and
         logging, but yields (False, piece) for each safe-to-show chunk of
@@ -1022,6 +1026,7 @@ class ChatService:
             extra_instruction=extra_instruction,
             web_results=web_results,
             persona=persona,
+            language=language,
         )
         _capture_prompt(prompt, variant="streamed")
         logger.info(
@@ -1033,6 +1038,7 @@ class ChatService:
                     "web_result_count": len(web_results) if web_results else 0,
                     "is_reflection": extra_instruction is not None,
                     "streamed": True,
+                    "language": language or "en",
                 }
             },
         )
@@ -1056,6 +1062,7 @@ class ChatService:
         history: list[dict[str, str]] | None,
         web_results: list[WebSearchResult] | None = None,
         persona: str | None = None,
+        language: str | None = None,
     ) -> str:
         """Structured-output counterpart to _generate: same context assembly
         via build_structured_prompt, but the provider is asked for a JSON
@@ -1066,7 +1073,7 @@ class ChatService:
         output is a win-when-it-works enhancement, never a new failure mode.
         """
         prompt = build_structured_prompt(
-            query, chunks, history=history, web_results=web_results, persona=persona
+            query, chunks, history=history, web_results=web_results, persona=persona, language=language
         )
         _capture_prompt(prompt, variant="structured")
         logger.info(
@@ -1077,6 +1084,7 @@ class ChatService:
                     "chunk_count": len(chunks),
                     "web_result_count": len(web_results) if web_results else 0,
                     "structured": True,
+                    "language": language or "en",
                 }
             },
         )
@@ -1087,7 +1095,7 @@ class ChatService:
                 "structured_output_fallback",
                 extra={"extra_fields": {"query_length": len(query), "chunk_count": len(chunks)}},
             )
-            return self._generate(query, chunks, history, web_results=web_results, persona=persona)
+            return self._generate(query, chunks, history, web_results=web_results, persona=persona, language=language)
         logger.info(
             "structured_output_success",
             extra={
@@ -1318,6 +1326,7 @@ class ChatService:
         steps_taken: int,
         confirm_web_search: bool = False,
         persona: str | None = None,
+        language: str = "en",
     ) -> tuple[str, int, int, list[WebSearchResult], bool]:
         """Generalizes the old single-shot _reflect into the corrective
         RAG loop's regeneration stage.
@@ -1361,6 +1370,7 @@ class ChatService:
             extra_instruction=REFLECTION_INSTRUCTION,
             web_results=web_results,
             persona=persona,
+            language=language,
         )
         llm_calls += 1
         steps_taken += 1  # regeneration
@@ -1397,6 +1407,7 @@ class ChatService:
             extra_instruction=REFLECTION_INSTRUCTION,
             web_results=web_results,
             persona=persona,
+            language=language,
         )
         llm_calls += 1
         steps_taken += 1  # regeneration with web context
@@ -1415,6 +1426,7 @@ class ChatService:
         steps_taken: int,
         confirm_web_search: bool = False,
         persona: str | None = None,
+        language: str | None = None,
     ) -> Generator[dict[str, Any], None, tuple[str, int, int, list[WebSearchResult], bool]]:
         """Streamed counterpart to _correct — mirrors its exact branches,
         conditions, and log lines (the two must be kept in sync; a
@@ -1458,6 +1470,7 @@ class ChatService:
             extra_instruction=REFLECTION_INSTRUCTION,
             web_results=web_results,
             persona=persona,
+            language=language,
         ):
             if is_final:
                 answer = value
@@ -1498,6 +1511,7 @@ class ChatService:
             extra_instruction=REFLECTION_INSTRUCTION,
             web_results=web_results,
             persona=persona,
+            language=language,
         ):
             if is_final:
                 answer = value
@@ -1520,6 +1534,7 @@ class ChatService:
         tenant_id: int | None = None,
         persona: str | None = None,
         document_ids: list[str] | None = None,
+        language: str = "en",
     ) -> ChatResponse:
         start = time.perf_counter()
         steps_taken = 1  # planning
@@ -1747,11 +1762,11 @@ class ChatService:
 
             if settings.structured_output_enabled and structured_response:
                 answer = self._generate_structured(
-                    query, chunks, recent_history, web_results=web_results, persona=persona
+                    query, chunks, recent_history, web_results=web_results, persona=persona, language=language
                 )
             else:
                 answer = self._generate(
-                    query, chunks, recent_history, web_results=web_results, persona=persona
+                    query, chunks, recent_history, web_results=web_results, persona=persona, language=language
                 )
             llm_calls = 1
             steps_taken += 1  # generation
@@ -1767,6 +1782,7 @@ class ChatService:
                 steps_taken,
                 confirm_web_search=confirm_web_search,
                 persona=persona,
+                language=language,
             )
 
             # Agent 1.4 — Ask-instead-of-guess: retrieval graded
@@ -1855,6 +1871,7 @@ class ChatService:
         tenant_id: int | None = None,
         persona: str | None = None,
         document_ids: list[str] | None = None,
+        language: str = "en",
     ) -> Iterator[dict[str, Any]]:
         """Streamed counterpart to handle_query, for POST /chat/stream.
 
@@ -2076,7 +2093,7 @@ class ChatService:
             yield _trace_event("generating", {})
             answer = ""
             for is_final, value in self._generate_streamed(
-                query, chunks, recent_history, web_results=web_results, persona=persona
+                query, chunks, recent_history, web_results=web_results, persona=persona, language=language
             ):
                 if is_final:
                     answer = value
@@ -2102,6 +2119,7 @@ class ChatService:
                 steps_taken,
                 confirm_web_search=confirm_web_search,
                 persona=persona,
+                language=language,
             )
 
             # Same Agent 1.4 ask-instead-of-guess + Agent 2.2 follow-up
@@ -2212,6 +2230,7 @@ class ChatService:
         persona: str | None = "agronomist",
         engine: str = "hybrid",
         weather_risk: WeatherRiskResponse | None = None,
+        language: str = "en",
     ) -> ChatResponse:
         """Diagnose a plant photo via LeafSense or Gemini, then run the predicted
         disease through the same corrective RAG loop handle_query uses."""
@@ -2271,6 +2290,9 @@ class ChatService:
                     disease=prediction.disease,
                     confidence=prediction.confidence,
                     low_confidence=prediction.low_confidence,
+                    heatmap_base64=prediction.heatmap_base64,
+                    infected_area_percentage=prediction.infected_area_percentage,
+                    lesion_count=prediction.lesion_count,
                 ).model_dump()
                 if weather_risk is not None:
                     cached_dict["weather_risk"] = weather_risk.model_dump()
@@ -2318,6 +2340,9 @@ class ChatService:
                                 disease=prediction.disease,
                                 confidence=prediction.confidence,
                                 low_confidence=prediction.low_confidence,
+                                heatmap_base64=prediction.heatmap_base64,
+                                infected_area_percentage=prediction.infected_area_percentage,
+                                lesion_count=prediction.lesion_count,
                             ),
                             session_id=session_id,
                             weather_risk=weather_risk,
@@ -2337,6 +2362,7 @@ class ChatService:
                 extra_instruction=extra_instruction,
                 web_results=web_results,
                 persona=persona,
+                language=language,
             )
             llm_calls = 1
             steps_taken += 1  # generation
@@ -2352,6 +2378,7 @@ class ChatService:
                 steps_taken,
                 confirm_web_search=confirm_web_search,
                 persona=persona,
+                language=language,
             )
         except AppError:
             # Includes VisionServiceError from diagnose_image, alongside the
@@ -2378,6 +2405,9 @@ class ChatService:
                 disease=prediction.disease,
                 confidence=prediction.confidence,
                 low_confidence=prediction.low_confidence,
+                heatmap_base64=prediction.heatmap_base64,
+                infected_area_percentage=prediction.infected_area_percentage,
+                lesion_count=prediction.lesion_count,
             ),
             session_id=session_id,
             weather_risk=weather_risk,
@@ -2404,6 +2434,7 @@ class ChatService:
         persona: str | None = "agronomist",
         engine: str = "hybrid",
         weather_risk: WeatherRiskResponse | None = None,
+        language: str = "en",
     ) -> Iterator[dict[str, Any]]:
         """Streamed counterpart to handle_diagnose, for POST /chat/diagnose/stream."""
         start = time.perf_counter()
@@ -2491,6 +2522,9 @@ class ChatService:
                     disease=prediction.disease,
                     confidence=prediction.confidence,
                     low_confidence=prediction.low_confidence,
+                    heatmap_base64=prediction.heatmap_base64,
+                    infected_area_percentage=prediction.infected_area_percentage,
+                    lesion_count=prediction.lesion_count,
                 ).model_dump()
                 if weather_risk is not None:
                     cached_dict["weather_risk"] = weather_risk.model_dump()
@@ -2564,6 +2598,9 @@ class ChatService:
                                 disease=prediction.disease,
                                 confidence=prediction.confidence,
                                 low_confidence=prediction.low_confidence,
+                                heatmap_base64=prediction.heatmap_base64,
+                                infected_area_percentage=prediction.infected_area_percentage,
+                                lesion_count=prediction.lesion_count,
                             ),
                             session_id=session_id,
                             weather_risk=weather_risk,
@@ -2588,6 +2625,7 @@ class ChatService:
                 extra_instruction=extra_instruction,
                 web_results=web_results,
                 persona=persona,
+                language=language,
             ):
                 if is_final:
                     answer = value
@@ -2617,6 +2655,7 @@ class ChatService:
                 steps_taken,
                 confirm_web_search=confirm_web_search,
                 persona=persona,
+                language=language,
             )
 
             follow_up_questions = []
@@ -2689,6 +2728,9 @@ class ChatService:
                 disease=prediction.disease,
                 confidence=prediction.confidence,
                 low_confidence=prediction.low_confidence,
+                heatmap_base64=prediction.heatmap_base64,
+                infected_area_percentage=prediction.infected_area_percentage,
+                lesion_count=prediction.lesion_count,
             ),
             session_id=session_id,
             retrieval_confidence=grade,

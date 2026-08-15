@@ -13,14 +13,23 @@ import {
   Radio,
   Activity,
   CheckCircle2,
+  Globe,
+  Languages,
 } from 'lucide-react'
 import { getAgronomicGuide, getSeverityInfo } from '../../utils/agronomyData'
+import {
+  SUPPORTED_LANGUAGES,
+  VOICE_LANGUAGE_MAP,
+  getVoiceLanguage,
+  getLanguageConfig,
+  t,
+} from '../../utils/i18n'
 
 /**
  * Builds a clear, spoken 24-48h emergency field action script from diagnosis and agronomic guides.
  */
-export function buildEmergencyFieldProtocolText(diagnosis, customAnswer) {
-  if (!diagnosis) return 'No active crop diagnosis available.'
+export function buildEmergencyFieldProtocolText(diagnosis, customAnswer, language = 'en') {
+  if (!diagnosis) return t('protocol.noDiagnosis', language)
 
   const crop = diagnosis.crop || 'crop'
   const disease = diagnosis.disease || 'condition'
@@ -31,10 +40,12 @@ export function buildEmergencyFieldProtocolText(diagnosis, customAnswer) {
   const isHealthy = disease.toLowerCase().includes('healthy')
 
   if (isHealthy) {
-    return `Field Health Report: Your ${crop} foliage is diagnosed as healthy with ${confidence}% certainty. Severity is low. Continue routine weekly scouting and balanced organic nutrition. No chemical fungicide is required.`
+    if (language === 'en') {
+      return `Field Health Report: Your ${crop} foliage is diagnosed as healthy with ${confidence}% certainty. Severity is low. Continue routine weekly scouting and balanced organic nutrition. No chemical fungicide is required.`
+    }
+    return t('protocol.healthyReport', language, { crop, confidence })
   }
 
-  const primarySymptom = guide.symptoms?.[0] || 'Visible foliar lesions detected.'
   const bioRemedy = guide.organicRemedies?.bioFungicides?.[0] || 'Apply preventative bio-fungicide.'
   const culturalStep = guide.organicRemedies?.culturalPractices?.[0] || 'Prune infected foliage and avoid overhead watering.'
   const chemStep = guide.chemicalControl?.activeIngredients?.[0]
@@ -42,16 +53,29 @@ export function buildEmergencyFieldProtocolText(diagnosis, customAnswer) {
     : 'Apply registered protectant fungicide.'
   const sprayInterval = guide.chemicalControl?.sprayInterval || 'Apply every 7 to 10 days during humid weather.'
 
-  return (
-    `Emergency 24 to 48-Hour Field Protocol for ${crop} affected by ${disease}. ` +
-    `Severity level: ${severity.level} with ${confidence}% visual certainty. ` +
-    `Pathogen: ${guide.pathogen}. ` +
-    `Immediate Step 1: Cultural Sanitation. ${culturalStep} ` +
-    `Immediate Step 2: Biological Control. ${bioRemedy} ` +
-    `Immediate Step 3: Chemical Treatment if infection persists. Apply ${chemStep}. ` +
-    `Spray interval: ${sprayInterval} ` +
-    `Safety Advisory: Always wear personal protective equipment and observe pre-harvest interval regulations.`
-  )
+  if (language === 'en') {
+    return (
+      `Emergency 24 to 48-Hour Field Protocol for ${crop} affected by ${disease}. ` +
+      `Severity level: ${severity.level} with ${confidence}% visual certainty. ` +
+      `Pathogen: ${guide.pathogen}. ` +
+      `Immediate Step 1: Cultural Sanitation. ${culturalStep} ` +
+      `Immediate Step 2: Biological Control. ${bioRemedy} ` +
+      `Immediate Step 3: Chemical Treatment if infection persists. Apply ${chemStep}. ` +
+      `Spray interval: ${sprayInterval} ` +
+      `Safety Advisory: Always wear personal protective equipment and observe pre-harvest interval regulations.`
+    )
+  }
+
+  const intro = t('protocol.emergencyIntro', language, { crop, disease })
+  const sev = t('protocol.severityLevel', language, { level: severity.level, confidence })
+  const pathogen = t('protocol.pathogenLabel', language, { pathogen: guide.pathogen })
+  const step1 = t('protocol.step1Sanitation', language, { step: culturalStep })
+  const step2 = t('protocol.step2Biological', language, { step: bioRemedy })
+  const step3 = t('protocol.step3Chemical', language, { step: chemStep })
+  const interval = t('protocol.sprayIntervalLabel', language, { interval: sprayInterval })
+  const safety = t('protocol.safetyAdvisory', language)
+
+  return `${intro} ${sev} ${pathogen} ${step1} ${step2} ${step3} ${interval} ${safety}`
 }
 
 /**
@@ -61,6 +85,7 @@ export function buildEmergencyFieldProtocolText(diagnosis, customAnswer) {
 export function SpeechToTextButton({
   onTranscript,
   disabled = false,
+  language = 'en',
   className = '',
   size = 'md',
   placeholder = 'Speak to add context or prompt...',
@@ -69,6 +94,8 @@ export function SpeechToTextButton({
   const [isSupported, setIsSupported] = useState(true)
   const [errorMessage, setErrorMessage] = useState(null)
   const recognitionRef = useRef(null)
+
+  const voiceLangCode = getVoiceLanguage(language)
 
   useEffect(() => {
     const SpeechRecognition =
@@ -84,7 +111,7 @@ export function SpeechToTextButton({
       const recognition = new SpeechRecognition()
       recognition.continuous = false
       recognition.interimResults = true
-      recognition.lang = 'en-US'
+      recognition.lang = voiceLangCode
 
       recognition.onstart = () => {
         setIsListening(true)
@@ -136,7 +163,7 @@ export function SpeechToTextButton({
         }
       }
     }
-  }, [onTranscript])
+  }, [onTranscript, voiceLangCode])
 
   const toggleListening = () => {
     if (disabled || !isSupported) return
@@ -150,13 +177,21 @@ export function SpeechToTextButton({
       setIsListening(false)
     } else {
       setErrorMessage(null)
+      if (recognitionRef.current) {
+        recognitionRef.current.lang = voiceLangCode
+      }
       try {
         recognitionRef.current?.start()
       } catch (err) {
         // In case recognition was already started or needs restart
         try {
           recognitionRef.current?.stop()
-          setTimeout(() => recognitionRef.current?.start(), 100)
+          setTimeout(() => {
+            if (recognitionRef.current) {
+              recognitionRef.current.lang = voiceLangCode
+              recognitionRef.current.start()
+            }
+          }, 100)
         } catch {
           setErrorMessage('Could not initialize microphone.')
           setIsListening(false)
@@ -188,7 +223,7 @@ export function SpeechToTextButton({
             ? 'Web Speech API is not supported in this browser'
             : isListening
             ? 'Listening... Click to stop'
-            : 'Voice dictation (Hands-free for field work)'
+            : `Voice dictation (${getLanguageConfig(language).nativeLabel})`
         }
         className={`relative flex items-center justify-center rounded-xl font-medium transition-all ${
           isSmall ? 'h-8 w-8 p-1 text-xs' : 'h-10 w-10 text-sm'
@@ -227,7 +262,7 @@ export function SpeechToTextButton({
           >
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 animate-ping rounded-full bg-rose-500" />
-              <span>Listening... Speak clearly</span>
+              <span>{t('buttons.listening', language)} ({voiceLangCode})</span>
             </div>
           </motion.div>
         )}
@@ -278,11 +313,12 @@ function SoundwaveBar({ isPlaying, isPaused }) {
 
 /**
  * Field Protocol Text-to-Speech Audio Player (TTS).
- * Provides "[ 🔊 Listen to 24h Field Protocol ]" with Play, Pause, Stop, and Soundwave visualization.
+ * Provides "[ Listen to 24h Field Protocol ]" with Play, Pause, Stop, and Soundwave visualization.
  */
 export function FieldProtocolAudioPlayer({
   diagnosis,
   customText,
+  language = 'en',
   title = '24h Field Treatment Protocol',
   className = '',
 }) {
@@ -291,6 +327,8 @@ export function FieldProtocolAudioPlayer({
   const [isSupported, setIsSupported] = useState(true)
   const [speechRate, setSpeechRate] = useState(0.95) // Clear pace for noisy fields
   const utteranceRef = useRef(null)
+
+  const voiceLangCode = getVoiceLanguage(language)
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
@@ -305,7 +343,7 @@ export function FieldProtocolAudioPlayer({
   }, [])
 
   const fullTextToRead =
-    customText || buildEmergencyFieldProtocolText(diagnosis)
+    customText || buildEmergencyFieldProtocolText(diagnosis, null, language)
 
   const handlePlay = () => {
     if (!isSupported || typeof window === 'undefined' || !window.speechSynthesis) return
@@ -322,7 +360,7 @@ export function FieldProtocolAudioPlayer({
     const utterance = new SpeechSynthesisUtterance(fullTextToRead)
     utterance.rate = speechRate
     utterance.pitch = 1.0
-    utterance.lang = 'en-US'
+    utterance.lang = voiceLangCode
 
     utterance.onstart = () => {
       setIsPlaying(true)
@@ -389,12 +427,12 @@ export function FieldProtocolAudioPlayer({
             {isPlaying && !isPaused && (
               <span className="inline-flex items-center gap-1 rounded-full bg-accent-500/20 px-2 py-0.2 text-[10px] font-bold text-accent-700 dark:text-accent-300">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-500" />
-                Reading Aloud
+                Reading Aloud ({voiceLangCode})
               </span>
             )}
           </div>
           <p className="text-[11px] text-slate-500 dark:text-ink-muted">
-            Emergency 24-48h action protocol narrated for noisy outdoor conditions
+            {t('protocol.subtitle', language)}
           </p>
         </div>
       </div>
@@ -414,7 +452,7 @@ export function FieldProtocolAudioPlayer({
             className="flex items-center gap-1.5 rounded-lg bg-accent-600 px-3 py-1.5 font-semibold text-white shadow-sm transition-all hover:bg-accent-700 active:scale-95 dark:bg-accent-500 dark:hover:bg-accent-600"
           >
             <Play size={14} className="fill-current" />
-            <span>{isPaused ? 'Resume' : '[ 🔊 Listen to 24h Field Protocol ]'}</span>
+            <span>{isPaused ? t('buttons.resume', language) : t('buttons.listenProtocol', language)}</span>
           </button>
         ) : (
           <button
@@ -425,7 +463,7 @@ export function FieldProtocolAudioPlayer({
             className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-semibold text-amber-700 transition-all hover:bg-amber-500/20 active:scale-95 dark:text-amber-300"
           >
             <Pause size={14} className="fill-current" />
-            <span>Pause</span>
+            <span>{t('buttons.pause', language)}</span>
           </button>
         )}
 
@@ -448,32 +486,104 @@ export function FieldProtocolAudioPlayer({
 }
 
 /**
- * Composite Voice Interaction Bar offering hands-free STT dictation and TTS field audio.
+ * Language Selector Dropdown Component:
+ * [ English | Español | हिन्दी | Português | Français | Kiswahili ]
+ */
+export function LanguageSelectorDropdown({
+  value,
+  language,
+  onChange,
+  className = '',
+  size = 'md',
+  disabled = false,
+}) {
+  const activeValue = value || language || 'en'
+
+  return (
+    <div className={`inline-flex items-center gap-1.5 ${className}`}>
+      <Languages size={size === 'sm' ? 14 : 16} className="text-accent-600 dark:text-accent-400 shrink-0" />
+      <select
+        data-testid="voice-language-selector"
+        aria-label="Select voice and text language"
+        value={activeValue}
+        disabled={disabled}
+        onChange={(e) => onChange?.(e.target.value)}
+        className="rounded-lg border border-border-light bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-800 outline-none transition-colors focus:border-accent-500 focus:ring-2 focus:ring-accent-500/30 dark:border-border dark:bg-card dark:text-ink-primary disabled:opacity-50"
+      >
+        {SUPPORTED_LANGUAGES.map((lang) => (
+          <option key={lang.code} value={lang.code}>
+            {lang.nativeLabel} ({lang.label})
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+/**
+ * Composite Voice Interaction Bar offering hands-free STT dictation,
+ * TTS field audio, and multilingual language selection.
  */
 export default function VoiceInteractionBar({
   diagnosis,
   customText,
+  language = 'en',
+  onLanguageChange,
   onTranscript,
   showDictation = true,
   showPlayer = true,
+  showLanguageSelector = true,
   className = '',
 }) {
+  const [selectedLanguage, setSelectedLanguage] = useState(language)
+
+  useEffect(() => {
+    setSelectedLanguage(language)
+  }, [language])
+
+  const handleLangChange = (newLang) => {
+    setSelectedLanguage(newLang)
+    onLanguageChange?.(newLang)
+  }
+
   return (
     <div
       data-testid="voice-interaction-bar"
       className={`space-y-3 ${className}`}
     >
+      {/* Top Bar with Language Selector */}
+      {showLanguageSelector && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-light bg-slate-900/[0.02] p-2.5 text-xs dark:border-border dark:bg-white/[0.02]">
+          <div className="flex items-center gap-2 text-slate-600 dark:text-ink-secondary">
+            <Globe size={15} className="text-accent-500" />
+            <span className="font-semibold">{t('buttons.selectLanguage', selectedLanguage)}:</span>
+          </div>
+          <LanguageSelectorDropdown
+            value={selectedLanguage}
+            onChange={handleLangChange}
+            size="sm"
+          />
+        </div>
+      )}
+
       {showPlayer && diagnosis && (
-        <FieldProtocolAudioPlayer diagnosis={diagnosis} customText={customText} />
+        <FieldProtocolAudioPlayer
+          diagnosis={diagnosis}
+          customText={customText}
+          language={selectedLanguage}
+        />
       )}
 
       {showDictation && onTranscript && (
         <div className="flex items-center justify-between rounded-xl border border-border-light bg-slate-900/[0.02] p-3 text-xs dark:border-border dark:bg-white/[0.02]">
           <div className="flex items-center gap-2 text-slate-600 dark:text-ink-secondary">
             <Radio size={15} className="text-accent-500" />
-            <span>Hands-free Field Voice Dictation (Dirty/Gloved hands mode)</span>
+            <span>{t('buttons.voiceDictation', selectedLanguage)}</span>
           </div>
-          <SpeechToTextButton onTranscript={onTranscript} />
+          <SpeechToTextButton
+            onTranscript={onTranscript}
+            language={selectedLanguage}
+          />
         </div>
       )}
     </div>

@@ -21,6 +21,7 @@ export async function diagnoseLeaf(image, options = {}) {
   if (options.sessionId) formData.append('session_id', options.sessionId)
   if (options.confirmWebSearch) formData.append('confirm_web_search', String(options.confirmWebSearch))
   if (options.engine) formData.append('engine', options.engine)
+  if (options.language) formData.append('language', options.language)
 
   // Vision inference + retrieval + generation can be slow, so this gets the
   // same longer timeout as /chat rather than the shared api instance default.
@@ -40,7 +41,7 @@ export async function diagnoseLeaf(image, options = {}) {
  * - 'error': { type: 'error', detail: object }
  *
  * @param {File} file An image file (from camera capture or file picker).
- * @param {string|{ query?: string, sessionId?: string, confirmWebSearch?: boolean, engine?: string }} [queryOrOptions]
+ * @param {string|{ query?: string, sessionId?: string, confirmWebSearch?: boolean, engine?: string, language?: string }} [queryOrOptions]
  * @param {(event: { type: string, [key: string]: any }) => void} [onEvent]
  * @param {(error: any) => void} [onError]
  * @returns {Promise<void>}
@@ -50,6 +51,7 @@ export async function diagnoseImageStream(file, queryOrOptions = '', onEvent, on
   let sessionId = undefined
   let confirmWebSearch = false
   let engine = 'hybrid'
+  let language = 'en'
 
   if (typeof queryOrOptions === 'string') {
     query = queryOrOptions
@@ -58,6 +60,7 @@ export async function diagnoseImageStream(file, queryOrOptions = '', onEvent, on
     sessionId = queryOrOptions.sessionId
     confirmWebSearch = queryOrOptions.confirmWebSearch
     engine = queryOrOptions.engine || 'hybrid'
+    language = queryOrOptions.language || 'en'
   }
 
   const formData = new FormData()
@@ -66,12 +69,13 @@ export async function diagnoseImageStream(file, queryOrOptions = '', onEvent, on
   if (sessionId) formData.append('session_id', sessionId)
   if (confirmWebSearch) formData.append('confirm_web_search', String(confirmWebSearch))
   if (engine) formData.append('engine', engine)
+  if (language) formData.append('language', language)
 
   const token = typeof window !== 'undefined' ? window.localStorage?.getItem(AUTH_TOKEN_KEY) : null
 
   async function fallbackNonStreaming() {
     try {
-      const data = await diagnoseLeaf(file, { query, sessionId, confirmWebSearch, engine })
+      const data = await diagnoseLeaf(file, { query, sessionId, confirmWebSearch, engine, language })
       if (data?.diagnosis) {
         onEvent?.({ type: 'diagnosis', diagnosis: data.diagnosis, payload: data.diagnosis })
       }

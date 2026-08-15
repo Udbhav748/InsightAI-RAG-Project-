@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.models.document import RetrievedChunk
+from app.models.document import RetrievedChunk, VisionPrediction
 
 
 class DocumentUploadResponse(BaseModel):
@@ -63,6 +63,10 @@ class ChatRequest(BaseModel):
         description="When set, retrieval is scoped to exactly these document_ids — chat "
         "against a named collection instead of the whole library.",
     )
+    language: str = Field(
+        "en",
+        description="Language code for multilingual localization (e.g. 'en', 'es', 'hi', 'pt', 'fr', 'sw').",
+    )
 
 
 class SourceReference(BaseModel):
@@ -102,6 +106,15 @@ class DiagnosisInfo(BaseModel):
     )
     low_confidence: bool = Field(
         ..., description="True if confidence is below Settings.vision_confidence_threshold."
+    )
+    heatmap_base64: str | None = Field(
+        None, description="Base64 encoded PNG heatmap lesion overlay."
+    )
+    infected_area_percentage: float | None = Field(
+        None, description="Estimated percentage of leaf surface infected (0.0% to 100.0%)."
+    )
+    lesion_count: int | None = Field(
+        None, description="Estimated count of distinct lesion spots."
     )
 
 

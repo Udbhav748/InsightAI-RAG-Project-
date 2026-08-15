@@ -36,6 +36,8 @@ export default function Diagnose() {
     query,
     engine,
     setEngine,
+    language,
+    setLanguage,
     status,
     isStreaming,
     result,
@@ -100,11 +102,13 @@ export default function Diagnose() {
               previewUrl={previewUrl}
               query={query}
               engine={engine}
+              language={language}
               status={status}
               onSelectImage={selectImage}
               onClearImage={clearImage}
               onQueryChange={setQueryText}
               onEngineChange={setEngine}
+              onLanguageChange={setLanguage}
               onAnalyze={analyze}
             />
 
@@ -202,9 +206,12 @@ export default function Diagnose() {
 
             <DiagnosisResult
               result={result}
+              previewUrl={previewUrl}
               onReset={reset}
               query={query}
               isStreaming={isStreaming || status === 'streaming'}
+              language={language}
+              onLanguageChange={setLanguage}
             />
           </motion.div>
         )}

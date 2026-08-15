@@ -113,6 +113,18 @@ class VisionPrediction(BaseModel):
         default="leafsense",
         description="Inference engine that produced the prediction ('leafsense', 'gemini_vision', 'hybrid_consensus').",
     )
+    heatmap_base64: str | None = Field(
+        default=None,
+        description="Base64-encoded PNG image of the leaf saliency / lesion heatmap overlay.",
+    )
+    infected_area_percentage: float | None = Field(
+        default=None,
+        description="Estimated percentage of leaf surface infected (0.0 to 100.0).",
+    )
+    lesion_count: int | None = Field(
+        default=None,
+        description="Estimated count of distinct lesion spots.",
+    )
 
 
 class ExtractedImage(BaseModel):

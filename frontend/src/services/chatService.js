@@ -27,6 +27,7 @@ function buildChatPayload(query, options) {
   if (options.documentIds?.length) payload.document_ids = options.documentIds
   if (options.confirmWebSearch != null) payload.confirm_web_search = options.confirmWebSearch
   if (options.structuredResponse != null) payload.structured_response = options.structuredResponse
+  if (options.language) payload.language = options.language
   return payload
 }
 
@@ -124,6 +125,86 @@ export async function streamChatMessage(query, options = {}, callbacks = {}) {
     }
   }
 }
+
+/**
+ * Send a chat query to POST /chat/agent-graph/stream and consume the multi-agent
+ * StateGraph Server-Sent Events as node transitions and tokens arrive.
+ *
+ * @param {string} query
+ * @param {{ topK?: number, minScore?: number, history?: {role: string, content: string}[], sessionId?: string, persona?: string, documentIds?: string[], confirmWebSearch?: boolean, structuredResponse?: boolean }} [options]
+ * @param {{
+ *   onNodeStart?: (node: string, timestamp: number) => void,
+ *   onNodeComplete?: (node: string, output: object, duration_ms: number) => void,
+ *   onChunk?: (text: string) => void,
+ *   onDone?: (finalState: object) => void,
+ *   onError?: (detail: { error_type: string, message: string, status_code: number }) => void,
+ * }} [callbacks]
+ */
+export async function streamAgentGraphChatMessage(query, options = {}, callbacks = {}) {
+  const { onNodeStart, onNodeComplete, onChunk, onDone, onError } = callbacks
+
+  const token = window.localStorage.getItem(AUTH_TOKEN_KEY)
+  const response = await fetch(`${API_BASE_URL}/chat/agent-graph/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(buildChatPayload(query, options)),
+  })
+
+  if (!response.ok || !response.body) {
+    if (response.status === 401 && window.location.pathname !== '/login') {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY)
+      window.location.href = '/login'
+    }
+    const error = new Error(`Request failed with status ${response.status}`)
+    error.response = { status: response.status, data: await response.json().catch(() => null) }
+    throw error
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+
+      const data = rawEvent
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice('data: '.length))
+        .join('\n')
+
+      if (data) {
+        try {
+          const event = JSON.parse(data)
+          if (event.type === 'node_start') onNodeStart?.(event.node, event.timestamp)
+          else if (event.type === 'node_complete') onNodeComplete?.(event.node, event.output, event.duration_ms)
+          else if (event.type === 'token') onChunk?.(event.text)
+          else if (event.type === 'graph_done') onDone?.(event.final_state)
+          else if (event.type === 'error') onError?.(event.detail)
+        } catch {
+          onError?.({
+            error_type: 'stream_parse_error',
+            message: 'Received an unexpected message from the server.',
+            status_code: 0,
+          })
+        }
+      }
+
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
+}
+
 
 /**
  * Delete the server-side chat session by id (DELETE /chat/sessions/{id}).

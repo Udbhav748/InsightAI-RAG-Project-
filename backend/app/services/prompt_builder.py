@@ -143,6 +143,76 @@ _WEB_RESULTS_INSTRUCTION = (
 )
 
 
+SUPPORTED_LANGUAGES: dict[str, str] = {
+    "en": "English",
+    "es": "Spanish (Español)",
+    "hi": "Hindi (हिन्दी)",
+    "pt": "Portuguese (Português)",
+    "fr": "French (Français)",
+    "sw": "Swahili (Kiswahili)",
+}
+
+LANGUAGE_INSTRUCTIONS: dict[str, str] = {
+    "es": (
+        "LANGUAGE LOCALIZATION MANDATE (Spanish / Español):\n"
+        "You MUST produce your entire response in Spanish (Español). Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in fluent Spanish. Retain scientific chemical active ingredient names, "
+        "FRAC codes, and standard chemical dosage notations in English/standard notation accompanied by "
+        "their Spanish translations (e.g., 'copper hydroxide / hidróxido de cobre', 'mancozeb / mancozeb', 'FRAC M01')."
+    ),
+    "hi": (
+        "LANGUAGE LOCALIZATION MANDATE (Hindi / हिन्दी):\n"
+        "You MUST produce your entire response in Hindi (हिन्दी). Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in fluent vernacular Hindi. Retain scientific chemical active ingredient names, "
+        "FRAC codes, and standard chemical dosage notations in English/standard notation accompanied by "
+        "their Hindi transliterations/translations (e.g., 'mancozeb / मैंकोजेब', 'copper oxychloride / कॉपर ऑक्सीक्लोराइड', 'FRAC M03')."
+    ),
+    "pt": (
+        "LANGUAGE LOCALIZATION MANDATE (Portuguese / Português):\n"
+        "You MUST produce your entire response in Portuguese (Português). Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in fluent Portuguese. Retain scientific chemical active ingredient names, "
+        "FRAC codes, and standard chemical dosage notations in English/standard notation accompanied by "
+        "their Portuguese translations (e.g., 'chlorothalonil / clorotalonil', 'copper sulfate / sulfato de cobre', 'FRAC M05')."
+    ),
+    "fr": (
+        "LANGUAGE LOCALIZATION MANDATE (French / Français):\n"
+        "You MUST produce your entire response in French (Français). Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in fluent French. Retain scientific chemical active ingredient names, "
+        "FRAC codes, and standard chemical dosage notations in English/standard notation accompanied by "
+        "their French translations (e.g., 'mancozeb / mancozèbe', 'bordeaux mixture / bouillie bordelaise', 'FRAC M03')."
+    ),
+    "sw": (
+        "LANGUAGE LOCALIZATION MANDATE (Swahili / Kiswahili):\n"
+        "You MUST produce your entire response in Swahili (Kiswahili). Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in fluent vernacular Swahili. Retain scientific chemical active ingredient names, "
+        "FRAC codes, and standard chemical dosage notations in English/standard notation accompanied by "
+        "their local Swahili translations/explanations (e.g., 'copper hydroxide / dawa ya ukungu ya shaba', 'FRAC M01')."
+    ),
+}
+
+
+def get_language_instruction(language: str | None) -> str | None:
+    """Return localization instructions when target language is not English."""
+    if not language or language.strip().lower() in ("en", "en-us", "en-gb", "english"):
+        return None
+    lang_key = language.strip().lower().split("-")[0]
+    if lang_key in LANGUAGE_INSTRUCTIONS:
+        return LANGUAGE_INSTRUCTIONS[lang_key]
+    lang_name = SUPPORTED_LANGUAGES.get(lang_key, language)
+    return (
+        f"LANGUAGE LOCALIZATION MANDATE ({lang_name}):\n"
+        f"You MUST produce your entire response in {lang_name}. Output the visual diagnosis, "
+        "severity assessment, organic remedies, cultural practices, and step-by-step 24h emergency "
+        "field protocol instructions in the target language while retaining scientific chemical active "
+        "ingredients in English/standard notation with local translations."
+    )
+
+
 def _format_history(history: list[dict[str, Any]] | None) -> str:
     if not history:
         return ""
@@ -193,6 +263,7 @@ def build_prompt(
     extra_instruction: str | None = None,
     web_results: list[WebSearchResult] | None = None,
     persona: str | None = None,
+    language: str | None = None,
 ) -> str:
     if not query or not query.strip():
         raise PromptGenerationError("Cannot build a prompt from an empty query.")
@@ -202,6 +273,9 @@ def build_prompt(
     instructions = _INSTRUCTIONS
     if persona and persona in PERSONAS:
         instructions = f"{instructions}\n\n{PERSONAS[persona]}"
+    lang_instruction = get_language_instruction(language)
+    if lang_instruction:
+        instructions = f"{instructions}\n\n{lang_instruction}"
     if web_results:
         instructions = f"{instructions}\n\n{_WEB_RESULTS_INSTRUCTION}"
     if extra_instruction:
@@ -239,6 +313,7 @@ def build_structured_prompt(
     history: list[dict[str, Any]] | None = None,
     web_results: list[WebSearchResult] | None = None,
     persona: str | None = None,
+    language: str | None = None,
 ) -> str:
     """Build the JSON-mode counterpart of build_prompt: same context
     assembly and trust boundary, but the model is told to emit ONLY a JSON
@@ -252,6 +327,9 @@ def build_structured_prompt(
     instructions = _INSTRUCTIONS
     if persona and persona in PERSONAS:
         instructions = f"{instructions}\n\n{PERSONAS[persona]}"
+    lang_instruction = get_language_instruction(language)
+    if lang_instruction:
+        instructions = f"{instructions}\n\n{lang_instruction}"
     if web_results:
         instructions = f"{instructions}\n\n{_WEB_RESULTS_INSTRUCTION}"
     structured_instruction = (
