@@ -34,6 +34,16 @@ SCHEMA_COMPLIANCE = {"total": 0, "passed": 0}
 
 
 @pytest.fixture(autouse=True)
+def _reset_semantic_cache():
+    """Clear the global semantic query cache before each test."""
+    from app.services.cache_service import cache_service
+
+    cache_service.invalidate()
+    yield
+    cache_service.invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limit_store():
     """Clear the global per-client rate-limit buckets before each test.
 

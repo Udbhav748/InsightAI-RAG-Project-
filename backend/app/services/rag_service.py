@@ -1597,13 +1597,15 @@ class ChatService:
             # answer depends on live web state, so it's never cached).
             plan_crop = getattr(plan, "crop", None)
             plan_disease = getattr(plan, "disease", None)
-            cached = self._get_cached_response(
-                query=query,
-                crop=plan_crop,
-                disease=plan_disease,
-                tenant_id=tenant_id,
-                document_ids=document_ids,
-            )
+            cached = None
+            if not history and not recent_history:
+                cached = self._get_cached_response(
+                    query=query,
+                    crop=plan_crop,
+                    disease=plan_disease,
+                    tenant_id=tenant_id,
+                    document_ids=document_ids,
+                )
             if cached is not None:
                 logger.info(
                     "cache_hit",
@@ -1944,13 +1946,15 @@ class ChatService:
             # Check cache first (only cache final responses after corrective loop)
             plan_crop = getattr(plan, "crop", None)
             plan_disease = getattr(plan, "disease", None)
-            cached = self._get_cached_response(
-                query=query,
-                crop=plan_crop,
-                disease=plan_disease,
-                tenant_id=tenant_id,
-                document_ids=document_ids,
-            )
+            cached = None
+            if not history and not recent_history:
+                cached = self._get_cached_response(
+                    query=query,
+                    crop=plan_crop,
+                    disease=plan_disease,
+                    tenant_id=tenant_id,
+                    document_ids=document_ids,
+                )
             if cached is not None:
                 logger.info(
                     "cache_hit",

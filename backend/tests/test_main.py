@@ -905,7 +905,7 @@ class TestAdminUsageSummary:
 
     def test_allowed_for_admin_returns_empty_rows_when_db_disabled(self, client, monkeypatch):
         monkeypatch.setattr("app.core.auth.resolve_tenant", lambda client_name: (1, "admin"))
-        monkeypatch.setattr("app.api.v1.routes.admin.get_usage_summary", lambda tenant_id=None: [])
+        monkeypatch.setattr("app.api.v1.routes.admin.db_enabled", lambda: False)
         response = client.get("/admin/usage-summary", headers=VALID_HEADERS)
         assert response.status_code == 200
         assert response.json() == {"rows": []}
