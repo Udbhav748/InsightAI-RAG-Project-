@@ -1,8 +1,9 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AppLayout from './layouts/AppLayout'
 import PageFallback from './components/ui/PageFallback'
+import OfflineBanner from './components/ui/OfflineBanner'
 import ThemeProvider from './contexts/ThemeContext'
 import ToastProvider from './contexts/ToastContext'
 import AuthProvider from './contexts/AuthContext'
@@ -93,11 +94,32 @@ function AnimatedRoutes() {
 }
 
 export default function App() {
+  useEffect(() => {
+    // Register PWA service worker in supported browser environments
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker
+          .register('/sw.js')
+          .then((registration) => {
+            if (import.meta.env?.DEV) {
+              console.log('PWA ServiceWorker registered with scope:', registration.scope)
+            }
+          })
+          .catch((error) => {
+            if (import.meta.env?.DEV) {
+              console.warn('PWA ServiceWorker registration failed:', error)
+            }
+          })
+      })
+    }
+  }, [])
+
   return (
     <ThemeProvider>
       <ToastProvider>
         <BrowserRouter>
           <AuthProvider>
+            <OfflineBanner />
             <AnimatedRoutes />
           </AuthProvider>
         </BrowserRouter>

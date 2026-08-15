@@ -7,10 +7,13 @@ import {
   Calculator,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   FileText,
   FlaskConical,
   Info,
   Leaf,
+  MapPin,
   RefreshCw,
   ScanLine,
   ShieldAlert,
@@ -23,6 +26,7 @@ import ServiceHealthBanner from '../components/diagnose/ServiceHealthBanner'
 import UploadCameraArea from '../components/diagnose/UploadCameraArea'
 import DiagnosisResult from '../components/diagnose/DiagnosisResult'
 import SprayDosageCalculator from '../components/diagnose/SprayDosageCalculator'
+import FieldScoutingLog from '../components/diagnose/FieldScoutingLog'
 import useDiagnose from '../hooks/useDiagnose'
 
 export default function Diagnose() {
@@ -47,6 +51,7 @@ export default function Diagnose() {
   } = useDiagnose()
 
   const [showStandaloneCalculator, setShowStandaloneCalculator] = useState(false)
+  const [showScoutingHistory, setShowScoutingHistory] = useState(false)
 
   const isLowConfidenceOrOOD =
     (result?.diagnosis?.confidence != null && result?.diagnosis?.confidence < 0.45) ||
@@ -204,6 +209,37 @@ export default function Diagnose() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Field Scouting History Expandable Panel */}
+      <div className="border-t border-border-light pt-4 dark:border-border" data-testid="field-scouting-expandable-panel">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-ink-secondary">
+            <MapPin size={15} className="text-accent-500" />
+            <span className="font-medium">Field Scouting History & Outbreak Tracking</span>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            icon={showScoutingHistory ? ChevronUp : ChevronDown}
+            onClick={() => setShowScoutingHistory((prev) => !prev)}
+            data-testid="toggle-scouting-history-panel"
+          >
+            {showScoutingHistory ? 'Hide Scouting History' : 'Field Scouting History'}
+          </Button>
+        </div>
+
+        {showScoutingHistory && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-4"
+          >
+            <FieldScoutingLog currentDiagnosis={result?.diagnosis} />
+          </motion.div>
+        )}
+      </div>
     </div>
   )
 }

@@ -24,6 +24,7 @@ from fastapi import APIRouter, Header, Response, status
 
 from app.core.config import settings
 from app.core.metrics import get_metrics
+from app.services.metrics import export_prometheus_metrics
 
 router = APIRouter()
 
@@ -48,7 +49,9 @@ def metrics_endpoint(
                 media_type="application/json",
             )
 
-    body = get_metrics().render()
+    core_body = get_metrics().render()
+    rag_body = export_prometheus_metrics()
+    body = core_body + rag_body
     # text/plain with the Prometheus version param; scrapers accept either
     # this or OpenMetrics (a separate Accept negotiation we don't need).
     return Response(

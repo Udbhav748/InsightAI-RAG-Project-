@@ -8,6 +8,7 @@ import {
   FileDown,
   FileText,
   Leaf,
+  MapPin,
   MessageCircle,
   Printer,
   RefreshCw,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import Button from '../ui/Button'
 import { getSeverityInfo } from '../../utils/agronomyData'
+import { addScoutingEntry } from '../../utils/scoutingStorage'
 import PrescriptionWorkOrderModal from './PrescriptionWorkOrderModal'
 import { FieldProtocolAudioPlayer } from './VoiceInteractionBar'
 
@@ -42,9 +44,11 @@ export default function PredictionHeroCard({
   sessionId,
   processingTime,
   onReset,
+  onSaveToLog,
 }) {
   const navigate = useNavigate()
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false)
+  const [isSavedToLog, setIsSavedToLog] = useState(false)
 
   const confidence = diagnosis?.confidence ?? 0
   const confidencePercent = Math.round(confidence * 100)
@@ -78,6 +82,24 @@ export default function PredictionHeroCard({
         severity: sev,
       },
     })
+  }
+
+  const handleSaveToFieldLog = () => {
+    if (!diagnosis) return
+    const entry = addScoutingEntry({
+      crop: diagnosis.crop || 'Crop',
+      disease: diagnosis.disease || 'Unknown Condition',
+      severity: severity?.level || 'Moderate',
+      confidence: confidence,
+      location: 'North Orchard Block B (Scouted)',
+      notes: `Automated diagnosis saved from LeafSense hybrid vision (${diagnosis.raw_class || 'vision'})`,
+      remedyApplied: 'Standard Treatment Recommended',
+    })
+    setIsSavedToLog(true)
+    onSaveToLog?.(entry)
+    setTimeout(() => {
+      setIsSavedToLog(false)
+    }, 2500)
   }
 
   return (
@@ -230,6 +252,18 @@ export default function PredictionHeroCard({
               data-testid="download-prescription-button"
             >
               Download Spray Prescription Work Order
+            </Button>
+
+            {/* Quick Action: Save to Field Log */}
+            <Button
+              type="button"
+              variant="secondary"
+              icon={isSavedToLog ? CheckCircle2 : MapPin}
+              onClick={handleSaveToFieldLog}
+              data-testid="save-to-field-log-button"
+              className={isSavedToLog ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400' : ''}
+            >
+              {isSavedToLog ? 'Saved to Field Log ✓' : 'Save to Field Log'}
             </Button>
 
             {/* Reset / Diagnose Another Leaf */}
