@@ -12,16 +12,20 @@ Provides precision re-ranking of retrieval candidate pools using:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import re
 import time
 from functools import lru_cache
-from typing import Any, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +36,10 @@ _STOPWORDS = {
     "a", "an", "the", "and", "or", "but", "if", "because", "as", "what",
     "which", "this", "that", "these", "those", "then", "just", "so", "than",
     "such", "both", "through", "about", "for", "is", "of", "while", "during",
-    "to", "from", "in", "out", "on", "off", "again", "further", "then", "once",
-    "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
-    "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
-    "own", "same", "so", "than", "too", "very", "s", "t", "can", "will", "don",
+    "to", "from", "in", "out", "on", "off", "again", "further", "once",
+    "here", "there", "when", "where", "why", "how", "all", "any", "each",
+    "few", "more", "most", "other", "some", "no", "nor", "not", "only",
+    "own", "same", "too", "very", "s", "t", "can", "will", "don",
     "should", "now",
 }
 
@@ -175,9 +179,12 @@ class CrossEncoderReranker:
                 and "text" in chunk["metadata"]
             ):
                 return str(chunk["metadata"]["text"])
-        if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
-            if "text" in chunk.metadata:
-                return str(chunk.metadata["text"])
+        if (
+            hasattr(chunk, "metadata")
+            and isinstance(chunk.metadata, dict)
+            and "text" in chunk.metadata
+        ):
+            return str(chunk.metadata["text"])
         return str(chunk)
 
     def _attach_score(self, chunk: TChunk, score: float) -> TChunk:
@@ -189,10 +196,8 @@ class CrossEncoderReranker:
             update_dict: dict[str, Any] = {"metadata": meta}
             try:
                 copied = chunk.model_copy(update=update_dict)
-                try:
+                with contextlib.suppress(Exception):
                     object.__setattr__(copied, "rerank_score", score_val)
-                except Exception:
-                    pass
                 return copied
             except Exception:
                 pass
@@ -208,10 +213,8 @@ class CrossEncoderReranker:
 
         if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
             chunk.metadata["rerank_score"] = score_val
-        try:
-            setattr(chunk, "rerank_score", score_val)
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            chunk.rerank_score = score_val
         return chunk
 
     def score_pairs(self, query: str, texts: Sequence[str]) -> list[float]:

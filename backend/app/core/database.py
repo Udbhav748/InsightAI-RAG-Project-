@@ -135,9 +135,8 @@ def run_migrations() -> None:
 
     Idempotent: `upgrade head` on an already-current database is a no-op.
     """
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
@@ -222,9 +221,8 @@ def _stamp_migrations_at_head() -> None:
     the same create_all fallback and the next real migration would be skipped
     silently forever.
     """
-    from alembic.config import Config
-
     from alembic import command
+    from alembic.config import Config
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))

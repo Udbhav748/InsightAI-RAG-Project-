@@ -16,15 +16,16 @@ import json
 import logging
 import math
 import re
-import string
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def cosine_similarity(
         dot = 0.0
         norm1_sq = 0.0
         norm2_sq = 0.0
-        for a, b in zip(vec1, vec2):
+        for a, b in zip(vec1, vec2, strict=False):
             dot += a * b
             norm1_sq += a * a
             norm2_sq += b * b
@@ -574,7 +575,7 @@ class AdaptiveCacheService:
         # 1. Set in Redis if active
         if self.is_redis_active:
             try:
-                if isinstance(value, (dict, list, int, float, bool)):
+                if isinstance(value, dict | list | int | float | bool):
                     serialized = json.dumps(value, default=str)
                 elif hasattr(value, "model_dump"):
                     serialized = json.dumps(value.model_dump(), default=str)

@@ -3,6 +3,7 @@
 See backend/.env.example for a description of each variable.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -47,10 +48,8 @@ def _load_secrets_from_ssm() -> None:
 def _sanitize_hf_cache_dirs() -> None:
     """Ensure HF_HOME, TRANSFORMERS_CACHE, and TORCH_HOME point to valid, existing local paths."""
     safe_cache = Path.home() / ".cache" / "huggingface"
-    try:
+    with contextlib.suppress(Exception):
         safe_cache.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
 
     for key in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "TORCH_HOME"):
         val = os.environ.get(key)

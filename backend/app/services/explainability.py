@@ -136,10 +136,14 @@ def _count_connected_components(binary_mask: np.ndarray, min_pixel_size: int = 1
                     for dy in (-1, 0, 1):
                         for dx in (-1, 0, 1):
                             ny, nx = cy + dy, cx + dx
-                            if 0 <= ny < h and 0 <= nx < w:
-                                if binary_mask[ny, nx] and not visited[ny, nx]:
-                                    visited[ny, nx] = True
-                                    queue.append((ny, nx))
+                            if (
+                                0 <= ny < h
+                                and 0 <= nx < w
+                                and binary_mask[ny, nx]
+                                and not visited[ny, nx]
+                            ):
+                                visited[ny, nx] = True
+                                queue.append((ny, nx))
 
                 if blob_size >= min_pixel_size:
                     count += 1

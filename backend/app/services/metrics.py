@@ -11,7 +11,10 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 # Fixed histogram buckets in seconds for RAG pipeline steps (sub-millisecond to multi-minute)
 HISTOGRAM_BUCKETS_SECONDS: tuple[float, ...] = (

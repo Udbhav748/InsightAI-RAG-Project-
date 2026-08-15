@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.models.document import RetrievedChunk, VisionPrediction
+from app.models.document import RetrievedChunk
 
 
 class DocumentUploadResponse(BaseModel):

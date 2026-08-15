@@ -99,7 +99,7 @@ def calculate_disease_risk(
     # 1. Smith Period Model (Late Blight / Downy Mildew)
     max_consecutive_smith = 0
     current_consecutive_smith = 0
-    for t, rh in zip(hourly_temps, hourly_rh):
+    for t, rh in zip(hourly_temps, hourly_rh, strict=False):
         if rh >= 90.0 and 15.0 <= t <= 22.0:
             current_consecutive_smith += 1
             if current_consecutive_smith > max_consecutive_smith:
@@ -134,7 +134,7 @@ def calculate_disease_risk(
     # 2. Powdery Mildew Model
     current_powdery = (70.0 <= cur_rh <= 85.0) and (20.0 <= cur_temp <= 28.0) and (cur_precip <= 0.1)
     powdery_hours = sum(
-        1 for t, rh in zip(hourly_temps, hourly_rh) if 70.0 <= rh <= 85.0 and 20.0 <= t <= 28.0
+        1 for t, rh in zip(hourly_temps, hourly_rh, strict=False) if 70.0 <= rh <= 85.0 and 20.0 <= t <= 28.0
     )
     if current_powdery or powdery_hours >= 8:
         powdery_score = 0.85 if (current_powdery and powdery_hours >= 6) else 0.75
@@ -191,7 +191,7 @@ def calculate_disease_risk(
 
     # 4. Foliar Rust Model
     current_rust = (cur_rh > 80.0) and (16.0 <= cur_temp <= 24.0)
-    rust_hours = sum(1 for t, rh in zip(hourly_temps, hourly_rh) if rh > 80.0 and 16.0 <= t <= 24.0)
+    rust_hours = sum(1 for t, rh in zip(hourly_temps, hourly_rh, strict=False) if rh > 80.0 and 16.0 <= t <= 24.0)
 
     if current_rust and rust_hours >= 6:
         rust_score = 0.85
