@@ -627,22 +627,52 @@ class ChatService:
         key_str = f"{normalized}|{session}|{doc_hash}|{tenant}|{doc_scope}"
         return hashlib.sha256(key_str.encode()).hexdigest()[:32]
 
-    def _get_cached_response(self, cache_key: str) -> ChatResponse | None:
-        """Get cached response from adaptive cache (Redis or In-Memory)."""
-        cached_data = cache_service.get(cache_key)
+    def _get_cached_response(
+        self,
+        query: str,
+        crop: str | None = None,
+        disease: str | None = None,
+        tenant_id: int | None = None,
+        document_ids: list[str] | None = None,
+    ) -> ChatResponse | None:
+        """Get cached response from SemanticQueryCache."""
+        cached_data = cache_service.get(
+            query=query,
+            crop=crop,
+            disease=disease,
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+        )
         if cached_data is not None:
             if isinstance(cached_data, ChatResponse):
                 return cached_data
             if isinstance(cached_data, dict):
                 try:
                     return ChatResponse.model_validate(cached_data)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to deserialize cached ChatResponse: %s", exc)
                     return None
         return None
 
-    def _cache_response(self, cache_key: str, response: ChatResponse) -> None:
-        """Cache response with adaptive TTL into Redis or In-Memory store."""
-        cache_service.set(cache_key, response, expire=3600)
+    def _cache_response(
+        self,
+        query: str,
+        response: ChatResponse,
+        crop: str | None = None,
+        disease: str | None = None,
+        tenant_id: int | None = None,
+        document_ids: list[str] | None = None,
+    ) -> None:
+        """Cache response with adaptive TTL into SemanticQueryCache."""
+        cache_service.set(
+            query=query,
+            response=response.model_dump(),
+            crop=crop,
+            disease=disease,
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+            ttl=3600,
+        )
 
     def _plan(self, query: str, history: list[dict[str, str]] | None = None) -> PlanDecision:
         """Decide which tool this query needs.
@@ -1565,19 +1595,34 @@ class ChatService:
             # loop. Check cache first (only cache final responses after
             # corrective loop, and only for plain retrieve — a research
             # answer depends on live web state, so it's never cached).
-            cache_key = self._make_cache_key(
-                query,
-                session_id,
-                self._vector_store,
+            plan_crop = getattr(plan, "crop", None)
+            plan_disease = getattr(plan, "disease", None)
+            cached = self._get_cached_response(
+                query=query,
+                crop=plan_crop,
+                disease=plan_disease,
                 tenant_id=tenant_id,
                 document_ids=document_ids,
             )
-            cached = self._get_cached_response(cache_key)
             if cached is not None:
                 logger.info(
-                    "cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}}
+                    "cache_hit",
+                    extra={
+                        "extra_fields": {
+                            "query": query,
+                            "crop": plan_crop,
+                            "disease": plan_disease,
+                            "session_id": session_id or "none",
+                            "cached": True,
+                        }
+                    },
                 )
-                return cached
+                cached_dict = cached.model_dump()
+                cached_dict["session_id"] = session_id or cached_dict.get("session_id", "")
+                if "metadata" not in cached_dict or not isinstance(cached_dict["metadata"], dict):
+                    cached_dict["metadata"] = {}
+                cached_dict["metadata"]["cached"] = True
+                return ChatResponse.model_validate(cached_dict)
 
             steps_taken += 1  # retrieval
             # A follow-up question retrieves blind to conversation context
@@ -1785,9 +1830,15 @@ class ChatService:
         )
         # Cache the final response (retrieve action only — a "research"
         # answer returns early, before this point, since live web state
-        # must never be cached).
         if plan.action == "retrieve":
-            self._cache_response(cache_key, response)
+            self._cache_response(
+                query=query,
+                response=response,
+                crop=getattr(plan, "crop", None),
+                disease=getattr(plan, "disease", None),
+                tenant_id=tenant_id,
+                document_ids=document_ids,
+            )
         return response
 
     def stream_query(
@@ -1891,19 +1942,42 @@ class ChatService:
 
             # plan.action == "retrieve" — the corrective RAG loop, streamed.
             # Check cache first (only cache final responses after corrective loop)
-            cache_key = self._make_cache_key(
-                query,
-                session_id,
-                self._vector_store,
+            plan_crop = getattr(plan, "crop", None)
+            plan_disease = getattr(plan, "disease", None)
+            cached = self._get_cached_response(
+                query=query,
+                crop=plan_crop,
+                disease=plan_disease,
                 tenant_id=tenant_id,
                 document_ids=document_ids,
             )
-            cached = self._get_cached_response(cache_key)
             if cached is not None:
                 logger.info(
-                    "cache_hit", extra={"extra_fields": {"session_id": session_id or "none"}}
+                    "cache_hit",
+                    extra={
+                        "extra_fields": {
+                            "query": query,
+                            "crop": plan_crop,
+                            "disease": plan_disease,
+                            "session_id": session_id or "none",
+                            "cached": True,
+                        }
+                    },
                 )
-                yield {"type": "done", "payload": cached}
+                cached_dict = cached.model_dump()
+                cached_dict["session_id"] = session_id or cached_dict.get("session_id", "")
+                if "metadata" not in cached_dict or not isinstance(cached_dict["metadata"], dict):
+                    cached_dict["metadata"] = {}
+                cached_dict["metadata"]["cached"] = True
+                cached_resp = ChatResponse.model_validate(cached_dict)
+                yield {
+                    "type": "trace",
+                    "event": "cache_hit",
+                    "stage": "cache_hit",
+                    "payload": {"cached": True},
+                    "detail": {"cached": True},
+                }
+                yield {"type": "done", "payload": cached_resp}
                 return
 
             steps_taken += 1  # retrieval
@@ -2110,9 +2184,15 @@ class ChatService:
             follow_up_questions=follow_up_questions,
         )
         # Cache the final response (retrieve action only — a "research"
-        # answer returns early, above, since live web state is never cached).
         if plan.action == "retrieve":
-            self._cache_response(cache_key, response)
+            self._cache_response(
+                query=query,
+                response=response,
+                crop=getattr(plan, "crop", None),
+                disease=getattr(plan, "disease", None),
+                tenant_id=tenant_id,
+                document_ids=document_ids,
+            )
         yield {"type": "done", "payload": response}
 
     def handle_diagnose(
@@ -2154,7 +2234,46 @@ class ChatService:
             crop_context = (
                 prediction.crop if prediction.crop and prediction.crop != "unknown" else None
             )
+            disease_context = (
+                prediction.disease if prediction.disease and prediction.disease != "unknown" else None
+            )
             diagnosis_query = _build_diagnosis_query(prediction, query, collection=crop_context)
+
+            # Check semantic cache for instant sub-50ms diagnosis response
+            cached = self._get_cached_response(
+                query=diagnosis_query,
+                crop=crop_context,
+                disease=disease_context,
+                tenant_id=tenant_id,
+            )
+            if cached is not None:
+                logger.info(
+                    "cache_hit",
+                    extra={
+                        "extra_fields": {
+                            "query": diagnosis_query,
+                            "crop": crop_context,
+                            "disease": disease_context,
+                            "session_id": session_id or "none",
+                            "cached": True,
+                        }
+                    },
+                )
+                cached_dict = cached.model_dump()
+                cached_dict["session_id"] = session_id or cached_dict.get("session_id", "")
+                cached_dict["diagnosis"] = DiagnosisInfo(
+                    raw_class=prediction.raw_class,
+                    crop=prediction.crop,
+                    disease=prediction.disease,
+                    confidence=prediction.confidence,
+                    low_confidence=prediction.low_confidence,
+                ).model_dump()
+                if weather_risk is not None:
+                    cached_dict["weather_risk"] = weather_risk.model_dump()
+                if "metadata" not in cached_dict or not isinstance(cached_dict["metadata"], dict):
+                    cached_dict["metadata"] = {}
+                cached_dict["metadata"]["cached"] = True
+                return ChatResponse.model_validate(cached_dict)
 
             steps_taken += 1  # retrieval
             chunks = retrieve(
@@ -2240,7 +2359,7 @@ class ChatService:
             ) from exc
 
         tool_used = "web_search" if web_results else "diagnose"
-        return self._respond(
+        response = self._respond(
             answer=answer,
             retrieved_chunks=chunks,
             query=diagnosis_query,
@@ -2259,6 +2378,14 @@ class ChatService:
             session_id=session_id,
             weather_risk=weather_risk,
         )
+        self._cache_response(
+            query=diagnosis_query,
+            response=response,
+            crop=crop_context,
+            disease=disease_context,
+            tenant_id=tenant_id,
+        )
+        return response
 
     def stream_diagnose(
         self,
@@ -2327,7 +2454,55 @@ class ChatService:
             crop_context = (
                 prediction.crop if prediction.crop and prediction.crop != "unknown" else None
             )
+            disease_context = (
+                prediction.disease if prediction.disease and prediction.disease != "unknown" else None
+            )
             diagnosis_query = _build_diagnosis_query(prediction, query, collection=crop_context)
+
+            # Check semantic cache for instant response
+            cached = self._get_cached_response(
+                query=diagnosis_query,
+                crop=crop_context,
+                disease=disease_context,
+                tenant_id=tenant_id,
+            )
+            if cached is not None:
+                logger.info(
+                    "cache_hit",
+                    extra={
+                        "extra_fields": {
+                            "query": diagnosis_query,
+                            "crop": crop_context,
+                            "disease": disease_context,
+                            "session_id": session_id or "none",
+                            "cached": True,
+                        }
+                    },
+                )
+                cached_dict = cached.model_dump()
+                cached_dict["session_id"] = session_id or cached_dict.get("session_id", "")
+                cached_dict["diagnosis"] = DiagnosisInfo(
+                    raw_class=prediction.raw_class,
+                    crop=prediction.crop,
+                    disease=prediction.disease,
+                    confidence=prediction.confidence,
+                    low_confidence=prediction.low_confidence,
+                ).model_dump()
+                if weather_risk is not None:
+                    cached_dict["weather_risk"] = weather_risk.model_dump()
+                if "metadata" not in cached_dict or not isinstance(cached_dict["metadata"], dict):
+                    cached_dict["metadata"] = {}
+                cached_dict["metadata"]["cached"] = True
+                cached_resp = ChatResponse.model_validate(cached_dict)
+                yield {
+                    "type": "trace",
+                    "event": "cache_hit",
+                    "stage": "cache_hit",
+                    "payload": {"cached": True},
+                    "detail": {"cached": True},
+                }
+                yield {"type": "done", "payload": cached_resp}
+                return
 
             steps_taken += 1  # retrieval
             chunks = retrieve(
@@ -2515,6 +2690,13 @@ class ChatService:
             retrieval_confidence=grade,
             follow_up_questions=follow_up_questions,
             weather_risk=weather_risk,
+        )
+        self._cache_response(
+            query=diagnosis_query,
+            response=response,
+            crop=crop_context,
+            disease=disease_context,
+            tenant_id=tenant_id,
         )
         yield {"type": "done", "payload": response}
 

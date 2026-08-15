@@ -191,6 +191,10 @@ class ChatResponse(BaseModel):
         description="Present when field coordinates (latitude/longitude) are supplied — "
         "the microclimate pathogen infection risk assessment and spray advisory.",
     )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Execution metadata (e.g. cached flag, latency breakdown).",
+    )
 
 
 class RubricScores(BaseModel):

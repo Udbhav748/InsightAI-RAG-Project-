@@ -58,6 +58,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
 
   beforeEach(() => {
     vi.clearAllMocks()
+    window.print = vi.fn()
     globalThis.URL.createObjectURL = vi.fn(() => 'blob:http://localhost/mock-leaf-preview')
     globalThis.URL.revokeObjectURL = vi.fn()
     diagnoseService.checkLeafSenseHealth.mockResolvedValue({
@@ -383,7 +384,7 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
     })
   })
 
-  it('opens and formats downloadable/printable spray prescription work order with PPE, REI/PHI, and Agronomist verification', async () => {
+  it('opens and formats downloadable/printable spray prescription work order with PDF export, PPE, REI/PHI, and Agronomist verification', async () => {
     diagnoseService.diagnoseLeaf.mockResolvedValueOnce(mockDiagnosisResult)
 
     render(<Diagnose />)
@@ -411,34 +412,59 @@ describe('Diagnose Page - Plant Leaf Disease Diagnostic & Treatment Hub', () => 
       expect(screen.getByTestId('prescription-work-order-document')).toBeInTheDocument()
     })
 
-    // Verify key prescription sections:
-    // 1. Patient / Crop
+    // Verify Header
+    expect(screen.getAllByText(/OFFICIAL AGRONOMIC PRESCRIPTION & SPRAY WORK ORDER/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/#AGRI-88294-EXT/i).length).toBeGreaterThan(0)
+
+    // Section 1: Field Diagnosis & Pathogen Identification
+    expect(screen.getByText(/1\. Field Diagnosis & Pathogen Identification/i)).toBeInTheDocument()
     expect(screen.getAllByText(/tomato/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/early blight/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/95%/i).length).toBeGreaterThan(0)
 
-    // 2. Dosage Calculations
+    // Section 2: Calculated Tank Mix & Spray Dosage Table
+    expect(screen.getByText(/2\. Calculated Tank Mix & Spray Dosage Table/i)).toBeInTheDocument()
+    expect(screen.getByText('Field Size')).toBeInTheDocument()
     expect(screen.getByText('Total Spray Volume')).toBeInTheDocument()
-    expect(screen.getByText('Total Chemical Concentrate')).toBeInTheDocument()
+    expect(screen.getByText('Chemical Concentrate Amount')).toBeInTheDocument()
+    expect(screen.getByText('Water Carrier Volume')).toBeInTheDocument()
 
-    // 3. Safety PPE Checklist
-    expect(screen.getByText(/Chemical-resistant nitrile \/ neoprene gloves/i)).toBeInTheDocument()
-    expect(screen.getByText(/N95 \/ organic vapor particle respirator mask/i)).toBeInTheDocument()
-    expect(screen.getByText(/Protective chemical splash goggles/i)).toBeInTheDocument()
+    // Section 3: Worker Protection Standard (WPS) & Safety PPE
+    expect(screen.getByText(/3\. Worker Protection Standard \(WPS\) & Safety PPE/i)).toBeInTheDocument()
+    expect(screen.getByText(/Chemical-resistant nitrile \/ neoprene gloves \(Nitrile gloves\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/N95 \/ organic vapor respirator mask \(N95\/organic vapor respirator\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Protective chemical splash goggles \/ face shield \(Splash goggles\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Long-sleeved chemical coveralls \/ chemical apron & waterproof rubber boots \(Chemical apron\)/i)).toBeInTheDocument()
 
-    // 4. REI & PHI Compliance Warnings
-    expect(screen.getByText(/Restricted Entry Interval \(REI\): 12 - 24 Hours/i)).toBeInTheDocument()
-    expect(screen.getByText(/Pre-Harvest Interval \(PHI\): 0 - 5 Days/i)).toBeInTheDocument()
+    // Section 4: Mandatory Re-Entry Interval (REI: 12-24h) & Pre-Harvest Interval (PHI: 0-7d)
+    expect(screen.getByText(/4\. Mandatory Re-Entry Interval \(REI: 12-24h\) & Pre-Harvest Interval \(PHI: 0-7d\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Restricted Entry Interval \(REI\): 12 - 24 Hours \(12-24h\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Pre-Harvest Interval \(PHI\): 0 - 7 Days \(0-7d\)/i)).toBeInTheDocument()
 
-    // 5. Official Agronomist Verification Signature Section
+    // Section 5: Agronomist Certification & Stamp Seal
+    expect(screen.getByText(/5\. Agronomist Certification & Stamp Seal/i)).toBeInTheDocument()
     expect(screen.getByText(/Certified Agronomist:/i)).toBeInTheDocument()
-    expect(screen.getByText(/Dr\. J\. Henderson, Ph\.D\., CCA/i)).toBeInTheDocument()
-    expect(screen.getByText(/Agronomist Signature:/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/Dr\. J\. Henderson, Ph\.D\., CCA/i).length).toBeGreaterThan(0)
+    expect(screen.getByTestId('agronomist-stamp-seal')).toBeInTheDocument()
+    expect(screen.getByText(/★ OFFICIAL SEAL ★/i)).toBeInTheDocument()
+    expect(screen.getByText(/Authorized Agronomist Signature/i)).toBeInTheDocument()
 
-    // Test Download action
-    const downloadBtn = screen.getByRole('button', { name: /Download \(\.txt\)/i })
-    expect(downloadBtn).toBeInTheDocument()
-    fireEvent.click(downloadBtn)
+    // Test Export PDF Document Button Trigger
+    const exportPdfButtons = screen.getAllByRole('button', { name: /📥 Export PDF Document/i })
+    expect(exportPdfButtons.length).toBeGreaterThan(0)
+    fireEvent.click(exportPdfButtons[0])
+    expect(window.print).toHaveBeenCalled()
 
+    // Test Print Button Trigger
+    const printBtn = screen.getByTestId('print-prescription-button')
+    expect(printBtn).toBeInTheDocument()
+    fireEvent.click(printBtn)
+    expect(window.print).toHaveBeenCalledTimes(2)
+
+    // Test Download (.txt) action
+    const downloadTxtBtn = screen.getByTestId('download-txt-button')
+    expect(downloadTxtBtn).toBeInTheDocument()
+    fireEvent.click(downloadTxtBtn)
     expect(globalThis.URL.createObjectURL).toHaveBeenCalled()
 
     // Test Close Modal

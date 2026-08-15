@@ -202,6 +202,11 @@ async def upload_document(
     tenant_id = getattr(request.state, "tenant_id", None)
     response = await service.process(file, tenant_id=tenant_id, collection=collection)
 
+    # Invalidate semantic cache so new documents are immediately discoverable
+    from app.services.cache_service import cache_service
+
+    cache_service.invalidate()
+
     logger.info(
         "audit_event",
         extra={
@@ -432,6 +437,11 @@ def delete_document(
 
     # Best-effort removal of the durable metadata row (no-op if DB disabled).
     delete_document_metadata(document_id)
+
+    # Invalidate semantic query cache
+    from app.services.cache_service import cache_service
+
+    cache_service.invalidate()
 
     logger.info(
         "audit_event",

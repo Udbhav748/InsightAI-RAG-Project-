@@ -28,6 +28,7 @@ DOCUMENT_LIST_ALL_TENANTS = "document_list_all_tenants"
 ANALYTICS_VIEW = "analytics_view"
 APPROVAL_VIEW = "approval_view"
 APPROVAL_RESOLVE = "approval_resolve"
+CACHE_INVALIDATE = "cache_invalidate"
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
@@ -37,6 +38,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             ANALYTICS_VIEW,
             APPROVAL_VIEW,
             APPROVAL_RESOLVE,
+            CACHE_INVALIDATE,
         }
     ),
     "member": frozenset(
@@ -51,7 +53,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
 # behavior). Anything NOT listed here defaults to denied-when-unknown,
 # the safer default for a gated action with no pre-RBAC history to fall
 # back to.
-_DEGRADE_ALLOW_WHEN_NO_ROLE = frozenset({DOCUMENT_DELETE})
+_DEGRADE_ALLOW_WHEN_NO_ROLE = frozenset({DOCUMENT_DELETE, CACHE_INVALIDATE})
 
 
 def has_permission(role: str | None, permission: str) -> bool:

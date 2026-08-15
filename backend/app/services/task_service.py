@@ -316,6 +316,9 @@ async def execute_background_ingestion(
             progress_callback=on_progress,
         )
         ts.complete_task(task_id, result)
+        from app.services.cache_service import cache_service
+
+        cache_service.invalidate()
     except Exception as exc:
         logger.exception(
             "background_ingestion_failed",

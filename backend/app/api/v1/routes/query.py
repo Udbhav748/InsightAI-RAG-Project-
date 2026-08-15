@@ -685,3 +685,36 @@ def delete_chat_session(session_id: str, request: Request) -> dict[str, Any]:
         return {"status": "deleted", "session_id": session_id}
 
     return {"status": "not_found", "session_id": session_id}
+
+
+@router.delete("/cache")
+def invalidate_cache(request: Request) -> dict[str, Any]:
+    """Invalidate the semantic query cache when new documents are uploaded or indexed."""
+    from app.core import permissions
+    from app.services.cache_service import cache_service
+
+    permissions.check_permission(
+        request,
+        permissions.CACHE_INVALIDATE,
+        message="Invalidating cache requires the admin role.",
+    )
+    cache_service.invalidate()
+    logger.info(
+        "audit_event",
+        extra={
+            "extra_fields": {
+                "event": "cache_invalidated",
+                "path": request.url.path,
+                "client": getattr(request.state, "client_name", "unknown"),
+            }
+        },
+    )
+    return {"status": "invalidated", "message": "Semantic query cache cleared successfully"}
+
+
+@router.get("/cache/metrics")
+def get_cache_metrics(request: Request) -> dict[str, Any]:
+    """Return live metrics and statistics for the semantic query cache."""
+    from app.services.cache_service import cache_service
+
+    return cache_service.get_metrics()
