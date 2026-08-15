@@ -529,11 +529,11 @@ export default function VectorGraphExplorer() {
   const [zoom, setZoom] = useState(1)
 
   const canvasContainerRef = useRef(null)
+  const svgRef = useRef(null)
   const isDraggingCanvas = useRef(false)
   const isDraggingNode = useRef(null)
-  const dragStartPos = useRef({ x: 0, y: 0 })
+  const dragStart = useRef({ clientX: 0, clientY: 0, panX: 0, panY: 0, nodeX: 0, nodeY: 0 })
   const animFrameId = useRef(null)
-  const pulsePhase = useRef(0)
 
   const activeQuery = SAMPLE_QUERIES[activeQueryIndex]
   const selectedNode = useMemo(() => {
@@ -660,7 +660,6 @@ export default function VectorGraphExplorer() {
 
     const loop = () => {
       updatePhysics()
-      pulsePhase.current = (pulsePhase.current + 0.05) % (Math.PI * 2)
       animFrameId.current = requestAnimationFrame(loop)
     }
     animFrameId.current = requestAnimationFrame(loop)
@@ -670,32 +669,34 @@ export default function VectorGraphExplorer() {
     }
   }, [isPhysicsActive, updatePhysics])
 
-  // NON-PASSIVE wheel event listener to TRAP mouse wheel zoom inside the canvas container
-  // This guarantees the parent browser page and window NEVER zoom!
+  // Non-passive wheel event listener: Gentle, smooth touchpad zoom with zero window jumping
   useEffect(() => {
     const container = canvasContainerRef.current
     if (!container) return
 
     const handleWheel = (e) => {
-      // PREVENT BROWSER WINDOW ZOOM
       e.preventDefault()
       e.stopPropagation()
 
       const rect = container.getBoundingClientRect()
-      const mouseX = e.clientX - rect.left
-      const mouseY = e.clientY - rect.top
+      // Mouse coordinate inside SVG coordinate frame (820x500 viewBox)
+      const mouseSvgX = ((e.clientX - rect.left) / rect.width) * 820
+      const mouseSvgY = ((e.clientY - rect.top) / rect.height) * 500
 
-      // Smooth zoom centered directly on cursor
-      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89
+      // Touchpad-friendly smooth continuous delta damping
+      // Clamp delta to prevent sudden jump on fast swipes
+      const rawDelta = -e.deltaY
+      const clampedDelta = Math.max(-25, Math.min(25, rawDelta))
+      const zoomFactor = 1 + clampedDelta * 0.003
+
       setZoom((prevZoom) => {
-        const nextZoom = Math.max(0.5, Math.min(3.0, prevZoom * zoomFactor))
-        // Adjust pan so the point under cursor remains fixed
+        const nextZoom = Math.max(0.6, Math.min(2.5, prevZoom * zoomFactor))
+        // Shift pan so that point under cursor remains steady
         setPan((prevPan) => {
-          const worldX = (mouseX - prevPan.x) / prevZoom
-          const worldY = (mouseY - prevPan.y) / prevZoom
+          const ratio = nextZoom / prevZoom
           return {
-            x: mouseX - worldX * nextZoom,
-            y: mouseY - worldY * nextZoom,
+            x: mouseSvgX - (mouseSvgX - prevPan.x) * ratio,
+            y: mouseSvgY - (mouseSvgY - prevPan.y) * ratio,
           }
         })
         return nextZoom
@@ -708,49 +709,81 @@ export default function VectorGraphExplorer() {
     }
   }, [])
 
-  // Mouse & Touch Dragging Handlers
+  // Mouse & Touch Drag Handlers
   const handleNodePointerDown = (e, nodeId) => {
     e.stopPropagation()
     isDraggingNode.current = nodeId
     setSelectedNodeId(nodeId)
-    const clientX = e.clientX || e.touches?.[0]?.clientX
-    const clientY = e.clientY || e.touches?.[0]?.clientY
-    dragStartPos.current = { x: clientX, y: clientY }
+
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0
+
+    const targetNode = nodes.find((n) => n.id === nodeId)
+    dragStart.current = {
+      clientX,
+      clientY,
+      nodeX: targetNode ? targetNode.x : 0,
+      nodeY: targetNode ? targetNode.y : 0,
+    }
   }
 
   const handleCanvasPointerDown = (e) => {
     if (e.button !== 0 && !e.touches) return
     isDraggingCanvas.current = true
-    const clientX = e.clientX || e.touches?.[0]?.clientX
-    const clientY = e.clientY || e.touches?.[0]?.clientY
-    dragStartPos.current = { x: clientX - pan.x, y: clientY - pan.y }
+
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0
+
+    dragStart.current = {
+      clientX,
+      clientY,
+      panX: pan.x,
+      panY: pan.y,
+    }
   }
 
   const handlePointerMove = (e) => {
-    const clientX = e.clientX || e.touches?.[0]?.clientX
-    const clientY = e.clientY || e.touches?.[0]?.clientY
-    if (!clientX || !clientY) return
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0
+    if (!clientX && !clientY) return
 
-    // Dragging a specific Node
+    const container = canvasContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+
+    // 1. Dragging a specific Node
     if (isDraggingNode.current) {
-      const container = canvasContainerRef.current
-      if (!container) return
-      const rect = container.getBoundingClientRect()
-      // Convert client coordinates to virtual 820x500 space
-      const svgX = ((clientX - rect.left - pan.x) / (rect.width * zoom)) * 820
-      const svgY = ((clientY - rect.top - pan.y) / (rect.height * zoom)) * 500
+      const deltaScreenX = clientX - dragStart.current.clientX
+      const deltaScreenY = clientY - dragStart.current.clientY
+
+      // Convert screen delta to SVG delta divided by zoom
+      const deltaSvgX = (deltaScreenX / rect.width) * (820 / zoom)
+      const deltaSvgY = (deltaScreenY / rect.height) * (500 / zoom)
+
+      const targetX = Math.max(40, Math.min(780, dragStart.current.nodeX + deltaSvgX))
+      const targetY = Math.max(40, Math.min(460, dragStart.current.nodeY + deltaSvgY))
 
       setNodes((prev) =>
-        prev.map((n) => (n.id === isDraggingNode.current ? { ...n, x: svgX, y: svgY, vx: 0, vy: 0 } : n))
+        prev.map((n) =>
+          n.id === isDraggingNode.current
+            ? { ...n, x: targetX, y: targetY, vx: 0, vy: 0 }
+            : n
+        )
       )
       return
     }
 
-    // Panning the Canvas Viewport
+    // 2. Panning the Canvas Viewport
     if (isDraggingCanvas.current) {
+      const deltaScreenX = clientX - dragStart.current.clientX
+      const deltaScreenY = clientY - dragStart.current.clientY
+
+      const deltaSvgX = (deltaScreenX / rect.width) * 820
+      const deltaSvgY = (deltaScreenY / rect.height) * 500
+
       setPan({
-        x: clientX - dragStartPos.current.x,
-        y: clientY - dragStartPos.current.y,
+        x: dragStart.current.panX + deltaSvgX,
+        y: dragStart.current.panY + deltaSvgY,
       })
     }
   }
@@ -760,12 +793,12 @@ export default function VectorGraphExplorer() {
     isDraggingCanvas.current = false
   }
 
-  // Zoom In / Out Buttons
+  // Smooth Zoom Buttons
   const zoomIn = () => {
-    setZoom((z) => Math.min(z * 1.2, 3.0))
+    setZoom((z) => Math.min(z * 1.15, 2.5))
   }
   const zoomOut = () => {
-    setZoom((z) => Math.max(z / 1.2, 0.5))
+    setZoom((z) => Math.max(z / 1.15, 0.6))
   }
 
   return (
@@ -897,15 +930,12 @@ export default function VectorGraphExplorer() {
               </div>
             </div>
 
-            {/* SVG Vector Space Graph with Pan & Zoom Transform */}
+            {/* SVG Vector Space Graph with Native SVG Group Transform */}
             <div className="absolute inset-0 top-12 flex items-center justify-center overflow-hidden">
               <svg
+                ref={svgRef}
                 viewBox="0 0 820 500"
                 className="h-full w-full select-none"
-                style={{
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transformOrigin: '0 0',
-                }}
               >
                 <defs>
                   {/* Radial Background Gradients for Clusters */}
@@ -937,196 +967,199 @@ export default function VectorGraphExplorer() {
                   </filter>
                 </defs>
 
-                {/* Background Ambient Cluster Clouds */}
-                <rect x="100" y="80" width="220" height="180" rx="40" fill="url(#fungalGlow)" />
-                <rect x="380" y="80" width="180" height="160" rx="40" fill="url(#bacterialGlow)" />
-                <rect x="580" y="80" width="180" height="150" rx="40" fill="url(#viralGlow)" />
-                <rect x="230" y="240" width="260" height="180" rx="40" fill="url(#chemicalGlow)" />
-                <rect x="620" y="320" width="180" height="160" rx="40" fill="url(#healthyGlow)" />
+                {/* Transform Group containing all graphical elements */}
+                <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+                  {/* Background Ambient Cluster Clouds */}
+                  <rect x="100" y="80" width="220" height="180" rx="40" fill="url(#fungalGlow)" />
+                  <rect x="380" y="80" width="180" height="160" rx="40" fill="url(#bacterialGlow)" />
+                  <rect x="580" y="80" width="180" height="150" rx="40" fill="url(#viralGlow)" />
+                  <rect x="230" y="240" width="260" height="180" rx="40" fill="url(#chemicalGlow)" />
+                  <rect x="620" y="320" width="180" height="160" rx="40" fill="url(#healthyGlow)" />
 
-                {/* Cluster Region Watermark Labels */}
-                <text x="130" y="110" fill="#f43f5e" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
-                  CLUSTER 1: FUNGAL SOLANACEAE
-                </text>
-                <text x="410" y="105" fill="#f59e0b" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
-                  CLUSTER 2: BACTERIAL
-                </text>
-                <text x="610" y="105" fill="#6366f1" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
-                  CLUSTER 3: VIRAL
-                </text>
-                <text x="250" y="265" fill="#0284c7" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
-                  CLUSTER 4: CHEMICAL PROTECTANTS
-                </text>
-                <text x="630" y="345" fill="#14b8a6" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
-                  CLUSTER 5: HEALTHY BASELINES
-                </text>
-
-                {/* Semantic Connection Edges with live springs */}
-                {visibleEdges.map((edge) => {
-                  const sNode = nodes.find((n) => n.id === edge.source)
-                  const tNode = nodes.find((n) => n.id === edge.target)
-                  if (!sNode || !tNode) return null
-
-                  const isHighlighted =
-                    selectedNodeId === edge.source ||
-                    selectedNodeId === edge.target ||
-                    hoveredNodeId === edge.source ||
-                    hoveredNodeId === edge.target
-
-                  const opacity = isHighlighted ? 0.95 : 0.25
-                  const strokeWidth = isHighlighted ? 2.5 : 1
-                  const strokeColor = isHighlighted ? '#38bdf8' : '#64748b'
-
-                  const midX = (sNode.x + tNode.x) / 2
-                  const midY = (sNode.y + tNode.y) / 2
-
-                  return (
-                    <g key={`${edge.source}-${edge.target}`}>
-                      <line
-                        x1={sNode.x}
-                        y1={sNode.y}
-                        x2={tNode.x}
-                        y2={tNode.y}
-                        stroke={strokeColor}
-                        strokeWidth={strokeWidth}
-                        strokeOpacity={opacity}
-                        strokeDasharray={isHighlighted ? 'none' : '3 3'}
-                      />
-                      {isHighlighted && (
-                        <g>
-                          <rect
-                            x={midX - 22}
-                            y={midY - 8}
-                            width={44}
-                            height={16}
-                            rx={4}
-                            fill="#0f172a"
-                            stroke="#38bdf8"
-                            strokeWidth={1}
-                          />
-                          <text
-                            x={midX}
-                            y={midY + 3}
-                            textAnchor="middle"
-                            fill="#38bdf8"
-                            fontSize="9"
-                            fontFamily="monospace"
-                            fontWeight="bold"
-                          >
-                            {edge.similarity.toFixed(2)}
-                          </text>
-                        </g>
-                      )}
-                    </g>
-                  )
-                })}
-
-                {/* Vector Probe Laser Rays (from Query Vector to Top Matches) */}
-                {queryRankings.slice(0, 4).map((match, idx) => {
-                  const queryPoint = { x: 410, y: 250 }
-                  return (
-                    <g key={`query-ray-${match.id}`}>
-                      <line
-                        x1={queryPoint.x}
-                        y1={queryPoint.y}
-                        x2={match.x}
-                        y2={match.y}
-                        stroke="#f59e0b"
-                        strokeWidth={2.5 - idx * 0.5}
-                        strokeOpacity={0.85 - idx * 0.15}
-                        strokeDasharray="4 4"
-                      />
-                    </g>
-                  )
-                })}
-
-                {/* Simulated Query Vector Origin Point */}
-                <g transform="translate(410, 250)">
-                  <circle r="14" fill="#f59e0b" fillOpacity="0.25" className="animate-ping" />
-                  <circle r="8" fill="#f59e0b" stroke="#ffffff" strokeWidth="2" />
-                  <text x="0" y="22" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold" fontFamily="monospace">
-                    QUERY VECTOR (q)
+                  {/* Cluster Region Watermark Labels */}
+                  <text x="130" y="110" fill="#f43f5e" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
+                    CLUSTER 1: FUNGAL SOLANACEAE
                   </text>
-                </g>
+                  <text x="410" y="105" fill="#f59e0b" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
+                    CLUSTER 2: BACTERIAL
+                  </text>
+                  <text x="610" y="105" fill="#6366f1" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
+                    CLUSTER 3: VIRAL
+                  </text>
+                  <text x="250" y="265" fill="#0284c7" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
+                    CLUSTER 4: CHEMICAL PROTECTANTS
+                  </text>
+                  <text x="630" y="345" fill="#14b8a6" opacity="0.35" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
+                    CLUSTER 5: HEALTHY BASELINES
+                  </text>
 
-                {/* Interactive Vector Nodes (Mouse & Touch Draggable) */}
-                {visibleNodes.map((node) => {
-                  const isSelected = selectedNodeId === node.id
-                  const isHovered = hoveredNodeId === node.id
-                  const meta = CATEGORY_META[node.category] || CATEGORY_META.fungal
-                  const queryScore = activeQuery?.targetScores?.[node.id]
+                  {/* Semantic Connection Edges with live springs */}
+                  {visibleEdges.map((edge) => {
+                    const sNode = nodes.find((n) => n.id === edge.source)
+                    const tNode = nodes.find((n) => n.id === edge.target)
+                    if (!sNode || !tNode) return null
 
-                  return (
-                    <g
-                      key={node.id}
-                      transform={`translate(${node.x}, ${node.y})`}
-                      className="cursor-move"
-                      onMouseDown={(e) => handleNodePointerDown(e, node.id)}
-                      onTouchStart={(e) => handleNodePointerDown(e, node.id)}
-                      onMouseEnter={() => setHoveredNodeId(node.id)}
-                      onMouseLeave={() => setHoveredNodeId(null)}
-                    >
-                      {/* Pulse halo if selected or top query match */}
-                      {(isSelected || (queryScore && queryScore > 0.85)) && (
-                        <circle
-                          r={node.radius + 9}
-                          fill={meta.stroke}
-                          fillOpacity="0.3"
-                          className="animate-pulse"
+                    const isHighlighted =
+                      selectedNodeId === edge.source ||
+                      selectedNodeId === edge.target ||
+                      hoveredNodeId === edge.source ||
+                      hoveredNodeId === edge.target
+
+                    const opacity = isHighlighted ? 0.95 : 0.25
+                    const strokeWidth = isHighlighted ? 2.5 : 1
+                    const strokeColor = isHighlighted ? '#38bdf8' : '#64748b'
+
+                    const midX = (sNode.x + tNode.x) / 2
+                    const midY = (sNode.y + tNode.y) / 2
+
+                    return (
+                      <g key={`${edge.source}-${edge.target}`}>
+                        <line
+                          x1={sNode.x}
+                          y1={sNode.y}
+                          x2={tNode.x}
+                          y2={tNode.y}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          strokeOpacity={opacity}
+                          strokeDasharray={isHighlighted ? 'none' : '3 3'}
                         />
-                      )}
+                        {isHighlighted && (
+                          <g>
+                            <rect
+                              x={midX - 22}
+                              y={midY - 8}
+                              width={44}
+                              height={16}
+                              rx={4}
+                              fill="#0f172a"
+                              stroke="#38bdf8"
+                              strokeWidth={1}
+                            />
+                            <text
+                              x={midX}
+                              y={midY + 3}
+                              textAnchor="middle"
+                              fill="#38bdf8"
+                              fontSize="9"
+                              fontFamily="monospace"
+                              fontWeight="bold"
+                            >
+                              {edge.similarity.toFixed(2)}
+                            </text>
+                          </g>
+                        )}
+                      </g>
+                    )
+                  })}
 
-                      {/* Node Body Circle */}
-                      <circle
-                        r={node.radius}
-                        fill={isSelected ? '#ffffff' : meta.stroke}
-                        stroke={isSelected ? meta.stroke : '#0f172a'}
-                        strokeWidth={isSelected ? 3.5 : 2}
-                        filter={isSelected ? 'url(#glow)' : undefined}
-                      />
+                  {/* Vector Probe Laser Rays (from Query Vector to Top Matches) */}
+                  {queryRankings.slice(0, 4).map((match, idx) => {
+                    const queryPoint = { x: 410, y: 250 }
+                    return (
+                      <g key={`query-ray-${match.id}`}>
+                        <line
+                          x1={queryPoint.x}
+                          y1={queryPoint.y}
+                          x2={match.x}
+                          y2={match.y}
+                          stroke="#f59e0b"
+                          strokeWidth={2.5 - idx * 0.5}
+                          strokeOpacity={0.85 - idx * 0.15}
+                          strokeDasharray="4 4"
+                        />
+                      </g>
+                    )
+                  })}
 
-                      {/* Cosine Score Tag if probed by query */}
-                      {queryScore !== undefined && (
-                        <g transform={`translate(0, -${node.radius + 6})`}>
-                          <rect
-                            x="-18"
-                            y="-12"
-                            width="36"
-                            height="14"
-                            rx="3"
-                            fill={queryScore > 0.85 ? '#059669' : '#1e293b'}
-                            stroke={queryScore > 0.85 ? '#34d399' : '#475569'}
-                            strokeWidth="0.75"
-                          />
-                          <text
-                            x="0"
-                            y="-2"
-                            textAnchor="middle"
-                            fill={queryScore > 0.85 ? '#ffffff' : '#cbd5e1'}
-                            fontSize="8.5"
-                            fontWeight="bold"
-                            fontFamily="monospace"
-                          >
-                            {queryScore.toFixed(2)}
-                          </text>
-                        </g>
-                      )}
+                  {/* Simulated Query Vector Origin Point */}
+                  <g transform="translate(410, 250)">
+                    <circle r="14" fill="#f59e0b" fillOpacity="0.25" className="animate-ping" />
+                    <circle r="8" fill="#f59e0b" stroke="#ffffff" strokeWidth="2" />
+                    <text x="0" y="22" textAnchor="middle" fill="#f59e0b" fontSize="10" fontWeight="bold" fontFamily="monospace">
+                      QUERY VECTOR (q)
+                    </text>
+                  </g>
 
-                      {/* Node Label Text */}
-                      <text
-                        x="0"
-                        y={node.radius + 14}
-                        textAnchor="middle"
-                        fill={isSelected ? '#ffffff' : '#cbd5e1'}
-                        fontSize="10"
-                        fontWeight={isSelected ? 'bold' : 'normal'}
-                        className="drop-shadow pointer-events-none"
+                  {/* Interactive Vector Nodes (Mouse & Touch Draggable) */}
+                  {visibleNodes.map((node) => {
+                    const isSelected = selectedNodeId === node.id
+                    const isHovered = hoveredNodeId === node.id
+                    const meta = CATEGORY_META[node.category] || CATEGORY_META.fungal
+                    const queryScore = activeQuery?.targetScores?.[node.id]
+
+                    return (
+                      <g
+                        key={node.id}
+                        transform={`translate(${node.x}, ${node.y})`}
+                        className="cursor-move"
+                        onMouseDown={(e) => handleNodePointerDown(e, node.id)}
+                        onTouchStart={(e) => handleNodePointerDown(e, node.id)}
+                        onMouseEnter={() => setHoveredNodeId(node.id)}
+                        onMouseLeave={() => setHoveredNodeId(null)}
                       >
-                        {node.label}
-                      </text>
-                    </g>
-                  )
-                })}
+                        {/* Pulse halo if selected or top query match */}
+                        {(isSelected || (queryScore && queryScore > 0.85)) && (
+                          <circle
+                            r={node.radius + 9}
+                            fill={meta.stroke}
+                            fillOpacity="0.3"
+                            className="animate-pulse"
+                          />
+                        )}
+
+                        {/* Node Body Circle */}
+                        <circle
+                          r={node.radius}
+                          fill={isSelected ? '#ffffff' : meta.stroke}
+                          stroke={isSelected ? meta.stroke : '#0f172a'}
+                          strokeWidth={isSelected ? 3.5 : 2}
+                          filter={isSelected ? 'url(#glow)' : undefined}
+                        />
+
+                        {/* Cosine Score Tag if probed by query */}
+                        {queryScore !== undefined && (
+                          <g transform={`translate(0, -${node.radius + 6})`}>
+                            <rect
+                              x="-18"
+                              y="-12"
+                              width="36"
+                              height="14"
+                              rx="3"
+                              fill={queryScore > 0.85 ? '#059669' : '#1e293b'}
+                              stroke={queryScore > 0.85 ? '#34d399' : '#475569'}
+                              strokeWidth="0.75"
+                            />
+                            <text
+                              x="0"
+                              y="-2"
+                              textAnchor="middle"
+                              fill={queryScore > 0.85 ? '#ffffff' : '#cbd5e1'}
+                              fontSize="8.5"
+                              fontWeight="bold"
+                              fontFamily="monospace"
+                            >
+                              {queryScore.toFixed(2)}
+                            </text>
+                          </g>
+                        )}
+
+                        {/* Node Label Text */}
+                        <text
+                          x="0"
+                          y={node.radius + 14}
+                          textAnchor="middle"
+                          fill={isSelected ? '#ffffff' : '#cbd5e1'}
+                          fontSize="10"
+                          fontWeight={isSelected ? 'bold' : 'normal'}
+                          className="drop-shadow pointer-events-none"
+                        >
+                          {node.label}
+                        </text>
+                      </g>
+                    )
+                  })}
+                </g>
               </svg>
             </div>
 
