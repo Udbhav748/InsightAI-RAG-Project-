@@ -14,6 +14,7 @@ describe('Architecture Page - System Architecture & Production AI Design Review'
     expect(screen.getByText('System Architecture Blueprints')).toBeInTheDocument()
     expect(screen.getByText('10 Production AI Questions')).toBeInTheDocument()
     expect(screen.getByText('LeafSense Vision & Confusion Matrix')).toBeInTheDocument()
+    expect(screen.getByText('Vector Space & Knowledge Graph')).toBeInTheDocument()
     expect(screen.getByText('Multimodal RAG & StateGraph')).toBeInTheDocument()
     expect(screen.getByText('Security, Cost & Scaling')).toBeInTheDocument()
 
@@ -67,6 +68,24 @@ describe('Architecture Page - System Architecture & Production AI Design Review'
 
     expect(screen.getByText(/Apple Model Accuracy:/)).toBeInTheDocument()
     expect(screen.getAllByText('Apple Scab').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('switches to Vector Space & Knowledge Graph tab and tests cosine probe', () => {
+    render(<Architecture />)
+
+    const vectorTabBtn = screen.getByText('Vector Space & Knowledge Graph')
+    fireEvent.click(vectorTabBtn)
+
+    expect(screen.getByText('Vector Embedding Space & Semantic Knowledge Graph')).toBeInTheDocument()
+    expect(screen.getByText(/Inner Product Normalization in FAISS IndexFlatIP/)).toBeInTheDocument()
+    expect(screen.getByText('Live Query Vector Probe (Cosine Distance Simulator)')).toBeInTheDocument()
+    expect(screen.getByText('Top Retrieval Candidates')).toBeInTheDocument()
+
+    // Probe bacterial spot query
+    const probeBtn = screen.getByText('Water-soaked angular bacterial spots with copper dosage')
+    fireEvent.click(probeBtn)
+
+    expect(screen.getAllByText('Tomato Bacterial Spot').length).toBeGreaterThanOrEqual(1)
   })
 
   it('switches to Multimodal RAG & StateGraph tab and displays RRF formulas', () => {

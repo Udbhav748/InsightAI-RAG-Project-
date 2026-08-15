@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Compass,
   Cpu,
   Database,
   DollarSign,
@@ -36,11 +37,13 @@ import {
 } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
+import VectorGraphExplorer from '../components/architecture/VectorGraphExplorer'
 
 const TABS = [
   { id: 'architecture', label: 'System Architecture Blueprints', icon: Network },
   { id: 'review', label: '10 Production AI Questions', icon: FileCheck },
   { id: 'vision', label: 'LeafSense Vision & Confusion Matrix', icon: Camera },
+  { id: 'vector-space', label: 'Vector Space & Knowledge Graph', icon: Compass },
   { id: 'rag', label: 'Multimodal RAG & StateGraph', icon: Layers },
   { id: 'security-scaling', label: 'Security, Cost & Scaling', icon: Shield },
 ]
@@ -1064,7 +1067,14 @@ export default function Architecture() {
         </motion.div>
       )}
 
-      {/* Tab 4: Multimodal RAG & StateGraph Pipeline */}
+      {/* Tab 4: Vector Space & Knowledge Graph Visualizer */}
+      {activeTab === 'vector-space' && (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+          <VectorGraphExplorer />
+        </motion.div>
+      )}
+
+      {/* Tab 5: Multimodal RAG & StateGraph Pipeline */}
       {activeTab === 'rag' && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <Card padding="lg" className="space-y-4">
